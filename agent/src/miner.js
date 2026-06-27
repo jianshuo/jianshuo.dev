@@ -18,6 +18,20 @@ export const MINE_MODEL_DEFAULT = "claude-sonnet-4-6";
 const MIN_CHARS          = 20;
 const ORIGIN             = "https://jianshuo.dev";
 
+// ── Resumable ASR tuning ──────────────────────────────────────────────────────
+// Volcano ASR is async and slow for long audio (a 68-min file takes ~5 min to
+// transcribe). We must NOT poll it to completion inside one Worker/DO invocation:
+// every poll is a subrequest, and long audio blows the per-invocation subrequest
+// limit ("Too many subrequests") — the recording then errors at ~90s, leaves no
+// marker, and is retried forever. Instead: submit once, persist {taskId,logId} to
+// an R2 sidecar, poll only a few times per pass, and let the alarm resume next pass.
+const ASR_POLLS_PER_PASS  = 3;                 // ≤3 ASR subrequests per audio per pass
+const ASR_POLL_INTERVAL_MS = 2000;             // wait between polls within one pass
+const ASR_MAX_AGE_MS      = 30 * 60 * 1000;    // give up (mark empty) if not done in 30 min across passes
+const MINE_SUBREQ_BUDGET  = 30;                // ~fetch-subrequests to spend per invocation before deferring
+const MINE_RESUME_MS      = 10 * 1000;         // reschedule the alarm this soon while work remains
+export { ASR_MAX_AGE_MS, MINE_RESUME_MS };
+
 // ── Model config (R2 `config/model.json`, falls back to env + default) ─────────
 
 export const PROVIDER_ENV_KEY = {
@@ -146,6 +160,15 @@ function emptyKeyFor(audioKey) {
   return `${parts.join("/")}/articles/${stem}.empty`;
 }
 
+// Pending ASR task sidecar: holds {taskId, logId, submittedAt} between passes so
+// a long transcription resumes instead of re-submitting. Distinct from the
+// `.json`/`.empty` markers, so the audio stays "unprocessed" until truly done.
+export function asrTaskKeyFor(audioKey) {
+  const parts = audioKey.split("/");
+  const stem = parts.pop().replace(/\.m4a$/, "");
+  return `${parts.join("/")}/articles/${stem}.asr.json`;
+}
+
 // "users/<sub>/VoiceDrop-stem.m4a" → "<sub>/VoiceDrop-stem"  (admin article API path)
 function adminArticlePath(audioKey) {
   const prefix = userPrefix(audioKey);
@@ -199,7 +222,7 @@ async function presignR2(key, env) {
 
 // ── Volcano ASR ────────────────────────────────────────────────────────────────
 
-class AsrError extends Error {
+export class AsrError extends Error {
   constructor(code) { super(`ASR deterministic error ${code}`); this.code = String(code); }
 }
 
@@ -227,7 +250,11 @@ async function asrSubmit(audioUrl, env) {
   return { taskId, logId: resp.headers.get("X-Tt-Logid") || "" };
 }
 
-async function asrPoll({ taskId, logId }, env, deadlineMs) {
+// Bounded poll: check the task at most `maxPolls` times this pass.
+//   { status: "done", data }  — transcription ready
+//   { status: "pending" }     — still processing; resume next pass
+//   throws AsrError           — deterministic Volcano failure (caller marks empty)
+async function asrPollBounded({ taskId, logId }, env, maxPolls) {
   const hdrs = {
     "X-Api-App-Key":     env.VOLC_ASR_APPID,
     "X-Api-Access-Key":  env.VOLC_ASR_ACCESS_TOKEN,
@@ -237,17 +264,19 @@ async function asrPoll({ taskId, logId }, env, deadlineMs) {
     "X-Api-Sequence":    "-1",
     "Content-Type":      "application/json",
   };
-  while (Date.now() < deadlineMs) {
+  for (let i = 0; i < maxPolls; i++) {
     const resp = await fetch("https://openspeech.bytedance.com/api/v3/auc/bigmodel/query",
       { method: "POST", headers: hdrs, body: JSON.stringify({ task_id: taskId }) });
     const code = resp.headers.get("X-Api-Status-Code") || "";
     const text = await resp.text();
-    const res  = text.trim() ? JSON.parse(text) : {};
-    if (code === "20000000" || res.audio_info?.duration || res.result?.text?.trim()) return res;
+    let res;
+    try { res = text.trim() ? JSON.parse(text) : {}; }
+    catch { throw new AsrError(`bad-json:${code || resp.status}`); }
+    if (code === "20000000" || res.audio_info?.duration || res.result?.text?.trim()) return { status: "done", data: res };
     if (code && code !== "20000001" && code !== "20000002") throw new AsrError(code);
-    await new Promise(r => setTimeout(r, 2000));
+    if (i < maxPolls - 1) await new Promise(r => setTimeout(r, ASR_POLL_INTERVAL_MS));
   }
-  throw new Error("ASR timed out");
+  return { status: "pending" };
 }
 
 // 从 VoiceDrop 文件名的 <dur> 段解析音频时长(秒)。命名规范见 voicedrop/admin/index.html:
@@ -270,15 +299,40 @@ function asrDeadlineMs(key) {
   return Math.min(7200, Math.max(600, dur * 2 + 300)) * 1000;
 }
 
-async function transcribe(audioKey, env) {
-  const audioUrl = await presignR2(audioKey, env);
-  const task = await asrSubmit(audioUrl, env);
-  console.log(`   [asr] submitted task=${task.taskId.slice(0, 8)}…`);
-  const res    = await asrPoll(task, env, Date.now() + asrDeadlineMs(audioKey));
-  const result = res.result || {};
+// Resumable transcription. Returns:
+//   { status: "done", transcript, srt }  — ready
+//   { status: "pending" }                — still processing; the alarm resumes next pass
+//   throws AsrError                       — deterministic failure / aged-out (caller marks empty)
+export async function transcribeResumable(audioKey, env, log) {
+  const sideKey = asrTaskKeyFor(audioKey);
+
+  // Resume an in-flight task, or submit a new one.
+  let task = null;
+  const side = await env.FILES.get(sideKey);
+  if (side) { try { task = JSON.parse(await side.text()); } catch { task = null; } }
+
+  if (!task || !task.taskId) {
+    const audioUrl = await presignR2(audioKey, env);
+    task = await asrSubmit(audioUrl, env);          // throws AsrError on submit failure
+    task.submittedAt = Date.now();
+    await env.FILES.put(sideKey, JSON.stringify(task), { httpMetadata: { contentType: "application/json" } });
+    log?.("ASR 已提交", { taskId: String(task.taskId).slice(0, 8) });
+  } else {
+    log?.("ASR 续查", { taskId: String(task.taskId).slice(0, 8), age_s: Math.round((Date.now() - (task.submittedAt || Date.now())) / 1000) });
+  }
+
+  const r = await asrPollBounded(task, env, ASR_POLLS_PER_PASS);
+  if (r.status === "pending") {
+    // Aged-out guard: a wedged task can't loop forever. Caller will mark empty.
+    if (task.submittedAt && Date.now() - task.submittedAt > ASR_MAX_AGE_MS) throw new AsrError("timeout");
+    return { status: "pending" };
+  }
+
+  await env.FILES.delete(sideKey).catch(() => {});
+  const result = r.data.result || {};
   const utts   = result.utterances || [];
   const text   = (result.text || "").trim() || utts.map(u => u.text || "").join("").trim();
-  return { transcript: text, srt: buildSrt(utts) };
+  return { status: "done", transcript: text, srt: buildSrt(utts) };
 }
 
 // ── SRT builder ────────────────────────────────────────────────────────────────
@@ -504,21 +558,30 @@ async function mineOneAudio(audioKey, allKeys, uploaded, env, modelCfg) {
 
     await notifyStatus(scope, stem, "asr", env);
 
-    // ── ASR ────────────────────────────────────────────────────────────────────
+    // ── ASR (resumable across passes) ───────────────────────────────────────────
     let transcript, srt;
     try {
-      log("ASR 提交中");
       const tAsr = Date.now();
-      ({ transcript, srt } = await transcribe(audioKey, env));
+      const r = await transcribeResumable(audioKey, env, log);
+      if (r.status === "pending") {
+        log("ASR 处理中,本趟未完成,下趟续查");
+        result = "pending";
+        return "pending";
+      }
+      ({ transcript, srt } = r);
       log("ASR 完成", { chars: transcript.length, duration_ms: Date.now() - tAsr });
     } catch (e) {
       if (e instanceof AsrError) {
+        await env.FILES.delete(asrTaskKeyFor(audioKey)).catch(() => {});
         await writeEmpty(audioKey, `asr-error:${e.code}`, env);
         await notifyStatus(scope, stem, "empty", env);
         log("ASR 错误", { code: e.code });
         result = "empty";
         return "empty";
       }
+      // Non-deterministic (network / subrequest budget): record the REAL error so
+      // it's visible in the minelog; leave no marker (sidecar persists) → retry next pass.
+      log("ASR 失败(非确定性,下趟重试)", { name: e?.name, message: String(e?.message ?? e).slice(0, 200) });
       throw e;
     }
 
@@ -602,7 +665,9 @@ async function mineOneAudio(audioKey, allKeys, uploaded, env, modelCfg) {
     return "mined";
 
   } finally {
-    if (result !== "skip") {
+    // "skip" = already processed; "pending" = ASR still running (would spam a log
+    // every resume pass). Only log terminal outcomes (mined / empty / error).
+    if (result !== "skip" && result !== "pending") {
       await writeMineLog(env, { ts: t0, stem, audioKey, result, elapsed_ms: Date.now() - t0, events });
     }
   }
@@ -642,18 +707,27 @@ export async function runMine(env) {
 
   console.log(`[mine] list: ${audios.length} audio · ${todo.length} unprocessed (${((Date.now()-t0)/1000).toFixed(1)}s)`);
 
-  let mined = 0, empty = 0;
+  let mined = 0, empty = 0, pending = 0, failed = 0;
+  let budget = MINE_SUBREQ_BUDGET, truncated = false;
   for (let i = 0; i < todo.length; i++) {
+    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${todo.length - i} 条留待下趟`); break; }
     console.log(`[mine] ── ${todo[i].split("/").pop()} (${i+1}/${todo.length})`);
     try {
       const r = await mineOneAudio(todo[i], allKeys, uploaded, env, modelCfg);
-      if (r === "mined") mined++;
-      else if (r === "empty") empty++;
+      if (r === "mined") { mined++; budget -= 8; }
+      else if (r === "empty") { empty++; budget -= 4; }
+      else if (r === "pending") { pending++; budget -= ASR_POLLS_PER_PASS + 2; }
+      else budget -= 2;
     } catch (e) {
+      failed++; budget -= ASR_POLLS_PER_PASS + 2;
       console.error(`[mine] FAILED ${todo[i]}: ${e.message || e}`);
     }
   }
 
+  // Resume soon if ASR is still cooking or we deferred work — but NOT merely on a
+  // failure (could be persistent → fast infinite loop). Failures wait for the cron.
+  const moreWork = pending > 0 || truncated;
   const elapsed = ((Date.now()-t0)/1000).toFixed(0);
-  console.log(`[mine] DONE: ${mined} mined · ${empty} empty · ${elapsed}s total`);
+  console.log(`[mine] DONE: ${mined} mined · ${empty} empty · ${pending} pending · ${failed} failed · ${elapsed}s · moreWork=${moreWork}`);
+  return { mined, empty, pending, failed, truncated, moreWork };
 }
