@@ -21,6 +21,7 @@
 
 import { readArticleDoc, writeArticleDoc, setHead, resolveArticles, withTopLevelArticles } from "../../lib/article-store.js";
 import { sanitizeSeg, sha256hex, timingSafeEqual, bytesToB64url, b64urlToBytes, b64urlToString, b64url, hmacSign, verifySession, anonScopeFromToken } from "../../lib/auth.js";
+import { checkArticlesShareable } from "../../lib/moderation.js";
 
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -296,7 +297,12 @@ export async function onRequest(context) {
     // via the same single withTopLevelArticles/resolveArticles as everywhere else,
     // so legacy raw-download clients work without an app update. Newer builds use
     // GET /articles/<stem> and never reach this branch.
-    if (request.method === 'GET' && /\/articles\/[^/]+\.json$/.test(key)) {
+    // Only the real article doc (articles/<stem>.json) gets the schema-3→top-level
+    // compat transform. EXCLUDE sidecars that also live under articles/ and end in
+    // .json (e.g. the resumable-ASR task sidecar <stem>.asr.json) — those must be
+    // served RAW, never run through readArticleDoc/migrateToV3 (which would wrap them
+    // in a misleading {head,versions,articles} shape).
+    if (request.method === 'GET' && /\/articles\/[^/]+\.json$/.test(key) && !key.endsWith('.asr.json')) {
       const doc = await readArticleDoc(env, key);
       if (doc) return json(withTopLevelArticles(doc));
     }
@@ -459,6 +465,14 @@ export async function onRequest(context) {
     let doc; try { doc = JSON.parse(await obj.text()); } catch { return json({ error: 'bad article' }, 400); }
     const articles = resolveArticles(doc);
     if (!articles.length) return json({ error: 'empty article' }, 400);
+    // Apple 1.2 filter (proactive, zero-cost): scan the article for objectionable
+    // keywords at SHARE time — flagged content can never be published to the public
+    // community. (A legacy doc.moderation.flagged from the old LLM pass is also honored.)
+    if (doc.moderation && doc.moderation.flagged) {
+      return json({ error: 'content_flagged', categories: doc.moderation.categories || [] }, 403);
+    }
+    const kw = await checkArticlesShareable(articles, env);
+    if (kw.flagged) return json({ error: 'content_flagged', term: kw.term }, 403);
     let author = '匿名';
     const md = await env.FILES.get(scope + 'CLAUDE.md');
     if (md) { const m = (await md.text()).match(/#\s*我的名字\s*\n+([^\n#]+)/); if (m && m[1].trim()) author = m[1].trim(); }
@@ -483,7 +497,15 @@ export async function onRequest(context) {
   // Reads the live article for each schema-2 post to get current title and count.
   if (request.method === 'GET' && action === 'community' && sub2 === 'list') {
     const listed = await env.FILES.list({ prefix: 'community/', limit: 1000 });
-    const postObjects = listed.objects.filter(o => /^community\/[^/]+\.json$/.test(o.key)).slice(0, 200);
+    // Apple 1.2: a reported post is HIDDEN immediately (pending owner review). Report
+    // markers live at community/reports/<shareId>.json; drop those shareIds from the feed.
+    const hidden = new Set(listed.objects
+      .filter(o => /^community\/reports\/[^/]+\.json$/.test(o.key))
+      .map(o => o.key.replace('community/reports/', '').replace(/\.json$/, '')));
+    const postObjects = listed.objects
+      .filter(o => /^community\/[^/]+\.json$/.test(o.key))
+      .filter(o => !hidden.has(o.key.replace('community/', '').replace(/\.json$/, '')))
+      .slice(0, 200);
     // Fan out the per-post reads (pointer + live article) — see mapLimit above.
     const results = await mapLimit(postObjects, 32, async (o) => {
       const obj = await env.FILES.get(o.key);
@@ -524,6 +546,65 @@ export async function onRequest(context) {
     if (owner !== scope) return json({ error: 'not owner' }, 403);
     await env.FILES.delete(key);
     return json({ ok: true });
+  }
+
+  // Report a community post — any signed-in user. Apple 1.2: a report HIDES the post
+  // from the feed immediately (pending owner review), recording the reporter (deduped).
+  // The owner reviews + removes/restores at /voicedrop/admin/reports.
+  if (request.method === 'POST' && action === 'community' && sub2 === 'report') {
+    const shareId = segments[2] || '';
+    if (!/^[0-9A-Za-z_-]{1,32}$/.test(shareId)) return json({ error: 'bad id' }, 400);
+    if (!(await env.FILES.head(`community/${shareId}.json`))) return json({ error: 'not found' }, 404);
+    let reason = ''; try { const b = await request.clone().json(); reason = (b && b.reason) || ''; } catch {}
+    const rk = `community/reports/${shareId}.json`;
+    let rec = { shareId, status: 'pending', firstAt: Date.now(), reporters: [] };
+    const ex = await env.FILES.get(rk);
+    if (ex) { try { rec = { ...rec, ...JSON.parse(await ex.text()), status: 'pending' }; } catch {} }
+    if (!Array.isArray(rec.reporters)) rec.reporters = [];
+    const by = scope || 'admin';
+    if (!rec.reporters.some(r => r.by === by)) rec.reporters.push({ by, at: Date.now(), reason: String(reason).slice(0, 200) });
+    await env.FILES.put(rk, JSON.stringify(rec), { httpMetadata: { contentType: 'application/json' } });
+    return json({ ok: true });
+  }
+
+  // Admin: list pending reports with the reported post's current title/author/excerpt.
+  if (request.method === 'GET' && action === 'community' && sub2 === 'reports') {
+    if (scope !== '') return json({ error: 'admin only' }, 403);
+    const listed = await env.FILES.list({ prefix: 'community/reports/', limit: 1000 });
+    const out = [];
+    for (const o of listed.objects) {
+      const shareId = o.key.replace('community/reports/', '').replace(/\.json$/, '');
+      let rec = null; try { rec = JSON.parse(await (await env.FILES.get(o.key)).text()); } catch {}
+      if (!rec || rec.status !== 'pending') continue;
+      let title = '', author = '', body = '', gone = false;
+      const pObj = await env.FILES.get(`community/${shareId}.json`);
+      if (!pObj) gone = true;
+      else try {
+        const p = JSON.parse(await pObj.text());
+        author = p.author || '';
+        const live = p.articleKey ? await env.FILES.get(p.articleKey) : null;
+        if (live) { const arts = resolveArticles(JSON.parse(await live.text())); title = arts[0]?.title || ''; body = (arts[0]?.body || '').slice(0, 600); }
+      } catch {}
+      out.push({ shareId, author, title, body, gone, reports: rec.reporters?.length || 0, firstAt: rec.firstAt, reporters: rec.reporters || [] });
+    }
+    out.sort((a, b) => (b.firstAt || 0) - (a.firstAt || 0));
+    return json({ reports: out });
+  }
+
+  // Admin: resolve a report — remove (delete the post for good) or restore (clear the
+  // report so the post is visible again).
+  if (request.method === 'POST' && action === 'community' && sub2 === 'resolve') {
+    if (scope !== '') return json({ error: 'admin only' }, 403);
+    const shareId = segments[2] || '';
+    if (!/^[0-9A-Za-z_-]{1,32}$/.test(shareId)) return json({ error: 'bad id' }, 400);
+    let act = 'restore'; try { const b = await request.clone().json(); act = (b && b.action) || 'restore'; } catch {}
+    if (act === 'remove') {
+      await env.FILES.delete(`community/${shareId}.json`).catch(() => {});
+      await env.FILES.delete(`community/reports/${shareId}.json`).catch(() => {});
+      return json({ ok: true, removed: true });
+    }
+    await env.FILES.delete(`community/reports/${shareId}.json`).catch(() => {});
+    return json({ ok: true, restored: true });
   }
 
   // Get one community post — reads the live article and merges with pointer metadata.
@@ -725,6 +806,14 @@ export async function onRequest(context) {
       return json({ ok: true });
     }
 
+    // PUT /articles/<stem>/blocked — mark no-credit
+    if (request.method === 'PUT' && subaction === 'blocked') {
+      const blockedKey = `${articleScope}articles/${stem}.blocked`;
+      let body; try { body = await request.json(); } catch { body = {}; }
+      await env.FILES.put(blockedKey, JSON.stringify({ status: 'blocked', reason: body.reason || 'no-credit' }), { httpMetadata: { contentType: 'application/json' } });
+      return json({ ok: true });
+    }
+
 // DELETE /articles/<stem> — delete article + all sidecars
     if (request.method === 'DELETE' && stem && !subaction) {
       const prefix = `${articleScope}articles/${stem}`;
@@ -732,6 +821,7 @@ export async function onRequest(context) {
         env.FILES.delete(`${prefix}.json`),
         env.FILES.delete(`${prefix}.srt`),
         env.FILES.delete(`${prefix}.empty`),
+        env.FILES.delete(`${prefix}.blocked`),
       ]);
       return json({ ok: true });
     }

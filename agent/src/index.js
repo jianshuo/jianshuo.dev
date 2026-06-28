@@ -16,7 +16,7 @@
 
 import { Agent, getAgentByName } from "agents";
 import { TOOL_DEFS } from "./tools.js";
-import { runMine, loadModelConfig, resolveEditModel } from "./miner.js";
+import { runMine, loadModelConfig, resolveEditModel, MINE_RESUME_MS } from "./miner.js";
 import { buildHistoryMessages, HISTORY_MAX_TURNS } from "./history.js";
 import { withTopLevelArticles } from "../../functions/lib/article-store.js";
 import { verifySession, anonScopeFromToken } from "../../functions/lib/auth.js";
@@ -25,6 +25,8 @@ import { writeLlmLog } from "./llmlog.js";
 import { QUEUE_TABLE_SQL, makeSqlStore, ArticleQueue } from "./queue.js";
 import { runEditTurn } from "./edit-turn.js";
 import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
+import { editGate, claudeCostUY, uyToSuanli, uyToYuan, suanliToUY } from "./usage.js";
+import { ensureAccount, debit, editCount, getLedger, grant, allAccounts } from "./usage_store.js";
 
 // Fallback model when no config/model.json is set. Editing is Anthropic-only
 // (tool-use loop), so the live model is resolved per-turn from the admin config
@@ -36,6 +38,17 @@ const MODEL = "claude-sonnet-4-6";
 function rand6() {
   return Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] % 1e6)
     .toString().padStart(6, "0");
+}
+
+// meteredEditGate — exported so test/usage_edit.test.js can unit-test it.
+// Fail-open: if USAGE is undefined (env binding absent), returns "ok".
+export async function meteredEditGate(db, scope, stem, now) {
+  if (!db) return "ok";
+  try {
+    const bal = await ensureAccount(db, scope, now);
+    const edits = await editCount(db, scope, stem);
+    return editGate(bal, edits);
+  } catch { return "ok"; }
 }
 
 // resolveArticles + withTopLevelArticles are imported from the shared
@@ -155,6 +168,12 @@ export class ArticleEditor extends Agent {
     const { articleKey, scope, token } = this._config();
     if (!articleKey) return { ok: false, error: "会话未初始化" };
     const stem = articleKey.replace(/\.json$/, "").split("/articles/").pop();
+
+    // Usage gate: check balance + per-article edit cap before spending any tokens.
+    const decision = await meteredEditGate(this.env.USAGE, scope, stem, Date.now());
+    if (decision === "no-credit") return { ok: false, error: "算力不足，无法继续编辑" };
+    if (decision === "limit") return { ok: false, error: "这篇已达编辑上限（100 次）" };
+
     const turnId = `${Date.now()}-${rand6()}`;
     const editModel = resolveEditModel(await loadModelConfig(this.env));
     const callClaude = this._makeLoggedCall({ turnId, scope, stem, instruction: row.text, model: editModel });
@@ -254,6 +273,14 @@ export class ArticleEditor extends Agent {
         error: r.ok ? undefined : r.errorText,
         meta: { stem, instruction },
       });
+      // Debit the cost of this API call. Best-effort: never breaks the edit.
+      try {
+        if (this.env.USAGE) {
+          const u = r.json?.usage || {};
+          await debit(this.env.USAGE, scope, claudeCostUY(model, u.input_tokens, u.output_tokens),
+            "edit", { model, in_tok: u.input_tokens, out_tok: u.output_tokens, stem, turn_id: turnId }, Date.now());
+        }
+      } catch {}
       if (!r.ok) throw new Error(`Claude HTTP ${r.status}: ${(r.errorText || "").slice(0, 160)}`);
       return r.json;
     };
@@ -317,7 +344,11 @@ export class Miner {
   }
 
   async alarm() {
-    await runMine(this.env);
+    // runMine processes a bounded slice (subrequest budget) and tells us if ASR is
+    // still cooking or work was deferred — if so, come back soon to resume so long
+    // audio finishes across passes instead of timing out in one invocation.
+    const r = await runMine(this.env);
+    if (r && r.moreWork) await this.state.storage.setAlarm(Date.now() + MINE_RESUME_MS);
   }
 }
 
@@ -399,6 +430,63 @@ export class LinkBroker {
   webSocketMessage(_ws, _msg) {}
   webSocketClose(_ws) {}
   webSocketError(_ws) {}
+}
+
+// ---------------------------------------------------------------------------
+// Usage route helpers
+// ---------------------------------------------------------------------------
+const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { "content-type": "application/json" } });
+const bearer = (req) => (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+const r1 = (n) => Math.round(n * 10) / 10;
+const r2 = (n) => Math.round(n * 100) / 100;
+
+export async function handleUsageRoute(url, request, env) {
+  if (!url.pathname.startsWith("/agent/usage/")) return null;
+  try {
+  const tok = bearer(request);
+  const isAdmin = env.FILES_TOKEN && tok === env.FILES_TOKEN;
+
+  if (url.pathname === "/agent/usage/balance" && request.method === "GET") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    if (!env.USAGE) return J({ suanli: 0, yuan: 0, granted_suanli: 0, spent_suanli: 0, degraded: true });
+    await ensureAccount(env.USAGE, scope, Date.now());
+    const a = await env.USAGE.prepare("SELECT balance_uy,granted_uy,spent_uy FROM account WHERE user_sub=?").bind(scope).first();
+    return J({ suanli: r1(uyToSuanli(a.balance_uy)), yuan: r2(uyToYuan(a.balance_uy)),
+      granted_suanli: r1(uyToSuanli(a.granted_uy)), spent_suanli: r1(uyToSuanli(a.spent_uy)) });
+  }
+
+  if (url.pathname === "/agent/usage/ledger" && request.method === "GET") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    if (!env.USAGE) return J({ entries: [], degraded: true });
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
+    const rows = await getLedger(env.USAGE, scope, limit);
+    return J({ entries: rows.map((e) => ({ ts: e.ts, kind: e.kind, reason: e.reason,
+      suanli: r1(uyToSuanli(e.amount_uy)), yuan: r2(uyToYuan(e.amount_uy)),
+      balance_suanli: r1(uyToSuanli(e.balance_uy)), detail: e.detail ? JSON.parse(e.detail) : null })) });
+  }
+
+  if (url.pathname === "/agent/usage/grant" && request.method === "POST") {
+    if (!isAdmin) return J({ error: "unauthorized" }, 401);
+    const b = await request.json().catch(() => ({}));
+    if (!b.user_sub || typeof b.suanli !== "number") return J({ error: "bad-request" }, 400);
+    await grant(env.USAGE, b.user_sub, suanliToUY(b.suanli), "campaign:" + (b.reason || "manual"), Date.now());
+    return J({ ok: true });
+  }
+
+  if (url.pathname === "/agent/usage/admin/accounts" && request.method === "GET") {
+    if (!isAdmin) return J({ error: "unauthorized" }, 401);
+    const rows = await allAccounts(env.USAGE);
+    return J({ accounts: rows.map((a) => ({ user_sub: a.user_sub,
+      balance_suanli: r1(uyToSuanli(a.balance_uy)), granted_suanli: r1(uyToSuanli(a.granted_uy)),
+      spent_suanli: r1(uyToSuanli(a.spent_uy)), spent_yuan: r2(uyToYuan(a.spent_uy)) })) });
+  }
+
+  return J({ error: "not-found" }, 404);
+  } catch (_) {
+    return J({ error: "usage-unavailable", degraded: true }, 200);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +665,8 @@ export default {
       }));
       return new Response(await r.text(), { status: r.status, headers: { "content-type": "application/json" } });
     }
+
+    { const r = await handleUsageRoute(url, request, env); if (r) return r; }
 
     return new Response("not found", { status: 404 });
   },

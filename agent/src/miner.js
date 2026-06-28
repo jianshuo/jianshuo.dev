@@ -13,10 +13,27 @@
 //   R2_SECRET_ACCESS_KEY   R2 S3-compatible secret key
 
 import { writeLlmLog } from "./llmlog.js";
+import { gateDecision, claudeCostUY, asrCostUY } from "./usage.js";
+import { ensureAccount, debit } from "./usage_store.js";
+import { hmacSign } from "../../functions/lib/auth.js";
 
 export const MINE_MODEL_DEFAULT = "claude-sonnet-4-6";
 const MIN_CHARS          = 20;
 const ORIGIN             = "https://jianshuo.dev";
+
+// ── Resumable ASR tuning ──────────────────────────────────────────────────────
+// Volcano ASR is async and slow for long audio (a 60-min file takes minutes to
+// transcribe). We must NOT poll it to completion inside one Worker/DO invocation:
+// every poll is a subrequest, and long audio blows the per-invocation subrequest
+// limit ("Too many subrequests") — the recording then errors at ~90s, leaves no
+// marker, and is retried forever. Instead: submit once, persist {taskId,logId} to
+// an R2 sidecar, poll only a few times per pass, and let the alarm resume next pass.
+const ASR_POLLS_PER_PASS   = 3;                 // ≤3 ASR subrequests per audio per pass
+const ASR_POLL_INTERVAL_MS = 2000;             // wait between polls within one pass
+const ASR_MAX_AGE_MS       = 30 * 60 * 1000;   // give up (mark empty) if not done in 30 min across passes
+const MINE_SUBREQ_BUDGET   = 30;               // ~fetch-subrequests to spend per invocation before deferring
+const MINE_RESUME_MS       = 10 * 1000;        // reschedule the alarm this soon while work remains
+export { ASR_MAX_AGE_MS, MINE_RESUME_MS };
 
 // ── Model config (R2 `config/model.json`, falls back to env + default) ─────────
 
@@ -150,6 +167,14 @@ function emptyKeyFor(key) {
   return `${parts.join("/")}/articles/${stem}.empty`;
 }
 
+// Pending ASR task sidecar: holds {taskId, logId, submittedAt} between passes so a
+// long transcription RESUMES instead of re-submitting. Distinct from the
+// `.json`/`.empty` markers, so the audio stays "unprocessed" until truly done.
+export function asrTaskKeyFor(key) {
+  const parts = key.split("/"); const stem = stemOf(key); parts.pop();
+  return `${parts.join("/")}/articles/${stem}.asr.json`;
+}
+
 // Per-user 训练风格 corpus entry for a shared style submission. The sample file's
 // existence doubles as the "already collected" marker (skip on the next run).
 function styleSampleKeyFor(key) {
@@ -161,6 +186,17 @@ function adminArticlePath(key) {
   const prefix = userPrefix(key);
   const sub = prefix.startsWith("users/") ? prefix.slice(6, -1) : prefix.slice(0, -1);
   return `${sub}/${stemOf(key)}`;
+}
+
+// Decide whether to mine this recording. too-long ignores balance; otherwise
+// lazy-create the account (first touch grants 500) then check balance.
+export async function meteredMineGate(db, scope, durationSec, now) {
+  if (durationSec > 3 * 3600) return "too-long";
+  if (!db) return "ok";                 // fail-open: no D1 binding
+  try {
+    const bal = await ensureAccount(db, scope, now);
+    return gateDecision(bal, durationSec);
+  } catch { return "ok"; }              // fail-open on D1 error
 }
 
 // Route a freshly-listed R2 key to a pipeline. The app's Share Extension tags
@@ -227,7 +263,7 @@ async function presignR2(key, env) {
 
 // ── Volcano ASR ────────────────────────────────────────────────────────────────
 
-class AsrError extends Error {
+export class AsrError extends Error {
   constructor(code) { super(`ASR deterministic error ${code}`); this.code = String(code); }
 }
 
@@ -255,7 +291,11 @@ async function asrSubmit(audioUrl, env) {
   return { taskId, logId: resp.headers.get("X-Tt-Logid") || "" };
 }
 
-async function asrPoll({ taskId, logId }, env, deadlineMs) {
+// Bounded poll: check the task at most `maxPolls` times this pass.
+//   { status: "done", data }  — transcription ready
+//   { status: "pending" }     — still processing; resume next pass
+//   throws AsrError           — deterministic Volcano failure (caller marks empty)
+async function asrPollBounded({ taskId, logId }, env, maxPolls) {
   const hdrs = {
     "X-Api-App-Key":     env.VOLC_ASR_APPID,
     "X-Api-Access-Key":  env.VOLC_ASR_ACCESS_TOKEN,
@@ -265,17 +305,19 @@ async function asrPoll({ taskId, logId }, env, deadlineMs) {
     "X-Api-Sequence":    "-1",
     "Content-Type":      "application/json",
   };
-  while (Date.now() < deadlineMs) {
+  for (let i = 0; i < maxPolls; i++) {
     const resp = await fetch("https://openspeech.bytedance.com/api/v3/auc/bigmodel/query",
       { method: "POST", headers: hdrs, body: JSON.stringify({ task_id: taskId }) });
     const code = resp.headers.get("X-Api-Status-Code") || "";
     const text = await resp.text();
-    const res  = text.trim() ? JSON.parse(text) : {};
-    if (code === "20000000" || res.audio_info?.duration || res.result?.text?.trim()) return res;
+    let res;
+    try { res = text.trim() ? JSON.parse(text) : {}; }
+    catch { throw new AsrError(`bad-json:${code || resp.status}`); }
+    if (code === "20000000" || res.audio_info?.duration || res.result?.text?.trim()) return { status: "done", data: res };
     if (code && code !== "20000001" && code !== "20000002") throw new AsrError(code);
-    await new Promise(r => setTimeout(r, 2000));
+    if (i < maxPolls - 1) await new Promise(r => setTimeout(r, ASR_POLL_INTERVAL_MS));
   }
-  throw new Error("ASR timed out");
+  return { status: "pending" };
 }
 
 // 从 VoiceDrop 文件名的 <dur> 段解析音频时长(秒)。命名规范见 voicedrop/admin/index.html:
@@ -286,27 +328,40 @@ function audioDurationSeconds(key) {
   return m ? parseInt(m[1] || 0, 10) * 60 + parseInt(m[2], 10) : null;
 }
 
-// 轮询火山 ASR 的死线。旧的写死 600s 只够短录音;长录音(如 67 分钟)在 10 分钟内
-// 跑不完 → 超时 → 当成瞬时错误无限重试 = "一直报错"。按时长伸缩:~2x 实时 + 300s,
-// 600s 下限、2h 上限。
-function asrDeadlineMs(key) {
-  const dur = audioDurationSeconds(key);
-  // 解析不到时长往往正是「长录音但文件名缺 <dur> 段」这种会失败的情形——若仍退回 600s
-  // 就会重蹈超时覆辙。宁可给足上限(2h)让它真正跑完;命中确定性错误码时 asrPoll 会
-  // 立即抛出退出,不会白等到死线。
-  if (dur == null) return 7200 * 1000;
-  return Math.min(7200, Math.max(600, dur * 2 + 300)) * 1000;
-}
+// Resumable transcription. Returns:
+//   { status: "done", transcript, srt, asrDurMs }  — ready
+//   { status: "pending" }                          — still processing; the alarm resumes next pass
+//   throws AsrError                                 — deterministic failure / aged-out (caller marks empty)
+export async function transcribeResumable(audioKey, env, log) {
+  const sideKey = asrTaskKeyFor(audioKey);
 
-async function transcribe(audioKey, env) {
-  const audioUrl = await presignR2(audioKey, env);
-  const task = await asrSubmit(audioUrl, env);
-  console.log(`   [asr] submitted task=${task.taskId.slice(0, 8)}…`);
-  const res    = await asrPoll(task, env, Date.now() + asrDeadlineMs(audioKey));
-  const result = res.result || {};
+  // Resume an in-flight task, or submit a new one.
+  let task = null;
+  const side = await env.FILES.get(sideKey);
+  if (side) { try { task = JSON.parse(await side.text()); } catch { task = null; } }
+
+  if (!task || !task.taskId) {
+    const audioUrl = await presignR2(audioKey, env);
+    task = await asrSubmit(audioUrl, env);          // throws AsrError on submit failure
+    task.submittedAt = Date.now();
+    await env.FILES.put(sideKey, JSON.stringify(task), { httpMetadata: { contentType: "application/json" } });
+    log?.("ASR 已提交", { taskId: String(task.taskId).slice(0, 8) });
+  } else {
+    log?.("ASR 续查", { taskId: String(task.taskId).slice(0, 8), age_s: Math.round((Date.now() - (task.submittedAt || Date.now())) / 1000) });
+  }
+
+  const r = await asrPollBounded(task, env, ASR_POLLS_PER_PASS);
+  if (r.status === "pending") {
+    // Aged-out guard: a wedged task can't loop forever. Caller will mark empty.
+    if (task.submittedAt && Date.now() - task.submittedAt > ASR_MAX_AGE_MS) throw new AsrError("timeout");
+    return { status: "pending" };
+  }
+
+  await env.FILES.delete(sideKey).catch(() => {});
+  const result = r.data.result || {};
   const utts   = result.utterances || [];
   const text   = (result.text || "").trim() || utts.map(u => u.text || "").join("").trim();
-  return { transcript: text, srt: buildSrt(utts) };
+  return { status: "done", transcript: text, srt: buildSrt(utts), asrDurMs: r.data.audio_info?.duration };
 }
 
 // ── SRT builder ────────────────────────────────────────────────────────────────
@@ -453,6 +508,36 @@ async function generateArticles(transcript, claudeMd, photos, force, env, modelC
   return { articles: parseArticles(text), latencyMs, rawResp };
 }
 
+// ── Content moderation (Apple App Store 1.2 — filter objectionable UGC) ────────
+// Judged ONCE here at generation time and stamped onto the article doc as
+// `moderation:{flagged,categories,at}`. The community-share route only READS this
+// flag (no second LLM call) and refuses to publish a flagged article. Anthropic
+// (haiku) regardless of the mining provider, so moderation stays reliable + cheap.
+// Fail-open on any infra error (don't block legit content) — report/block still cover it.
+const MOD_CATEGORIES = "色情或露骨性内容、暴力血腥、仇恨或歧视、骚扰或欺凌、违法内容(毒品/武器/诈骗等)、自残或自杀、未成年人不当内容";
+export async function moderateArticles(articles, env) {
+  if (!env.CLAUDE_API_KEY) return { flagged: false, skipped: "no-key" };
+  const text = (articles || []).map(a => `${a.title || ""}\n${a.body || ""}`).join("\n\n").trim().slice(0, 16000);
+  if (!text) return { flagged: false };
+  const system = `你是面向公开社区的内容安全审核员。判断下面这篇用户生成的中文文章，是否含有不适合公开展示的内容（${MOD_CATEGORIES}）。正常的观点表达、商业、生活、科技、情绪宣泄一律视为安全(false)；只有明确违规才标记 true。只输出 JSON，不要解释：{"flagged":true|false,"categories":["命中的类别"]}`;
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 200,
+        system, messages: [{ role: "user", content: text }] }),
+    });
+    if (!resp.ok) return { flagged: false, error: `http-${resp.status}` };
+    const j = await resp.json();
+    const out = (j.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const m = out.match(/\{[\s\S]*\}/);
+    const v = m ? JSON.parse(m[0]) : {};
+    return { flagged: !!v.flagged, categories: Array.isArray(v.categories) ? v.categories : [], at: Date.now() };
+  } catch (e) {
+    return { flagged: false, error: String((e && e.message) || e) };
+  }
+}
+
 // ── Article API writes (via versioned article API so history is preserved) ─────
 
 async function apiPut(path, body, contentType, env) {
@@ -474,6 +559,47 @@ async function writeSrt(audioKey, srt, env) {
 
 async function writeEmpty(audioKey, reason, env) {
   await apiPut(`articles/${adminArticlePath(audioKey)}/empty`, JSON.stringify({ reason }), "application/json", env);
+}
+
+async function writeBlocked(audioKey, reason, env) {
+  await apiPut(`articles/${adminArticlePath(audioKey)}/blocked`, JSON.stringify({ status: "blocked", reason }), "application/json", env);
+}
+
+// ── Auto-share to VD社区 ─────────────────────────────────────────────────────────
+// When the user has turned on 「自动分享到 VD社区」 (Settings → 发布), the app writes
+// `users/<sub>/CONFIG.json` = {autoShareCommunity:true}. After a fresh article lands
+// we mirror EXACTLY what the app's POST community/share endpoint does — same shareId
+// derivation, same pointer shape — so the post is byte-identical to a manual share:
+// the app detects it as 已分享, a re-mine updates the same post in place, and 取消分享
+// still works. Best-effort: never blocks or fails mining (caller wraps in try/catch).
+export async function maybeAutoShareCommunity(srcKey, env, log = () => {}) {
+  if (!env.SESSION_SECRET) return null;            // can't derive shareId without it
+  const scope = userPrefix(srcKey);                // users/<sub>/
+  const cfgObj = await env.FILES.get(scope + "CONFIG.json");
+  if (!cfgObj) return null;
+  let cfg; try { cfg = JSON.parse(await cfgObj.text()); } catch { return null; }
+  if (cfg.autoShareCommunity !== true) return null;
+
+  const articleKey = articleKeyFor(srcKey);        // users/<sub>/articles/<stem>.json
+  // author — same source/regex as the share endpoint (CLAUDE.md「# 我的名字」), else 匿名.
+  let author = "匿名";
+  const md = await env.FILES.get(scope + "CLAUDE.md");
+  if (md) { const m = (await md.text()).match(/#\s*我的名字\s*\n+([^\n#]+)/); if (m && m[1].trim()) author = m[1].trim(); }
+
+  const shareId = (await hmacSign("community:" + articleKey, env.SESSION_SECRET)).slice(0, 12);
+  const communityKey = `community/${shareId}.json`;
+  // Preserve firstSharedAt + replyTo when re-sharing (re-mine), exactly like the endpoint.
+  let firstSharedAt = Date.now();
+  let replyTo = null;
+  const existing = await env.FILES.get(communityKey);
+  if (existing) {
+    try { const ep = JSON.parse(await existing.text()); firstSharedAt = ep.firstSharedAt || firstSharedAt; replyTo = ep.replyTo || null; } catch {}
+  }
+  const post = { schema: 2, shareId, owner: scope, articleKey, author, firstSharedAt,
+                 ...(replyTo ? { replyTo } : {}) };
+  await env.FILES.put(communityKey, JSON.stringify(post), { httpMetadata: { contentType: "application/json" } });
+  log("自动分享到 VD社区", { shareId });
+  return shareId;
 }
 
 // ── StatusHub notification ─────────────────────────────────────────────────────
@@ -530,25 +656,55 @@ async function mineOneAudio(audioKey, allKeys, uploaded, env, modelCfg) {
       return "skip";
     }
 
+    // ── Balance gate (pre-ASR) ────────────────────────────────────────────────
+    const durSec = audioDurationSeconds(audioKey);
+    const decision = await meteredMineGate(env.USAGE, scope, durSec ?? 0, Date.now());
+    if (decision === "too-long") { await writeBlocked(audioKey, "too-long", env); return; }
+    if (decision === "no-credit") { await writeBlocked(audioKey, "no-credit", env); return; }
+    // Drop stale .blocked marker before proceeding (e.g. user topped up)
+    try { await env.FILES.delete(`${userPrefix(audioKey)}articles/${stemOf(audioKey)}.blocked`); } catch (_) {}
+
     await notifyStatus(scope, stem, "asr", env);
 
-    // ── ASR ────────────────────────────────────────────────────────────────────
-    let transcript, srt;
+    // ── ASR (resumable across passes) ───────────────────────────────────────────
+    let transcript, srt, asrDurMs;
     try {
-      log("ASR 提交中");
       const tAsr = Date.now();
-      ({ transcript, srt } = await transcribe(audioKey, env));
+      const r = await transcribeResumable(audioKey, env, log);
+      if (r.status === "pending") {
+        log("ASR 处理中,本趟未完成,下趟续查");
+        result = "pending";
+        return "pending";
+      }
+      ({ transcript, srt, asrDurMs } = r);
       log("ASR 完成", { chars: transcript.length, duration_ms: Date.now() - tAsr });
     } catch (e) {
       if (e instanceof AsrError) {
+        await env.FILES.delete(asrTaskKeyFor(audioKey)).catch(() => {});
         await writeEmpty(audioKey, `asr-error:${e.code}`, env);
         await notifyStatus(scope, stem, "empty", env);
         log("ASR 错误", { code: e.code });
         result = "empty";
         return "empty";
       }
+      // Non-deterministic (network / subrequest budget): record the REAL error so
+      // it's visible in the minelog; leave no marker (sidecar persists) → retry next pass.
+      log("ASR 失败(非确定性,下趟重试)", { name: e?.name, message: String(e?.message ?? e).slice(0, 200) });
       throw e;
     }
+
+    // Debit ASR cost (best-effort; uses actual ASR duration or filename estimate).
+    // asrDurMs is in MILLISECONDS (Volcano ASR audio_info.duration unit).
+    try {
+      if (env.USAGE) {
+        const rawSec = (asrDurMs ?? (durSec ?? 0) * 1000) / 1000;
+        // Sanity clamp: a malformed/huge value must not cause 1000x overcharge.
+        // Fall back to the filename-parsed durSec (or 0) for absurd values (>6h).
+        const asrSec = (Number.isFinite(rawSec) && rawSec >= 0 && rawSec <= 6 * 3600)
+          ? rawSec : (durSec ?? 0);
+        await debit(env.USAGE, scope, asrCostUY(asrSec), "asr", { asr_sec: Math.round(asrSec), stem }, Date.now());
+      }
+    } catch (_) {}
 
     if (!transcript) {
       await writeEmpty(audioKey, "no-speech", env);
@@ -591,6 +747,14 @@ async function mineOneAudio(audioKey, allKeys, uploaded, env, modelCfg) {
       try {
         const r = await generateArticles(transcript, force ? "" : claudeMd, force ? null : (photos.length ? photos : null), force, env, modelCfg);
         await writeLlmLog(env, { source: "mine", ok: true, status: 200, model: modelCfg.model, latency_ms: r.latencyMs, step, turn_id: turnId, meta, response: r.rawResp });
+        // Debit Claude cost (best-effort)
+        try {
+          if (env.USAGE) {
+            const u = r.rawResp?.usage || {};
+            await debit(env.USAGE, scope, claudeCostUY(modelCfg.model, u.input_tokens, u.output_tokens),
+              "mine", { model: modelCfg.model, in_tok: u.input_tokens, out_tok: u.output_tokens, stem, turn_id: turnId }, Date.now());
+          }
+        } catch (_) {}
         log(`LLM 完成${force ? " (force)" : ""}`, { articles: r.articles.length, latency_ms: r.latencyMs });
         return r.articles;
       } catch (e) {
@@ -625,12 +789,15 @@ async function mineOneAudio(audioKey, allKeys, uploaded, env, modelCfg) {
     await writeArticle(audioKey, doc, env);
     if (srt) await writeSrt(audioKey, srt, env);
     await notifyStatus(scope, stem, "ready", env);
+    try { await maybeAutoShareCommunity(audioKey, env, log); } catch (e) { log("自动分享失败", { error: String(e) }); }
     log("写入完成", { articles: articles.length, titles: articles.map(a => a.title) });
     result = "mined";
     return "mined";
 
   } finally {
-    if (result !== "skip") {
+    // "skip" = already processed; "pending" = ASR still running (would spam a log
+    // every resume pass). Only log terminal outcomes (mined / empty / error).
+    if (result !== "skip" && result !== "pending") {
       await writeMineLog(env, { ts: t0, stem, audioKey, result, elapsed_ms: Date.now() - t0, events });
     }
   }
@@ -683,6 +850,14 @@ async function mineOneText(textKey, uploaded, env, modelCfg) {
       try {
         const r = await generateArticles(text, force ? "" : claudeMd, null, force, env, modelCfg);
         await writeLlmLog(env, { source: "mine", ok: true, status: 200, model: modelCfg.model, latency_ms: r.latencyMs, step, turn_id: turnId, meta, response: r.rawResp });
+        // Debit Claude cost (best-effort)
+        try {
+          if (env.USAGE) {
+            const u = r.rawResp?.usage || {};
+            await debit(env.USAGE, scope, claudeCostUY(modelCfg.model, u.input_tokens, u.output_tokens),
+              "mine", { model: modelCfg.model, in_tok: u.input_tokens, out_tok: u.output_tokens, stem, turn_id: turnId }, Date.now());
+          }
+        } catch (_) {}
         log(`LLM 完成${force ? " (force)" : ""}`, { articles: r.articles.length, latency_ms: r.latencyMs });
         return r.articles;
       } catch (e) {
@@ -710,6 +885,7 @@ async function mineOneText(textKey, uploaded, env, modelCfg) {
     };
     await writeArticle(textKey, doc, env);
     await notifyStatus(scope, stem, "ready", env);
+    try { await maybeAutoShareCommunity(textKey, env, log); } catch (e) { log("自动分享失败", { error: String(e) }); }
     log("写入完成", { articles: articles.length, titles: articles.map(a => a.title) });
     return (result = "mined");
 
@@ -792,39 +968,56 @@ export async function runMine(env) {
 
   console.log(`[mine] list: ${audios.length} audio · ${texts.length} text · ${styles.length} style · ${todo.length + texts.length + styles.length} unprocessed (${((Date.now()-t0)/1000).toFixed(1)}s)`);
 
-  let mined = 0, empty = 0, styled = 0;
+  let mined = 0, empty = 0, styled = 0, pending = 0, failed = 0;
+  // Subrequest budget: stop spending before hitting the per-invocation cap and
+  // resume next pass (the Miner alarm reschedules while moreWork is true). Each
+  // outcome costs roughly its fetch count; defer the rest by breaking out.
+  let budget = MINE_SUBREQ_BUDGET, truncated = false;
 
   for (let i = 0; i < todo.length; i++) {
+    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${todo.length - i} 条音频留待下趟`); break; }
     console.log(`[mine] ── ${todo[i].split("/").pop()} (audio ${i+1}/${todo.length})`);
     try {
       const r = await mineOneAudio(todo[i], allKeys, uploaded, env, modelCfg);
-      if (r === "mined") mined++;
-      else if (r === "empty") empty++;
+      if (r === "mined") { mined++; budget -= 8; }
+      else if (r === "empty") { empty++; budget -= 4; }
+      else if (r === "pending") { pending++; budget -= ASR_POLLS_PER_PASS + 2; }
+      else budget -= 2;
     } catch (e) {
+      failed++; budget -= ASR_POLLS_PER_PASS + 2;
       console.error(`[mine] FAILED ${todo[i]}: ${e.message || e}`);
     }
   }
 
   for (let i = 0; i < texts.length; i++) {
+    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${texts.length - i} 条文本留待下趟`); break; }
     console.log(`[mine] ── ${texts[i].split("/").pop()} (text ${i+1}/${texts.length})`);
     try {
       const r = await mineOneText(texts[i], uploaded, env, modelCfg);
-      if (r === "mined") mined++;
-      else if (r === "empty") empty++;
+      if (r === "mined") { mined++; budget -= 8; }
+      else if (r === "empty") { empty++; budget -= 4; }
+      else budget -= 2;
     } catch (e) {
+      failed++; budget -= 4;
       console.error(`[mine] FAILED ${texts[i]}: ${e.message || e}`);
     }
   }
 
   for (let i = 0; i < styles.length; i++) {
+    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${styles.length - i} 条风格留待下趟`); break; }
     console.log(`[mine] ── ${styles[i].split("/").pop()} (style ${i+1}/${styles.length})`);
     try {
       if (await collectStyle(styles[i], uploaded, env) === "style") styled++;
+      budget -= 2;
     } catch (e) {
       console.error(`[mine] FAILED style ${styles[i]}: ${e.message || e}`);
     }
   }
 
+  // Resume soon if ASR is still cooking or we deferred work — but NOT merely on a
+  // failure (could be persistent → fast infinite loop). Failures wait for the cron.
+  const moreWork = pending > 0 || truncated;
   const elapsed = ((Date.now()-t0)/1000).toFixed(0);
-  console.log(`[mine] DONE: ${mined} mined · ${empty} empty · ${styled} style · ${elapsed}s total`);
+  console.log(`[mine] DONE: ${mined} mined · ${empty} empty · ${pending} pending · ${styled} style · ${failed} failed · ${elapsed}s · moreWork=${moreWork}`);
+  return { mined, empty, pending, styled, failed, truncated, moreWork };
 }
