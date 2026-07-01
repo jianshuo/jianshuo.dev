@@ -28,7 +28,8 @@ describe("buildMinePrompt — 个人文风顶替默认", () => {
   const p = buildMinePrompt({ transcript: T, styleText: "我的专属文风XYZ", photos: [], force: false, provider: "anthropic", model: "m" });
   it("style 槽用传入文风、不再含默认 DNA", () => {
     expect(p.system[0].text).toContain("我的专属文风XYZ");
-    expect(p.system[0].text).not.toContain("胸有成竹");
+    // 探针改用 DEFAULT_STYLE 独有短语；「胸有成竹」已进 MINE_SYSTEM 标题指引，不再能当默认文风的标志
+    expect(p.system[0].text).not.toContain("绝不用「笔者」");
   });
 });
 
