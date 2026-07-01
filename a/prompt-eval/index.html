@@ -1,0 +1,307 @@
+<title>一句话能不能让标题更好 · VoiceDrop prompt 评估</title>
+<style>
+  :root{
+    --ground:#F3F5F7;        /* cool paper */
+    --panel:#FFFFFF;
+    --ink:#161A1E;           /* cool near-black */
+    --muted:#5C6672;         /* cool grey */
+    --faint:#8A94A0;
+    --line:#E1E6EA;
+    --cand:#137a5c;          /* candidate = 冠军的挑战者，取信心绿 */
+    --cand-soft:#d6ece3;
+    --champ:#b0682f;         /* champion = 现任，取克制陶土 */
+    --champ-soft:#f0e2d4;
+    --tie:#c3ccd4;
+    --tie-soft:#eef1f4;
+    --promote:#137a5c;
+    --hold:#b0682f;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC",Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto;padding:0 24px}
+  a{color:var(--cand)}
+
+  /* ---- masthead ---- */
+  header.top{padding:64px 0 40px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .eyebrow .dot{width:5px;height:5px;border-radius:50%;background:var(--cand)}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(32px,5.5vw,52px);line-height:1.08;letter-spacing:-.01em;text-wrap:balance;margin:18px 0 14px}
+  .dek{font-size:18px;color:var(--muted);max-width:60ch;margin:0}
+
+  /* ---- verdict strip ---- */
+  .verdict{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:36px 0 8px}
+  .verdict .cell{background:var(--panel);padding:18px 20px}
+  .verdict .k{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .verdict .v{font-family:var(--serif);font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:6px}
+  .verdict .v small{font-family:var(--sans);font-size:14px;font-weight:400;color:var(--muted)}
+  .badge{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.04em;padding:5px 12px;border-radius:999px}
+  .badge.promote{background:var(--cand-soft);color:#0c5a43}
+  .badge.hold{background:var(--champ-soft);color:#7d491f}
+  .badge .tick{width:7px;height:7px;border-radius:50%;background:currentColor}
+
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--cand);margin:0 0 10px}
+  h2{font-family:var(--serif);font-weight:600;font-size:26px;letter-spacing:-.01em;margin:0 0 16px;text-wrap:balance}
+  h3{font-size:15px;font-weight:650;margin:26px 0 8px;letter-spacing:-.005em}
+  p{margin:0 0 16px;max-width:65ch}
+  .lead{font-size:18px}
+  strong{font-weight:650}
+  em.term{font-style:normal;font-family:var(--mono);font-size:.9em;background:var(--tie-soft);padding:1px 6px;border-radius:5px;color:#33404c}
+
+  /* ---- the diff card ---- */
+  .diff{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:8px 0 4px}
+  .diff .row{display:flex;gap:0;border-top:1px solid var(--line)}
+  .diff .row:first-child{border-top:0}
+  .diff .tag{flex:0 0 92px;padding:16px 16px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);border-right:1px solid var(--line)}
+  .diff .body{padding:16px 18px;font-size:15px}
+  .diff .added{background:var(--cand-soft)}
+  .diff .added .tag{color:#0c5a43}
+  .diff .plus{color:var(--cand);font-weight:700}
+
+  /* ---- round comparison ---- */
+  .rounds{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:6px 0}
+  @media(max-width:640px){.rounds{grid-template-columns:1fr}.verdict{grid-template-columns:1fr 1fr}}
+  .round{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .round .rlabel{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .round .rname{font-family:var(--serif);font-size:19px;font-weight:600;margin:4px 0 16px}
+  .gauge{position:relative;height:12px;border-radius:999px;background:var(--tie-soft);overflow:hidden;margin:0 0 6px}
+  .gauge .fill{position:absolute;inset:0 auto 0 0;border-radius:999px;animation:grow 1s cubic-bezier(.2,.7,.2,1) both}
+  .gauge.g1 .fill{background:var(--hold)}
+  .gauge.g2 .fill{background:var(--promote)}
+  .thr{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink);opacity:.55}
+  .thr::after{content:"70%";position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.05em}
+  .gmeta{display:flex;justify-content:space-between;align-items:baseline;font-variant-numeric:tabular-nums}
+  .gmeta .pct{font-family:var(--serif);font-size:34px;font-weight:600}
+  .gmeta .wl{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .rnote{font-size:13.5px;color:var(--muted);margin:14px 0 0}
+  .arrow-note{text-align:center;font-size:13px;color:var(--faint);font-family:var(--mono);margin:14px 0 2px;letter-spacing:.03em}
+
+  /* ---- dimension bars ---- */
+  .dims{margin:10px 0 4px;display:flex;flex-direction:column;gap:16px}
+  .dim .dhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+  .dim .dname{font-weight:650;font-size:15px}
+  .dim .dname .star{color:var(--cand);font-family:var(--mono);font-size:11px;letter-spacing:.06em;margin-left:8px}
+  .dim .dcount{font-family:var(--mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar{display:flex;height:26px;border-radius:7px;overflow:hidden;background:var(--tie-soft)}
+  .bar span{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;min-width:0;overflow:hidden;animation:wgrow .9s cubic-bezier(.2,.7,.2,1) both}
+  .bar .s-cand{background:var(--cand)}
+  .bar .s-tie{background:var(--tie);color:#4a555f}
+  .bar .s-champ{background:var(--champ)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted);margin:4px 0 0}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+  /* ---- title pairs ---- */
+  .pairs{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .pair{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+  .pair:first-child{border-top:0}
+  @media(max-width:640px){.pair{grid-template-columns:1fr}}
+  .pair .side{padding:15px 18px}
+  .pair .champ-side{border-right:1px solid var(--line);color:var(--muted)}
+  .pair .cand-side{background:linear-gradient(90deg,var(--cand-soft),#e7f3ee)}
+  .pair .slab{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;display:block;margin-bottom:5px}
+  .champ-side .slab{color:var(--champ)}
+  .cand-side .slab{color:#0c5a43}
+  .pair .ttl{font-family:var(--serif);font-size:16px;line-height:1.35}
+  .pair .fx{grid-column:1/-1;font-family:var(--mono);font-size:11px;color:var(--faint);padding:6px 18px 0;letter-spacing:.03em}
+  @media(max-width:640px){.pair .cand-side{border-top:1px solid var(--line)}}
+
+  ul.clean{list-style:none;padding:0;margin:0 0 16px;display:flex;flex-direction:column;gap:12px}
+  ul.clean li{padding-left:22px;position:relative;max-width:64ch}
+  ul.clean li::before{content:"";position:absolute;left:0;top:10px;width:8px;height:8px;border-radius:2px;background:var(--cand)}
+  ul.clean li.warn::before{background:var(--hold)}
+
+  .callout{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--champ);border-radius:10px;padding:18px 20px;margin:8px 0}
+  .callout .ct{font-weight:650;font-size:14px;margin:0 0 6px}
+  .callout p{font-size:14.5px;color:var(--muted);margin:0}
+
+  .scale{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:6px 0}
+  @media(max-width:640px){.scale{grid-template-columns:1fr 1fr}}
+  .scale .s{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:16px}
+  .scale .sn{font-family:var(--serif);font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
+  .scale .sl{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+
+  footer{padding:40px 0 72px;color:var(--faint);font-size:13px;font-family:var(--mono)}
+  footer .priv{color:var(--muted);margin-bottom:10px}
+
+  @keyframes grow{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1)}}
+  @keyframes wgrow{from{opacity:0}to{opacity:1}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow"><span>VoiceDrop 挖矿 Prompt 评估</span><span class="dot"></span><span>2026-07-01</span><span class="dot"></span><span>run: titletest</span></div>
+    <h1>一句话，能不能让标题更好？</h1>
+    <p class="dek">给挖矿 prompt 加一句「标题写法」的指引——只改这一处，其余分毫不动。然后用 15 条真实录音、双盲成对评审，让数据回答：改好了，还是改坏了。</p>
+
+    <div class="verdict">
+      <div class="cell"><div class="k">最终判定</div><div class="v"><span class="badge promote"><span class="tick"></span>PROMOTE</span></div></div>
+      <div class="cell"><div class="k">去噪后胜率</div><div class="v">78.6<small>%</small></div></div>
+      <div class="cell"><div class="k">标题维度</div><div class="v">22<small> : 14 胜</small></div></div>
+      <div class="cell"><div class="k">评审 agent</div><div class="v">183<small> 个</small></div></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">问题</p>
+    <h2>被测的是什么</h2>
+    <p class="lead">VoiceDrop 把口述录音挖成公众号文章，靠的是一条 system prompt（<em class="term">MINE_SYSTEM</em>）。它把「拆几篇、守什么硬底线、什么文风」都讲清楚了，唯独几乎没讲<strong>标题该怎么写</strong>——而标题恰好是评审的打分维度之一。</p>
+    <p>假设很直接：补一句标题指引，标题会不会变好？会不会顺带把别处搞坏？这类问题不能靠「跑一遍看两眼」拍脑袋，得让它变成一次<strong>可复现的测量</strong>。</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">方法</p>
+    <h2>一台本地评估台</h2>
+    <p>整套 harness 跑在开发机的订阅上，不花计量 API 的钱。三根支柱：</p>
+    <ul class="clean">
+      <li><strong>金标集（golden set）</strong>：16 条冻结的真实录音转写，从 45 字到 19062 字、含 3 条多主题、覆盖九类话题与五种情绪。每个 prompt 版本都跑<strong>同一组</strong>，差异才能干净归因到 prompt 而非选样。</li>
+      <li><strong>成对双盲评审</strong>：同一段转写，冠军版与候选版各挖一次，产出 A/B 顺序随机打乱，交给一个不知道谁是谁的裁判，逐维度判「A 优 / B 优 / 相当」。只比谁好，不需要标准答案。</li>
+      <li><strong>单变量</strong>：候选 = 冠军 + 唯一一句标题指引。任何差异都只能来自这一处。</li>
+    </ul>
+    <div class="diff">
+      <div class="row"><div class="tag">冠军</div><div class="body">当前生产版 <em class="term">MINE_SYSTEM</em>（887 字）</div></div>
+      <div class="row added"><div class="tag">候选 +</div><div class="body"><span class="plus">＋</span> 标题写法：每篇标题用一句胸有成竹的断言，点出这篇最核心的判断或结论；不用「为什么…」「如何…」这类提问式钩子，不卖关子、不堆形容词。</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">两轮</p>
+    <h2>第一轮说「不行」，其实是噪声在说话</h2>
+    <p>第一轮 16 条各跑一次。结果<strong>卡在 60%</strong>——没过 70% 晋级线，机器判 HOLD。但翻开逐条理由，问题不在标题：大量胜负是被「某一版这次<em class="term">恰好</em>编造了一句」触发忠实一票否决决定的。那是<strong>单次采样的随机性</strong>，不是 prompt 的锅。于是第二轮做两件事——把一条 49 字残句（两版都正确返回空、却被误判为回退）移出金标集；每条改<strong>跑 3 次取多数票</strong>去噪。</p>
+
+    <div class="rounds">
+      <div class="round">
+        <div class="rlabel">第一轮 · 单样本 · 16 条</div>
+        <div class="rname">信号淹没在噪声里</div>
+        <div class="gauge g1"><div class="fill" style="width:60%"></div><div class="thr" style="left:70%"></div></div>
+        <div class="gmeta"><span class="pct">60%</span><span class="wl">候选 9 · 冠军 6 · 平 1</span></div>
+        <p class="rnote">与 50/50 无显著差异（P≈0.30）。判定 <strong style="color:var(--hold)">HOLD</strong>。</p>
+      </div>
+      <div class="round">
+        <div class="rlabel">第二轮 · K=3 去噪 · 15 条</div>
+        <div class="rname">信号浮出来了</div>
+        <div class="gauge g2"><div class="fill" style="width:78.6%"></div><div class="thr" style="left:70%"></div></div>
+        <div class="gmeta"><span class="pct">78.6%</span><span class="wl">候选 11 · 冠军 3 · 平 1</span></div>
+        <p class="rnote">显著（11:3，P≈0.03）。判定 <strong style="color:var(--promote)">PROMOTE</strong>。</p>
+      </div>
+    </div>
+    <p class="arrow-note">同一个候选 · 唯一变量是「去噪」· 60% → 78.6%</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">维度拆解</p>
+    <h2>没有一个维度偏向冠军</h2>
+    <p>第二轮 45 次盲评，每次逐维度打分，还原成候选/冠军后累计。标题（这次的靶心）与文风，候选明确领先；其余三项要么基本持平、要么候选微优。</p>
+
+    <div class="dims">
+      <div class="dim">
+        <div class="dhead"><span class="dname">标题<span class="star">★ 本次靶心</span></span><span class="dcount">候选 22 · 冠军 14 · 平 9</span></div>
+        <div class="bar"><span class="s-cand" style="width:48.9%">22</span><span class="s-tie" style="width:20%">9</span><span class="s-champ" style="width:31.1%">14</span></div>
+      </div>
+      <div class="dim">
+        <div class="dhead"><span class="dname">文风</span><span class="dcount">候选 25 · 冠军 16 · 平 4</span></div>
+        <div class="bar"><span class="s-cand" style="width:55.6%">25</span><span class="s-tie" style="width:8.9%">4</span><span class="s-champ" style="width:35.6%">16</span></div>
+      </div>
+      <div class="dim">
+        <div class="dhead"><span class="dname">完整性</span><span class="dcount">候选 10 · 冠军 5 · 平 30</span></div>
+        <div class="bar"><span class="s-cand" style="width:22.2%">10</span><span class="s-tie" style="width:66.7%">30</span><span class="s-champ" style="width:11.1%">5</span></div>
+      </div>
+      <div class="dim">
+        <div class="dhead"><span class="dname">忠实</span><span class="dcount">候选 11 · 冠军 8 · 平 26</span></div>
+        <div class="bar"><span class="s-cand" style="width:24.4%">11</span><span class="s-tie" style="width:57.8%">26</span><span class="s-champ" style="width:17.8%">8</span></div>
+      </div>
+      <div class="dim">
+        <div class="dhead"><span class="dname">选题切分</span><span class="dcount">候选 4 · 冠军 1 · 平 40</span></div>
+        <div class="bar"><span class="s-cand" style="width:8.9%">4</span><span class="s-tie" style="width:88.9%">40</span><span class="s-champ" style="width:2.2%">1</span></div>
+      </div>
+    </div>
+    <div class="legend"><span><i style="background:var(--cand)"></i>候选胜</span><span><i style="background:var(--tie)"></i>相当</span><span><i style="background:var(--champ)"></i>冠军胜</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">看得见的改变</p>
+    <h2>标题从「描述」变成「断言」</h2>
+    <p>指引的效果，摆出实际标题就一目了然——冠军偏观察式、铺陈式，候选直接把最核心的判断甩在标题上。（不同轮次因采样略有差异，这里取几组代表。）</p>
+    <div class="pairs">
+      <div class="pair">
+        <div class="side champ-side"><span class="slab">冠军</span><span class="ttl">公司不是只能往上走的——掉进坑里时，别再挖了</span></div>
+        <div class="side cand-side"><span class="slab">候选 ✦</span><span class="ttl">一家二十年的公司，就该死</span></div>
+        <div class="fx">fixture 14 · 人生反思 · 3 节 · 19062 字</div>
+      </div>
+      <div class="pair">
+        <div class="side champ-side"><span class="slab">冠军</span><span class="ttl">用 AI 的三个层级，95% 的人还卡在第一层</span></div>
+        <div class="side cand-side"><span class="slab">候选 ✦</span><span class="ttl">用 AI 至少要做到第三层，停在聊天那一层不算合格</span></div>
+        <div class="fx">fixture 15 · 技术观点 · 招牌干货</div>
+      </div>
+      <div class="pair">
+        <div class="side champ-side"><span class="slab">冠军</span><span class="ttl">渔夫和金鱼</span></div>
+        <div class="side cand-side"><span class="slab">候选 ✦</span><span class="ttl">老太婆越贪，大海越黑，最后还是那只破木盆</span></div>
+        <div class="fx">fixture 12 · 寓言 · 思辨</div>
+      </div>
+      <div class="pair">
+        <div class="side champ-side"><span class="slab">冠军</span><span class="ttl">日本地铁的楼梯中间，总有一条线</span></div>
+        <div class="side cand-side"><span class="slab">候选 ✦</span><span class="ttl">没有制度性的规定，想守纪律的人都不知道守什么</span></div>
+        <div class="fx">fixture 10 · 管理 · 思辨</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">诚实的注脚</p>
+    <h2>78.6% 该怎么读</h2>
+    <p>把话说满是不诚实的。这次测量有两个必须讲清的边界：</p>
+    <div class="callout">
+      <p class="ct">别把 78.6% 读成「候选强 28 个百分点」</p>
+      <p>逐条胜负里，相当一部分仍由「某版这次随机编造一句」的忠实否决决定——那是生成噪声。最该归因到这次改动的<strong>硬增益是「标题 22:14」和「文风 25:16」</strong>。78.6% 的正确读法是：候选<strong>至少不更差，且标题明确更好</strong>。</p>
+    </div>
+    <ul class="clean">
+      <li class="warn"><strong>单次采样噪声大</strong>：这正是第一轮 60% 的成因。多样本多数票是这套 harness 之后每轮的标配，而非可选项。</li>
+      <li class="warn"><strong>金标集会「污染」结论</strong>：那条 49 字残句本是「无内容」用例，却被质量 proxy 误判为回退、逼出了 HOLD。已移出——质量 fixture 与边界 fixture 要分开。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">这一轮花了多少</p>
+    <h2>规模与成本</h2>
+    <p>全程跑在 Claude Code 订阅上，生成用 Opus、盲评用 Sonnet，两者上下文隔离，裁判看不到谁是候选。</p>
+    <div class="scale">
+      <div class="s"><div class="sn">183</div><div class="sl">评审 agent（两轮合计）</div></div>
+      <div class="s"><div class="sn">4.9M</div><div class="sl">token</div></div>
+      <div class="s"><div class="sn">~44<span style="font-size:15px"> 分</span></div><div class="sl">墙钟时间</div></div>
+      <div class="s"><div class="sn">$0</div><div class="sl">计量 API 费用</div></div>
+    </div>
+    <p style="margin-top:20px;color:var(--muted);font-size:14.5px">第一轮 48 agent / 1.29M token / 16.6 分；第二轮 135 agent / 3.58M token / 27.2 分。最贵的一条永远是那段 67 分钟、19062 字的录音——它一条就吃掉可观份额。</p>
+  </div>
+</section>
+
+<section style="border-bottom:0">
+  <div class="wrap">
+    <p class="kicker">下一步</p>
+    <h2>机器判 PROMOTE，最后一票在人</h2>
+    <p>这是一处<strong>纯追加</strong>的指引——改不坏，最坏被忽略。去噪后标题显著变好、其余不劣、总判达标。按 harness 的规矩，达标只是拿到晋级的资格；<strong>把候选写回生产版的最后一票，永远是王建硕本人</strong>。文风这件事，机器只负责便宜地筛掉明显更差的，品味不外包。</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p class="priv">王建硕用 Claude Code 搭的挖矿 prompt 评估台 · 本轮为「标题指引」单变量实验。</p>
+    <div>wjs-evaling-voicedrop-prompts · 冠军 vs 候选 · 双盲成对 · K=3 去噪 · 生成 opus / 盲评 sonnet</div>
+  </div>
+</footer>
