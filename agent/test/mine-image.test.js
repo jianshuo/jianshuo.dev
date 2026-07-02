@@ -228,4 +228,36 @@ describe("mineOneAudio: 无语音 + 有照片 → vision", () => {
     expect(JSON.parse(articlePut.body).articles[0].body).toContain("1. 样本");           // 介绍文章列出素材清单
     expect(env.FILES._store.has(`${SCOPE}style/s1.json`)).toBe(false);                  // clearAfter → 语料清空
   });
+
+  it("style-extract 任务：Claude 报错 → llmlogs/ 里留下完整现场（请求 + 状态码 + 错误正文）", async () => {
+    // 提取失败在 mine log 里只剩一个 "error"；诊断要靠 llmlog——makeTaskClaude 必须把
+    // 失败调用（发了什么、HTTP 几、错误正文）记进 llmlogs/，admin/llm.html 才能回放。
+    const STEM = "VoiceDrop-2026-07-02-110000-0m0s-Thu-Morning-TaskStyleExtract";
+    const AUD  = `${SCOPE}${STEM}.m4a`;
+    const env = envWithPhotos({
+      [AUD]: "silentbytes",
+      [`${SCOPE}style/s1.json`]: JSON.stringify({ id: "s1", title: "样本", text: "我写东西偏口语，短句多。" }),
+    });
+    const fetchSpy = async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes("api.anthropic.com")) {
+        return { ok: false, status: 529, json: async () => ({}), text: async () => '{"type":"error","error":{"type":"overloaded_error"}}' };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }), text: async () => JSON.stringify({ ok: true }) };
+    };
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(mineOneAudio(AUD, [AUD], {}, env, MODEL_CFG)).rejects.toThrow("Claude HTTP 529");
+
+    const logKey = [...env.FILES._store.keys()].find((k) => k.startsWith("llmlogs/"));
+    expect(logKey).toBeTruthy();
+    const rec = JSON.parse(env.FILES._store.get(logKey));
+    expect(rec.ok).toBe(false);
+    expect(rec.http_status).toBe(529);
+    expect(rec.error).toContain("overloaded_error");        // 错误正文原样可查
+    expect(rec.request.messages[0].content).toContain("样本"); // 发出去的语料也在
+    expect(rec.meta).toEqual({ kind: "style-extract", samples: 1 });
+    expect(rec.user_scope).toBe(SCOPE);
+    expect(env.FILES._store.has(`${SCOPE}style/s1.json`)).toBe(true); // 失败不清语料，可重试
+  });
 });

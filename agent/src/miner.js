@@ -858,15 +858,35 @@ async function runTask(task, audioKey, env, modelCfg, log) {
 }
 
 // Minimal Claude caller for task handlers (worker CLAUDE_API_KEY; accumulates usage).
-function makeTaskClaude(env, model, usage) {
+// Every call is logged to llmlogs/ via writeLlmLog — success (full request+response),
+// HTTP error (status + first 2000 chars of the error body), or network throw — so a
+// failed 提取风格 can be diagnosed in admin/llm.html instead of showing up only as a
+// bare "error" in the mine log. `opts` = { scope (→user_scope), meta (e.g. {kind}) }.
+function makeTaskClaude(env, model, usage, opts = {}) {
   return async ({ system, messages }) => {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 1500, system, messages }),
+    const reqBody = { model, max_tokens: 1500, system, messages };
+    const t0 = Date.now();
+    let resp;
+    try {
+      resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify(reqBody),
+      });
+    } catch (e) {
+      await writeLlmLog(env, { ts: t0, source: "mine", user_scope: opts.scope, model, latency_ms: Date.now() - t0, http_status: 0, ok: false, request: reqBody, error: String(e), meta: opts.meta });
+      throw e;
+    }
+    const ok = resp.ok;
+    const j = ok ? await resp.json() : null;
+    await writeLlmLog(env, {
+      ts: t0, source: "mine", user_scope: opts.scope, model,
+      latency_ms: Date.now() - t0, http_status: resp.status, ok,
+      request: reqBody, response: ok ? j : undefined,
+      error: ok ? undefined : (await resp.text().catch(() => "")).slice(0, 2000),
+      meta: opts.meta,
     });
-    if (!resp.ok) throw new Error(`Claude HTTP ${resp.status}`);
-    const j = await resp.json();
+    if (!ok) throw new Error(`Claude HTTP ${resp.status}`);
     const u = j.usage || {};
     usage.input_tokens += u.input_tokens || 0;
     usage.output_tokens += u.output_tokens || 0;
@@ -911,7 +931,7 @@ async function mineStyleExtract(task, audioKey, env, modelCfg, log) {
   }
 
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-  const style = await distillStyle(samples, makeTaskClaude(env, modelCfg.model, usage));
+  const style = await distillStyle(samples, makeTaskClaude(env, modelCfg.model, usage, { scope, meta: { kind: "style-extract", samples: samples.length } }));
   await writeStyleDoc(env, `${scope}CLAUDE.json`, style, "share-extract");
   const { title, body } = buildStyleIntroArticle(style, samples);
   await writeReadyArticle(title, body);
