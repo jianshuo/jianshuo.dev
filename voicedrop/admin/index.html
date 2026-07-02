@@ -6,13 +6,6 @@
 <meta name="robots" content="noindex,nofollow"/>
 <title>VoiceDrop 控制台</title>
 <link rel="stylesheet" href="./theme.css"/>
-<script>
-/* Standalone/preview fallback for the three helpers the pages use. The production
-   server's /voicedrop/shared.js loads later and overrides these — safe either way. */
-window.$=window.$||function(s,r){return (r||document).querySelector(s);};
-window.esc=window.esc||function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
-window.resolveArticles=window.resolveArticles||function(doc){if(!doc)return[];var a=doc.articles||(doc.result&&doc.result.articles)||(doc.output&&doc.output.articles)||doc.results||[];if(!Array.isArray(a))return[];return a.map(function(x){return typeof x==='string'?{title:'',body:x}:{title:x.title||x.heading||'',body:x.body||x.content||x.text||''};});};
-</script>
 <style>
 .wrap{max-width:1040px;margin:0 auto;padding:26px 22px 90px}
 
@@ -73,37 +66,8 @@ window.resolveArticles=window.resolveArticles||function(doc){if(!doc)return[];va
 </head>
 <body>
 
-<!-- token gate -->
-<div id="gate" hidden style="max-width:430px">
-  <svg class="gate-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdGate" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdGate)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
-  <h1>VoiceDrop 控制台</h1>
-  <p>输入 master token 查看全系统状态。token 只存在本机浏览器，不上传。</p>
-  <input id="tok" type="password" placeholder="FILES_TOKEN" autocomplete="off" spellcheck="false"/>
-  <div class="err" id="gateErr"></div>
-  <button class="btn primary block" id="enter">进入</button>
-</div>
-
 <!-- dashboard -->
 <div id="app" hidden>
-  <nav class="appbar">
-    <div class="appbar-in">
-      <a class="brand" href="./">
-        <svg class="mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdNav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdNav)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
-        <span class="name">VoiceDrop</span><span class="sub">控制台</span>
-      </a>
-      <div class="nav-tabs">
-        <a class="nav-tab active" href="./">概览</a>
-        <a class="nav-tab" href="./reports.html">举报审核</a>
-        <a class="nav-tab" href="./usage.html">算力账本</a>
-        <a class="nav-tab" href="./mine.html">挖文日志</a>
-        <a class="nav-tab" href="./llm.html">LLM 日志</a>
-      </div>
-      <div class="nav-actions">
-        <button class="btn ghost" id="refresh">刷新</button>
-        <button class="btn ghost" id="logout">退出</button>
-      </div>
-    </div>
-  </nav>
 
   <div class="wrap">
     <div class="pagehead">
@@ -154,35 +118,32 @@ window.resolveArticles=window.resolveArticles||function(doc){if(!doc)return[];va
 </div>
 
 <script src="/voicedrop/shared.js"></script>
+<script src="./shell.js"></script>
 <script>
 const API = '/files/api';
-const TKEY = 'vd_admin_token';
-let TOKEN = localStorage.getItem(TKEY) || '';
-
-// $ / esc / resolveArticles come from /voicedrop/shared.js (single source of truth).
-const el = (t, c, h) => { const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+// $ / esc / el / resolveArticles come from shared.js; appbar / gate / token from shell.js.
 
 // ---- API helpers (admin scope: raw keys) ----
 async function apiList(){
-  const r = await fetch(`${API}/list`, { headers:{ Authorization:`Bearer ${TOKEN}` }});
+  const r = await fetch(`${API}/list`, { headers:{ Authorization:`Bearer ${VDAdmin.token()}` }});
   if(r.status===401) throw new Error('unauthorized');
   if(!r.ok) throw new Error('list failed: '+r.status);
   return (await r.json()).files || [];
 }
 async function apiGetJSON(key){
   const r = await fetch(`${API}/download/${key.split('/').map(encodeURIComponent).join('/')}`,
-    { headers:{ Authorization:`Bearer ${TOKEN}` }});
+    { headers:{ Authorization:`Bearer ${VDAdmin.token()}` }});
   if(!r.ok) throw new Error('download failed: '+r.status);
   return r.json();
 }
 async function apiGetText(key){
   const r = await fetch(`${API}/download/${key.split('/').map(encodeURIComponent).join('/')}`,
-    { headers:{ Authorization:`Bearer ${TOKEN}` }});
+    { headers:{ Authorization:`Bearer ${VDAdmin.token()}` }});
   if(!r.ok) throw new Error('download failed: '+r.status);
   return r.text();
 }
 function audioURL(key){
-  return `${API}/download/${key.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(TOKEN)}`;
+  return `${API}/download/${key.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(VDAdmin.token())}`;
 }
 
 // ---- filename parsing ----
@@ -246,7 +207,7 @@ async function load(){
   let files;
   try { files = await apiList(); }
   catch(e){
-    if(String(e.message).includes('unauthorized')){ logout('token 无效'); return; }
+    if(String(e.message).includes('unauthorized')){ VDAdmin.logout('token 无效'); return; }
     $('#users').innerHTML = `<div class="empty-state">加载失败：${esc(e.message)}</div>`;
     return;
   }
@@ -422,22 +383,6 @@ async function fillDetail(detail, r, wrap){
   }
 }
 
-// ---- gate / boot ----
-function showGate(msg){ $('#app').hidden=true; $('#gate').hidden=false; $('#gateErr').textContent=msg||''; $('#tok').focus(); }
-function logout(msg){ TOKEN=''; localStorage.removeItem(TKEY); showGate(msg); }
-function enter(){
-  const v=$('#tok').value.trim();
-  if(!v){ $('#gateErr').textContent='请输入 token'; return; }
-  TOKEN=v; localStorage.setItem(TKEY,v);
-  $('#gate').hidden=true; $('#app').hidden=false; load(); loadModelCfg();
-}
-$('#enter').onclick=enter;
-$('#tok').addEventListener('keydown',e=>{ if(e.key==='Enter')enter(); });
-$('#refresh').onclick=load;
-$('#logout').onclick=()=>logout();
-
-if(TOKEN){ $('#app').hidden=false; load(); loadModelCfg(); } else { showGate(); }
-
 // ── 模型设置 ──────────────────────────────────────────────────────────────────
 const PROVIDERS = {
   'anthropic':  { baseUrl: '',                                                    defaultModel: 'claude-sonnet-4-6' },
@@ -467,7 +412,7 @@ $('#mProvider').onchange = () => {
 };
 async function loadModelCfg() {
   try {
-    const r = await fetch(`${API}/download/config/model.json`, { headers:{ Authorization:`Bearer ${TOKEN}` }});
+    const r = await fetch(`${API}/download/config/model.json`, { headers:{ Authorization:`Bearer ${VDAdmin.token()}` }});
     if (!r.ok) return;
     const cfg = await r.json();
     const key = cfg.providerKey || cfg.provider || 'anthropic';
@@ -491,7 +436,7 @@ $('#mSave').onclick = async () => {
     $('#mSave').disabled = true;
     const r = await fetch(`${API}/upload/config/model.json`, {
       method: 'PUT',
-      headers: { Authorization:`Bearer ${TOKEN}`, 'Content-Type':'application/json' },
+      headers: { Authorization:`Bearer ${VDAdmin.token()}`, 'Content-Type':'application/json' },
       body: JSON.stringify(cfg),
     });
     if (!r.ok) throw new Error(`${r.status}`);
@@ -503,6 +448,14 @@ function showMsg(txt, color) {
   const m = $('#mMsg'); m.textContent = txt; m.style.color = color;
   setTimeout(() => { m.textContent = ''; }, 3000);
 }
+
+VDAdmin.init({
+  active: 'index',
+  title: 'VoiceDrop 控制台',
+  intro: '输入 master token 查看全系统状态。token 只存在本机浏览器，不上传。',
+  onEnter: () => { load(); loadModelCfg(); },
+  onRefresh: load,
+});
 </script>
 </body>
 </html>

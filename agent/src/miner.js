@@ -13,6 +13,10 @@
 //   R2_SECRET_ACCESS_KEY   R2 S3-compatible secret key
 
 import { writeLlmLog } from "./llmlog.js";
+import { callClaudeRaw, textOf, makeTextClaude } from "./claude.js";
+import { listAll } from "./r2.js";
+import { notifyStatus } from "./hub.js";
+import { loadStyleSamples, clearStyleCorpus, debitStyleExtract, emptyUsage } from "./style-corpus.js";
 import { gateDecision, claudeCostUY, asrCostUY } from "./usage.js";
 import { ensureAccount, debit } from "./usage_store.js";
 import { hmacSign } from "../../functions/lib/auth.js";
@@ -583,15 +587,11 @@ async function generateArticles(transcript, claudeMd, photos, force, env, modelC
     rawResp = await resp.json();
     text = rawResp.choices?.[0]?.message?.content || "";
   } else {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": modelCfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const r = await callClaudeRaw(modelCfg.apiKey, payload);
     latencyMs = Date.now() - t0;
-    if (!resp.ok) throw new Error(`Claude ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    rawResp = await resp.json();
-    text = (rawResp.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    if (!r.ok) throw new Error(`Claude ${r.status}: ${(r.errorText || "").slice(0, 200)}`);
+    rawResp = r.json;
+    text = textOf(rawResp);
   }
 
   return { articles: parseArticles(text), latencyMs, rawResp, request: reqForLog };
@@ -610,15 +610,10 @@ export async function moderateArticles(articles, env) {
   if (!text) return { flagged: false };
   const system = `你是面向公开社区的内容安全审核员。判断下面这篇用户生成的中文文章，是否含有不适合公开展示的内容（${MOD_CATEGORIES}）。正常的观点表达、商业、生活、科技、情绪宣泄一律视为安全(false)；只有明确违规才标记 true。只输出 JSON，不要解释：{"flagged":true|false,"categories":["命中的类别"]}`;
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 200,
-        system, messages: [{ role: "user", content: text }] }),
-    });
-    if (!resp.ok) return { flagged: false, error: `http-${resp.status}` };
-    const j = await resp.json();
-    const out = (j.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const r = await callClaudeRaw(env.CLAUDE_API_KEY, { model: "claude-haiku-4-5-20251001", max_tokens: 200,
+      system, messages: [{ role: "user", content: text }] });
+    if (!r.ok) return { flagged: false, error: r.status ? `http-${r.status}` : r.errorText };
+    const out = textOf(r.json);
     const m = out.match(/\{[\s\S]*\}/);
     const v = m ? JSON.parse(m[0]) : {};
     return { flagged: !!v.flagged, categories: Array.isArray(v.categories) ? v.categories : [], at: Date.now() };
@@ -690,18 +685,7 @@ export async function maybeAutoShareCommunity(srcKey, env, log = () => {}) {
   return shareId;
 }
 
-// ── StatusHub notification ─────────────────────────────────────────────────────
-
-async function notifyStatus(scope, stem, status, env) {
-  try {
-    const stub = env.StatusHub.get(env.StatusHub.idFromName("status:" + scope));
-    await stub.fetch(new Request("https://status-hub/broadcast", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stem, status }),
-    }));
-  } catch (_) {}
-}
+// notifyStatus is imported from ./hub.js (shared with index.js routes).
 
 // ── The ONE place LLM article-mining happens ──────────────────────────────────
 // generateArticles + LLM logging + 算力 debit + the natural→force retry, in a single
@@ -857,25 +841,6 @@ async function runTask(task, audioKey, env, modelCfg, log) {
   return await handler(task, audioKey, env, modelCfg, log);
 }
 
-// Minimal Claude caller for task handlers (worker CLAUDE_API_KEY; accumulates usage).
-function makeTaskClaude(env, model, usage) {
-  return async ({ system, messages }) => {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 1500, system, messages }),
-    });
-    if (!resp.ok) throw new Error(`Claude HTTP ${resp.status}`);
-    const j = await resp.json();
-    const u = j.usage || {};
-    usage.input_tokens += u.input_tokens || 0;
-    usage.output_tokens += u.output_tokens || 0;
-    usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
-    usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
-    return (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  };
-}
-
 // Task「style-extract」: read the 风格数据集 corpus → distill → write a new 写作风格 version +
 // write the 写作风格介绍 article as this placeholder's article (the visible output).
 async function mineStyleExtract(task, audioKey, env, modelCfg, log) {
@@ -883,17 +848,7 @@ async function mineStyleExtract(task, audioKey, env, modelCfg, log) {
   const stem = stemOf(audioKey);
   await notifyStatus(scope, stem, "mining", env);
 
-  const samples = [];
-  let cursor;
-  do {
-    const listed = await env.FILES.list({ prefix: `${scope}style/`, cursor });
-    for (const o of listed.objects) {
-      const obj = await env.FILES.get(o.key);
-      const s = obj && await obj.json().catch(() => null);
-      if (s && (s.text || "").trim()) samples.push(s);
-    }
-    cursor = listed.truncated ? listed.cursor : null;
-  } while (cursor);
+  const samples = await loadStyleSamples(env, scope);
 
   const writeReadyArticle = async (title, body) => {
     await writeArticle(audioKey, {
@@ -910,26 +865,14 @@ async function mineStyleExtract(task, audioKey, env, modelCfg, log) {
     return "mined";
   }
 
-  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-  const style = await distillStyle(samples, makeTaskClaude(env, modelCfg.model, usage));
+  const usage = emptyUsage();
+  const style = await distillStyle(samples, makeTextClaude(env, { model: modelCfg.model, usage }));
   await writeStyleDoc(env, `${scope}CLAUDE.json`, style, "share-extract");
   const { title, body } = buildStyleIntroArticle(style, samples);
   await writeReadyArticle(title, body);
 
-  if (task.clearAfter) {
-    try {
-      for (const prefix of [`${scope}style/`, `${scope}VoiceDrop-style-`]) {
-        let c;
-        do { const l = await env.FILES.list({ prefix, cursor: c }); for (const o of l.objects) await env.FILES.delete(o.key); c = l.truncated ? l.cursor : null; } while (c);
-      }
-    } catch (_) {}
-  }
-  try {
-    if (env.USAGE) {
-      await ensureAccount(env.USAGE, scope, Date.now());
-      await debit(env.USAGE, scope, claudeCostUY(modelCfg.model, usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens), "style-extract", { samples: samples.length }, Date.now());
-    }
-  } catch (_) {}
+  if (task.clearAfter) await clearStyleCorpus(env, scope);
+  await debitStyleExtract(env, scope, modelCfg.model, usage, samples.length);
   log("风格提取完成", { name: (style.split("\n")[0] || "").slice(0, 12), samples: samples.length });
   return "mined";
 }
@@ -1273,12 +1216,7 @@ export async function runMine(env) {
   }
 
   // Paginated list of all R2 objects
-  let cursor, allObjects = [];
-  do {
-    const listed = await env.FILES.list({ limit: 1000, cursor });
-    allObjects.push(...listed.objects);
-    cursor = listed.truncated ? listed.cursor : null;
-  } while (cursor);
+  const allObjects = await listAll(env.FILES, undefined, { limit: 1000 });
 
   const allKeys  = allObjects.map(o => o.key);
   const uploaded = Object.fromEntries(allObjects.map(o => [o.key, o.uploaded?.toISOString?.() || ""]));
@@ -1303,57 +1241,29 @@ export async function runMine(env) {
   // outcome costs roughly its fetch count; defer the rest by breaking out.
   let budget = MINE_SUBREQ_BUDGET, truncated = false;
 
-  for (let i = 0; i < todo.length; i++) {
-    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${todo.length - i} 条音频留待下趟`); break; }
-    console.log(`[mine] ── ${todo[i].split("/").pop()} (audio ${i+1}/${todo.length})`);
-    try {
-      const r = await mineOneAudio(todo[i], allKeys, uploaded, env, modelCfg);
-      if (r === "mined") { mined++; budget -= 8; }
-      else if (r === "empty") { empty++; budget -= 4; }
-      else if (r === "pending") { pending++; budget -= ASR_POLLS_PER_PASS + 2; }
-      else budget -= 2;
-    } catch (e) {
-      failed++; budget -= ASR_POLLS_PER_PASS + 2;
-      console.error(`[mine] FAILED ${todo[i]}: ${e.message || e}`);
-    }
-  }
-
-  for (let i = 0; i < tasks.length; i++) {
-    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${tasks.length - i} 条任务留待下趟`); break; }
-    console.log(`[mine] ── ${tasks[i].split("/").pop()} (task ${i+1}/${tasks.length})`);
-    try {
-      const r = await mineOneAudio(tasks[i], allKeys, uploaded, env, modelCfg);
-      if (r === "mined") { mined++; budget -= 8; }
-      else if (r === "empty") { empty++; budget -= 4; }
-      else budget -= 2;
-    } catch (e) {
-      failed++; budget -= 4;
-      console.error(`[mine] FAILED ${tasks[i]}: ${e.message || e}`);
-    }
-  }
-
-  for (let i = 0; i < texts.length; i++) {
-    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${texts.length - i} 条文本留待下趟`); break; }
-    console.log(`[mine] ── ${texts[i].split("/").pop()} (text ${i+1}/${texts.length})`);
-    try {
-      const r = await mineOneText(texts[i], uploaded, env, modelCfg);
-      if (r === "mined") { mined++; budget -= 8; }
-      else if (r === "empty") { empty++; budget -= 4; }
-      else budget -= 2;
-    } catch (e) {
-      failed++; budget -= 4;
-      console.error(`[mine] FAILED ${texts[i]}: ${e.message || e}`);
-    }
-  }
-
-  for (let i = 0; i < styles.length; i++) {
-    if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${styles.length - i} 条风格留待下趟`); break; }
-    console.log(`[mine] ── ${styles[i].split("/").pop()} (style ${i+1}/${styles.length})`);
-    try {
-      if (await collectStyle(styles[i], uploaded, env) === "style") styled++;
-      budget -= 2;
-    } catch (e) {
-      console.error(`[mine] FAILED style ${styles[i]}: ${e.message || e}`);
+  // The four pipelines used to be four hand-copied budget/try/catch loops; they
+  // differ only in handler + failure cost. Same processing order as before.
+  const groups = [
+    { label: "音频", tag: "audio", items: todo,   run: (k) => mineOneAudio(k, allKeys, uploaded, env, modelCfg), failCost: ASR_POLLS_PER_PASS + 2 },
+    { label: "任务", tag: "task",  items: tasks,  run: (k) => mineOneAudio(k, allKeys, uploaded, env, modelCfg), failCost: 4 },
+    { label: "文本", tag: "text",  items: texts,  run: (k) => mineOneText(k, uploaded, env, modelCfg), failCost: 4 },
+    { label: "风格", tag: "style", items: styles, run: (k) => collectStyle(k, uploaded, env), failCost: 2 },
+  ];
+  for (const g of groups) {
+    for (let i = 0; i < g.items.length; i++) {
+      if (budget <= 0) { truncated = true; console.log(`[mine] subrequest 预算用尽,剩 ${g.items.length - i} 条${g.label}留待下趟`); break; }
+      console.log(`[mine] ── ${g.items[i].split("/").pop()} (${g.tag} ${i + 1}/${g.items.length})`);
+      try {
+        const r = await g.run(g.items[i]);
+        if (r === "mined") { mined++; budget -= 8; }
+        else if (r === "empty") { empty++; budget -= 4; }
+        else if (r === "pending") { pending++; budget -= ASR_POLLS_PER_PASS + 2; }
+        else if (r === "style") { styled++; budget -= 2; }
+        else budget -= 2;
+      } catch (e) {
+        failed++; budget -= g.failCost;
+        console.error(`[mine] FAILED ${g.items[i]}: ${e.message || e}`);
+      }
     }
   }
 

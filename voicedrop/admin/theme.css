@@ -185,3 +185,21 @@ select:focus{outline:none;border-color:var(--accent)}
   border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .empty-state{text-align:center;color:var(--muted);padding:54px 20px}
+
+/* ============================================================================
+   Two-pane log viewer (llm.html · mine.html) — shared layout; each page keeps
+   only its own row-cell / detail-content styles.
+   ========================================================================== */
+.panes{display:grid;grid-template-columns:392px 1fr;gap:16px;align-items:start}
+@media(max-width:860px){.panes{grid-template-columns:1fr}}
+.panes>.list{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow);
+  max-height:calc(100vh - 150px);overflow-y:auto}
+.panes .row{padding:10px 15px;border-top:1px solid var(--line2);cursor:pointer;display:flex;align-items:center;gap:8px}
+.panes .row:hover{background:var(--bg-sunk)}
+.panes .row.sel{background:var(--accent-bg)}
+.panes .row .t{font-family:var(--fm);font-size:.78rem;color:var(--muted);flex:none}
+.panes>.detail{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow);
+  padding:20px 22px}
+.loading{color:var(--muted);font-size:.85rem;padding:16px}
+.errbox{background:var(--err-bg);border:1px solid var(--accent-ring);border-radius:9px;padding:11px 13px;color:var(--err);
+  white-space:pre-wrap;font:12px/1.55 var(--fm)}

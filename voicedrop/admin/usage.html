@@ -6,13 +6,6 @@
 <meta name="robots" content="noindex,nofollow"/>
 <title>VoiceDrop · 算力账本</title>
 <link rel="stylesheet" href="./theme.css"/>
-<script>
-/* Standalone/preview fallback for the three helpers the pages use. The production
-   server's /voicedrop/shared.js loads later and overrides these — safe either way. */
-window.$=window.$||function(s,r){return (r||document).querySelector(s);};
-window.esc=window.esc||function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
-window.resolveArticles=window.resolveArticles||function(doc){if(!doc)return[];var a=doc.articles||(doc.result&&doc.result.articles)||(doc.output&&doc.output.articles)||doc.results||[];if(!Array.isArray(a))return[];return a.map(function(x){return typeof x==='string'?{title:'',body:x}:{title:x.title||x.heading||'',body:x.body||x.content||x.text||''};});};
-</script>
 <style>
 .wrap{max-width:880px;margin:0 auto;padding:26px 22px 90px}
 .sumline{color:var(--muted);font-size:.9rem;margin:0 0 18px}
@@ -32,36 +25,7 @@ tbody tr:hover{background:var(--bg-sunk)}
 </head>
 <body>
 
-<div id="gate" hidden style="max-width:430px">
-  <svg class="gate-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdGate" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdGate)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
-  <h1>算力账本</h1>
-  <p>输入 master token 查看全量账户的算力消费。token 只存在本机浏览器，不上传。</p>
-  <input id="tok" type="password" placeholder="FILES_TOKEN" autocomplete="off" spellcheck="false"/>
-  <div class="err" id="gateErr"></div>
-  <button class="btn primary block" id="enter">进入</button>
-</div>
-
 <div id="app" hidden>
-  <nav class="appbar">
-    <div class="appbar-in">
-      <a class="brand" href="./">
-        <svg class="mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdNav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdNav)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
-        <span class="name">VoiceDrop</span><span class="sub">控制台</span>
-      </a>
-      <div class="nav-tabs">
-        <a class="nav-tab" href="./">概览</a>
-        <a class="nav-tab" href="./reports.html">举报审核</a>
-        <a class="nav-tab active" href="./usage.html">算力账本</a>
-        <a class="nav-tab" href="./mine.html">挖文日志</a>
-        <a class="nav-tab" href="./llm.html">LLM 日志</a>
-      </div>
-      <div class="nav-actions">
-        <button class="btn ghost" id="refresh">刷新</button>
-        <button class="btn ghost" id="logout">退出</button>
-      </div>
-    </div>
-  </nav>
-
   <div class="wrap">
     <div class="pagehead">
       <h1>算力账本</h1>
@@ -74,19 +38,17 @@ tbody tr:hover{background:var(--bg-sunk)}
 </div>
 
 <script src="/voicedrop/shared.js"></script>
+<script src="./shell.js"></script>
 <script>
-const TKEY = 'vd_admin_token';            // shared with the rest of /admin — token carries over
-let TOKEN = localStorage.getItem(TKEY) || '';
-// $ / esc come from /voicedrop/shared.js
-const el = (t, c, h) => { const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+// $ / esc / el come from shared.js; appbar / gate / token from shell.js.
 
 async function load(){
   $('#tableWrap').innerHTML = '<div class="empty-state"><span class="spin"></span> 读取中…</div>';
   $('#cards').innerHTML=''; $('#sum').textContent='';
   let accounts;
   try {
-    const r = await fetch('https://jianshuo.dev/agent/usage/admin/accounts', { headers:{ Authorization:`Bearer ${TOKEN}` }});
-    if(r.status===401 || r.status===403){ logout('token 无效'); return; }
+    const r = await fetch('https://jianshuo.dev/agent/usage/admin/accounts', { headers:{ Authorization:`Bearer ${VDAdmin.token()}` }});
+    if(r.status===401 || r.status===403){ VDAdmin.logout('token 无效'); return; }
     if(!r.ok) throw new Error('加载失败 '+r.status);
     accounts = (await r.json()).accounts || [];
   } catch(e){
@@ -126,20 +88,12 @@ async function load(){
 }
 function fmt(n){ return (n==null?0:n).toLocaleString(undefined,{maximumFractionDigits:1}); }
 
-// ---- gate / boot (mirrors index/llm/mine) ----
-function showGate(msg){ $('#app').hidden=true; $('#gate').hidden=false; $('#gateErr').textContent=msg||''; $('#tok').focus(); }
-function logout(msg){ TOKEN=''; localStorage.removeItem(TKEY); showGate(msg); }
-function enter(){
-  const v=$('#tok').value.trim();
-  if(!v){ $('#gateErr').textContent='请输入 token'; return; }
-  TOKEN=v; localStorage.setItem(TKEY,v); $('#gate').hidden=true; $('#app').hidden=false; load();
-}
-$('#enter').onclick=enter;
-$('#tok').addEventListener('keydown',e=>{ if(e.key==='Enter')enter(); });
-$('#refresh').onclick=load;
-$('#logout').onclick=()=>logout();
-
-if(TOKEN){ $('#app').hidden=false; load(); } else { showGate(); }
+VDAdmin.init({
+  active: 'usage',
+  title: '算力账本',
+  intro: '输入 master token 查看全量账户的算力消费。token 只存在本机浏览器，不上传。',
+  onEnter: load,
+});
 </script>
 </body>
 </html>

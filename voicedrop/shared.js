@@ -5,13 +5,23 @@
 // every page (admin, llm, mine, article reader) updates together. Do not
 // re-inline copies in the pages.
 
-// HTML-escape for safe text interpolation.
+// HTML-escape for safe text interpolation (covers attribute contexts too).
 function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 }
 
 // querySelector shorthand (optional scope root).
 function $(sel, root) { return (root || document).querySelector(sel); }
+
+// createElement shorthand: tag, className, innerHTML.
+function el(t, c, h) {
+  const e = document.createElement(t);
+  if (c) e.className = c;
+  if (h != null) e.innerHTML = h;
+  return e;
+}
 
 // Current article list from an article doc, regardless of schema version. Mirrors
 // the server's resolveArticles (functions/lib/article-store.js): schema-3 →
