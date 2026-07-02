@@ -196,6 +196,16 @@ describe("mineOneAudio: 无语音 + 有照片 → vision", () => {
     const payload = JSON.parse(claudeCall.body);
     const systemText = Array.isArray(payload.system) ? payload.system.map((b) => b.text).join("") : payload.system;
     expect(systemText).toContain("你是这段录音的录制者"); // MINE_SYSTEM，不是 IMAGE_ONLY_SYSTEM
+
+    // llmlog 记录是 canonical shape（http_status / 顶层 user_scope）——挖矿路径曾写
+    // `status`/`meta.user_scope`，admin/llm.html 读不到（HTTP 显示 undefined、不显示用户）。
+    const logKey = [...env.FILES._store.keys()].find((k) => k.startsWith("llmlogs/"));
+    expect(logKey).toBeTruthy();
+    const rec = JSON.parse(env.FILES._store.get(logKey));
+    expect(rec.http_status).toBe(200);
+    expect(rec.ok).toBe(true);
+    expect(rec.user_scope).toBe(SCOPE);
+    expect(rec.source).toBe("mine");
   });
 
   it("style-extract 任务：占位音频（文件名 TaskStyleExtract，无 sidecar）→ 蒸馏→写风格版本+介绍文章，清空语料，不打火山", async () => {

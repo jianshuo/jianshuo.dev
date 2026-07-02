@@ -12,7 +12,7 @@
 //   R2_ACCESS_KEY_ID       R2 S3-compatible access key
 //   R2_SECRET_ACCESS_KEY   R2 S3-compatible secret key
 
-import { writeLlmLog } from "./llmlog.js";
+import { callLlm } from "./llm-call.js";
 import { gateDecision, claudeCostUY, asrCostUY } from "./usage.js";
 import { ensureAccount, debit } from "./usage_store.js";
 import { hmacSign } from "../../functions/lib/auth.js";
@@ -469,25 +469,6 @@ async function gatherPhotos(audioKey, allKeys, env, log = () => {}) {
 //                transcript+photos (often 10k+ tokens) are read from cache and only the
 //                文风 tail varies. Images can't sit in a system block, so caching photos
 //                across 文风 variants REQUIRES this layout.
-// A log-friendly copy of the request body: image base64 can be megabytes, so swap
-// it for a tiny placeholder (the llmlog R2 object must stay small). Everything else
-// is kept verbatim so admin/llm.html can replay model / system / messages / tools.
-function redactReqForLog(payload) {
-  const tag = (s) => `[base64 image · ~${Math.round((String(s).length * 3) / 4 / 1024)}KB elided]`;
-  const req = { ...payload };
-  if (Array.isArray(req.messages)) {
-    req.messages = req.messages.map((m) => {
-      if (!Array.isArray(m.content)) return m;
-      return { ...m, content: m.content.map((b) => {
-        if (b?.type === "image" && b.source?.data) return { ...b, source: { ...b.source, data: tag(b.source.data) } };
-        if (b?.type === "image_url" && b.image_url?.url) return { ...b, image_url: { ...b.image_url, url: tag(b.image_url.url) } };
-        return b;
-      }) };
-    });
-  }
-  return req;
-}
-
 // Pure prompt/payload builder — no env, no fetch, no billing/logging side effects.
 // Shared by production generateArticles AND the eval harness (agent/eval/run-eval.mjs)
 // so the prompt bytes are identical. cacheMode/provider behavior unchanged.
@@ -559,7 +540,9 @@ export function buildMinePrompt({
   return payload;
 }
 
-async function generateArticles(transcript, claudeMd, photos, force, env, modelCfg, cacheMode = "system", systemOverride = null, photoInstr = undefined) {
+// logCtx = { scope, turnId, step, meta } — llmlog context, passed through to callLlm
+// (which owns the fetch + the log record for both providers, images redacted).
+async function generateArticles(transcript, claudeMd, photos, force, env, modelCfg, cacheMode = "system", systemOverride = null, photoInstr = undefined, logCtx = {}) {
   const payload = buildMinePrompt({
     transcript, styleText: claudeMd, photos, force, cacheMode,
     provider: modelCfg.provider, model: modelCfg.model,
@@ -568,33 +551,12 @@ async function generateArticles(transcript, claudeMd, photos, force, env, modelC
     // default; omitted (undefined) leaves every other caller's behavior unchanged.
     ...(photoInstr !== undefined ? { photoInstr } : {}),
   });
-  const reqForLog = redactReqForLog(payload);
-  const t0 = Date.now();
-  let text, latencyMs, rawResp;
-
-  if (modelCfg.provider === "openai-compat") {
-    const resp = await fetch(`${modelCfg.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${modelCfg.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    latencyMs = Date.now() - t0;
-    if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    rawResp = await resp.json();
-    text = rawResp.choices?.[0]?.message?.content || "";
-  } else {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": modelCfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    latencyMs = Date.now() - t0;
-    if (!resp.ok) throw new Error(`Claude ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    rawResp = await resp.json();
-    text = (rawResp.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  }
-
-  return { articles: parseArticles(text), latencyMs, rawResp, request: reqForLog };
+  const r = await callLlm(env, {
+    provider: modelCfg.provider, baseUrl: modelCfg.baseUrl, apiKey: modelCfg.apiKey,
+    payload, source: "mine", ...logCtx,
+  });
+  if (!r.ok) throw new Error(`${modelCfg.provider === "openai-compat" ? "LLM" : "Claude"} ${r.status}: ${(r.errorText || "").slice(0, 200)}`);
+  return { articles: parseArticles(r.text), latencyMs: r.latencyMs, rawResp: r.json };
 }
 
 // ── Content moderation (Apple App Store 1.2 — filter objectionable UGC) ────────
@@ -604,22 +566,19 @@ async function generateArticles(transcript, claudeMd, photos, force, env, modelC
 // (haiku) regardless of the mining provider, so moderation stays reliable + cheap.
 // Fail-open on any infra error (don't block legit content) — report/block still cover it.
 const MOD_CATEGORIES = "色情或露骨性内容、暴力血腥、仇恨或歧视、骚扰或欺凌、违法内容(毒品/武器/诈骗等)、自残或自杀、未成年人不当内容";
-export async function moderateArticles(articles, env) {
+export async function moderateArticles(articles, env, scope) {
   if (!env.CLAUDE_API_KEY) return { flagged: false, skipped: "no-key" };
   const text = (articles || []).map(a => `${a.title || ""}\n${a.body || ""}`).join("\n\n").trim().slice(0, 16000);
   if (!text) return { flagged: false };
   const system = `你是面向公开社区的内容安全审核员。判断下面这篇用户生成的中文文章，是否含有不适合公开展示的内容（${MOD_CATEGORIES}）。正常的观点表达、商业、生活、科技、情绪宣泄一律视为安全(false)；只有明确违规才标记 true。只输出 JSON，不要解释：{"flagged":true|false,"categories":["命中的类别"]}`;
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 200,
-        system, messages: [{ role: "user", content: text }] }),
+    const r = await callLlm(env, {
+      payload: { model: "claude-haiku-4-5-20251001", max_tokens: 200,
+        system, messages: [{ role: "user", content: text }] },
+      source: "mine", scope, meta: { kind: "moderation" },
     });
-    if (!resp.ok) return { flagged: false, error: `http-${resp.status}` };
-    const j = await resp.json();
-    const out = (j.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-    const m = out.match(/\{[\s\S]*\}/);
+    if (!r.ok) return { flagged: false, error: `http-${r.status}` };
+    const m = r.text.match(/\{[\s\S]*\}/);
     const v = m ? JSON.parse(m[0]) : {};
     return { flagged: !!v.flagged, categories: Array.isArray(v.categories) ? v.categories : [], at: Date.now() };
   } catch (e) {
@@ -734,27 +693,22 @@ async function mineVariant(env, {
   metaExtra = {}, debitExtra = {}, label = "", log = () => {},
   systemOverride = null, noForce = false, photoInstr = undefined,
 }) {
-  const meta = { user_scope: scope, stem, ...metaExtra };
+  const meta = { stem, ...metaExtra };   // scope rides top-level on the llmlog record (user_scope)
   const tag = label ? " " + label : "";
+  // llmlog happens inside callLlm (via generateArticles) — success AND failure,
+  // including the HTTP error body. Only billing + narration live here.
   const runLlm = async (force, step) => {
-    const tLlm = Date.now();
     log(`LLM 开始${tag}${force ? " (force)" : ""}`, { step });
+    const r = await generateArticles(transcript, force ? "" : styleText, force ? null : (photos && photos.length ? photos : null), force, env, modelCfg, cacheMode, systemOverride, photoInstr, { scope, turnId, step, meta });
     try {
-      const r = await generateArticles(transcript, force ? "" : styleText, force ? null : (photos && photos.length ? photos : null), force, env, modelCfg, cacheMode, systemOverride, photoInstr);
-      await writeLlmLog(env, { ts: tLlm, source: "mine", ok: true, status: 200, model: modelCfg.model, latency_ms: r.latencyMs, step, turn_id: turnId, meta, request: r.request, response: r.rawResp });
-      try {
-        if (env.USAGE) {
-          const u = r.rawResp?.usage || {};
-          await debit(env.USAGE, scope, claudeCostUY(modelCfg.model, u.input_tokens, u.output_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens),
-            "mine", { model: modelCfg.model, in_tok: u.input_tokens, out_tok: u.output_tokens, cache_w: u.cache_creation_input_tokens, cache_r: u.cache_read_input_tokens, stem, turn_id: turnId, ...debitExtra }, Date.now());
-        }
-      } catch (_) {}
-      log(`LLM 完成${tag}${force ? " (force)" : ""}`, { articles: r.articles.length, latency_ms: r.latencyMs });
-      return r.articles;
-    } catch (e) {
-      await writeLlmLog(env, { ts: tLlm, source: "mine", ok: false, status: 0, model: modelCfg.model, latency_ms: Date.now() - tLlm, step, turn_id: turnId, meta, error: String(e) });
-      throw e;
-    }
+      if (env.USAGE) {
+        const u = r.rawResp?.usage || {};
+        await debit(env.USAGE, scope, claudeCostUY(modelCfg.model, u.input_tokens, u.output_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens),
+          "mine", { model: modelCfg.model, in_tok: u.input_tokens, out_tok: u.output_tokens, cache_w: u.cache_creation_input_tokens, cache_r: u.cache_read_input_tokens, stem, turn_id: turnId, ...debitExtra }, Date.now());
+      }
+    } catch (_) {}
+    log(`LLM 完成${tag}${force ? " (force)" : ""}`, { articles: r.articles.length, latency_ms: r.latencyMs });
+    return r.articles;
   };
   let arts = await runLlm(false, 0);
   if (!arts.length && !noForce) { log("LLM 无文章，重试 (force)"); try { arts = await runLlm(true, 1); } catch (_) { arts = []; } }
@@ -823,8 +777,8 @@ export async function restyleArticle(env, scope, stem, styleV) {
   return { ok: true, head };
 }
 
-// writeLlmLog is imported from ./llmlog.js (shared with index.js). Mine calls
-// pass source:"mine" in the record.
+// LLM calls are logged inside callLlm (./llm-call.js, shared with index.js).
+// Mine calls pass source:"mine" on the record.
 
 // ── Mine run log (per-audio, written to R2) ────────────────────────────────────
 
@@ -857,42 +811,23 @@ async function runTask(task, audioKey, env, modelCfg, log) {
   return await handler(task, audioKey, env, modelCfg, log);
 }
 
-// Minimal Claude caller for task handlers (worker CLAUDE_API_KEY; accumulates usage).
-// Every call is logged to llmlogs/ via writeLlmLog — success (full request+response),
-// HTTP error (status + first 2000 chars of the error body), or network throw — so a
-// failed 提取风格 can be diagnosed in admin/llm.html instead of showing up only as a
-// bare "error" in the mine log. `opts` = { scope (→user_scope), meta (e.g. {kind}) }.
+// Minimal Claude caller for task handlers (worker CLAUDE_API_KEY; accumulates usage
+// into `usage` — task handlers debit ONCE after the whole task succeeds, so a failed
+// 提取 costs the user nothing). Logging — success, HTTP error body, network throw —
+// rides on callLlm. `opts` = { scope (→user_scope), meta (e.g. {kind}) }.
 function makeTaskClaude(env, model, usage, opts = {}) {
   return async ({ system, messages }) => {
-    const reqBody = { model, max_tokens: 1500, system, messages };
-    const t0 = Date.now();
-    let resp;
-    try {
-      resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        body: JSON.stringify(reqBody),
-      });
-    } catch (e) {
-      await writeLlmLog(env, { ts: t0, source: "mine", user_scope: opts.scope, model, latency_ms: Date.now() - t0, http_status: 0, ok: false, request: reqBody, error: String(e), meta: opts.meta });
-      throw e;
-    }
-    const ok = resp.ok;
-    const j = ok ? await resp.json() : null;
-    await writeLlmLog(env, {
-      ts: t0, source: "mine", user_scope: opts.scope, model,
-      latency_ms: Date.now() - t0, http_status: resp.status, ok,
-      request: reqBody, response: ok ? j : undefined,
-      error: ok ? undefined : (await resp.text().catch(() => "")).slice(0, 2000),
-      meta: opts.meta,
+    const r = await callLlm(env, {
+      payload: { model, max_tokens: 1500, system, messages },
+      source: "mine", scope: opts.scope, meta: opts.meta,
     });
-    if (!ok) throw new Error(`Claude HTTP ${resp.status}`);
-    const u = j.usage || {};
+    if (!r.ok) throw new Error(`Claude HTTP ${r.status}`);
+    const u = r.usage || {};
     usage.input_tokens += u.input_tokens || 0;
     usage.output_tokens += u.output_tokens || 0;
     usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
     usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
-    return (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    return r.text;
   };
 }
 

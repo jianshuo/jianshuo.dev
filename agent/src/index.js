@@ -22,6 +22,7 @@ import { withTopLevelArticles } from "../../functions/lib/article-store.js";
 import { verifySession, anonScopeFromToken } from "../../functions/lib/auth.js";
 import { buildBroadcastMessage, createPairing, verifyPairing, completePairing, resolveMatchingScopes, genDistinctCodes, CODE_TTL_MS } from "./devicelink.js";
 import { writeLlmLog } from "./llmlog.js";
+import { callLlm } from "./llm-call.js";
 import { QUEUE_TABLE_SQL, makeSqlStore, ArticleQueue } from "./queue.js";
 import { runEditTurn } from "./edit-turn.js";
 import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
@@ -249,51 +250,22 @@ export class ArticleEditor extends Agent {
     this.schedule(0, "drainQueue");
   }
 
-  // One Anthropic Messages call WITH tools. Returns a result object
-  // {ok, status, json, errorText} (never throws on HTTP/network errors) so the
-  // caller can both log the exchange and decide how to proceed.
-  async _callClaudeRaw(reqBody) {
-    try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": this.env.CLAUDE_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(reqBody),
-      });
-      if (!resp.ok) {
-        return { ok: false, status: resp.status, json: null, errorText: (await resp.text()).slice(0, 2000) };
-      }
-      return { ok: true, status: resp.status, json: await resp.json(), errorText: "" };
-    } catch (e) {
-      return { ok: false, status: 0, json: null, errorText: String((e && e.message) || e) };
-    }
-  }
-
-  // A logging callClaude for runAgentLoop: builds the request body, calls the
-  // API, records one llmlogs/ entry per HTTP call (grouped by turnId), then
-  // returns the response JSON or throws (preserving the loop's prior behavior).
+  // A logging callClaude for runAgentLoop: builds the request body (WITH tools),
+  // calls the API via callLlm (llm-call.js — the fetch + one llmlogs/ entry per
+  // HTTP call, grouped by turnId), then returns the response JSON or throws
+  // (preserving the loop's prior behavior).
   _makeLoggedCall({ turnId, scope, stem, instruction, model = MODEL }) {
     let step = 0;
     return async ({ system, messages, tools }) => {
       const reqBody = { model, max_tokens: 8000, system, messages, tools, tool_choice: { type: "auto" } };
-      const myStep = step++;
-      const ts = Date.now();
-      const r = await this._callClaudeRaw(reqBody);
-      await writeLlmLog(this.env, {
-        ts, source: "agent", user_scope: scope, model,
-        latency_ms: Date.now() - ts, http_status: r.status, ok: r.ok,
-        turn_id: turnId, step: myStep, request: reqBody,
-        response: r.ok ? r.json : undefined,
-        error: r.ok ? undefined : r.errorText,
-        meta: { stem, instruction },
+      const r = await callLlm(this.env, {
+        payload: reqBody, source: "agent", scope,
+        turnId, step: step++, meta: { stem, instruction },
       });
       // Debit the cost of this API call. Best-effort: never breaks the edit.
       try {
         if (this.env.USAGE) {
-          const u = r.json?.usage || {};
+          const u = r.usage || {};
           await debit(this.env.USAGE, scope, claudeCostUY(model, u.input_tokens, u.output_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens),
             "edit", { model, in_tok: u.input_tokens, out_tok: u.output_tokens, cache_w: u.cache_creation_input_tokens, cache_r: u.cache_read_input_tokens, stem, turn_id: turnId }, Date.now());
         }
@@ -644,37 +616,22 @@ export default {
       } while (cursor);
       if (!samples.length) return J({ error: "empty-dataset" }, 400);
 
-      // Same call shape as _makeLoggedCall: builds the request, hits the Anthropic
-      // API directly (this route isn't inside a DO, so it can't reuse that method),
-      // logs to llmlogs/ (best-effort, writeLlmLog swallows its own errors), and
-      // captures token usage for the 算力 debit below.
-      // distillStyle makes TWO Claude calls (Style Card + a dedicated naming call);
-      // accumulate usage across both so the 算力 debit reflects the full cost.
+      // callLlm (llm-call.js) owns the fetch + llmlogs/ record. Usage is only
+      // ACCUMULATED here — the 算力 debit happens once, after the style doc is
+      // successfully written, so a failed extraction costs the user nothing.
       const usageSum = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
       const claude = async ({ system, messages }) => {
-        const reqBody = { model: MODEL, max_tokens: 1500, system, messages };
-        const t0 = Date.now();
-        const resp = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": env.CLAUDE_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-          body: JSON.stringify(reqBody),
+        const r = await callLlm(env, {
+          payload: { model: MODEL, max_tokens: 1500, system, messages },
+          source: "agent", scope, meta: { kind: "style-extract", samples: samples.length },
         });
-        const ok = resp.ok;
-        const j = ok ? await resp.json() : null;
-        await writeLlmLog(env, {
-          ts: t0, source: "agent", user_scope: scope, model: MODEL,
-          latency_ms: Date.now() - t0, http_status: resp.status, ok,
-          step: 0, request: reqBody, response: ok ? j : undefined,
-          error: ok ? undefined : (await resp.text().catch(() => "")).slice(0, 2000),
-          meta: { kind: "style-extract", samples: samples.length },
-        });
-        if (!ok) throw new Error(`Claude HTTP ${resp.status}`);
-        const u = j.usage || {};
+        if (!r.ok) throw new Error(`Claude HTTP ${r.status}`);
+        const u = r.usage || {};
         usageSum.input_tokens += u.input_tokens || 0;
         usageSum.output_tokens += u.output_tokens || 0;
         usageSum.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
         usageSum.cache_read_input_tokens += u.cache_read_input_tokens || 0;
-        return (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+        return r.text;
       };
 
       // The heavy work — 2 Claude calls (蒸馏 Style Card + 起名) + writes — runs in the

@@ -327,9 +327,9 @@ function renderDetail(r){
     <span>${modelIco(r.model)}${esc(shortModel(r.model))}</span>
     <span>发送 <b>${esc(new Date(sentAt(r)).toLocaleString('zh-CN'))}</b></span>
     <span>耗时 <b>${r.latency_ms!=null?(r.latency_ms/1000).toFixed(1)+'s':'—'}</b></span>
-    <span>HTTP <b>${esc(r.http_status)}</b> ${r.ok?'':'· <b style="color:var(--err)">失败</b>'}</span>
+    <span>HTTP <b>${esc(r.http_status ?? r.status ?? '—')}</b> ${r.ok?'':'· <b style="color:var(--err)">失败</b>'}</span>
     ${cost!=null?`<span>价格 <b style="color:var(--accent)">${esc(fmtUSD(cost))}</b></span>`:''}
-    ${r.user_scope?`<span>${esc(r.user_scope)}</span>`:''}
+    ${(r.user_scope||r.meta&&r.meta.user_scope)?`<span>${esc(r.user_scope||r.meta.user_scope)}</span>`:''}
     ${r.meta&&r.meta.stem?`<span>${esc(r.meta.stem)}</span>`:''}
     ${r.turn_id?`<span class="usage">turn ${esc(r.turn_id)}${r.step!=null?` #${r.step}`:''}</span>`:''}
   </div>`;
