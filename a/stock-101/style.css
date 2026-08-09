@@ -1,0 +1,155 @@
+/* 程序员炒股指南 — shared stylesheet (light, cozy) */
+:root {
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;      /* series-1 blue */
+  --accent-deep: #1c5cab;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  line-height: 1.85;
+  font-size: 17px;
+}
+a { color: var(--accent-deep); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.site-header {
+  max-width: 760px; margin: 0 auto; padding: 22px 20px 0;
+  font-size: 14px; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+}
+.site-header a { color: var(--ink-2); }
+
+main { max-width: 760px; margin: 0 auto; padding: 8px 20px 40px; }
+
+.chapter-head { margin: 28px 0 6px; }
+.chapter-head .kicker { font-size: 14px; color: var(--accent-deep); font-weight: 600; letter-spacing: .06em; }
+h1 { font-size: 34px; line-height: 1.3; margin: 6px 0 8px; letter-spacing: .01em; }
+.lede { font-size: 18px; color: var(--ink-2); margin: 0 0 10px; }
+h2 { font-size: 24px; margin: 44px 0 10px; line-height: 1.4; }
+h2 .h-num { color: var(--baseline); font-weight: 600; margin-right: 8px; font-variant-numeric: tabular-nums; }
+h3 { font-size: 18px; margin: 28px 0 8px; }
+p { margin: 12px 0; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 6px 0; }
+strong { font-weight: 650; }
+hr { border: none; border-top: 1px solid var(--grid); margin: 36px 0; }
+
+code, pre {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: .88em;
+}
+code { background: #f0efec; padding: 2px 6px; border-radius: 6px; }
+pre {
+  background: #f0efec; border-radius: 10px; padding: 14px 16px;
+  overflow-x: auto; line-height: 1.6;
+}
+pre code { background: none; padding: 0; }
+
+/* 程序员视角 callout */
+.analogy {
+  background: #eef4fc; border: 1px solid #d5e4f7; border-radius: var(--radius);
+  padding: 14px 18px; margin: 20px 0; font-size: 16px;
+}
+.analogy .tag {
+  display: block; font-size: 13px; font-weight: 700; color: var(--accent-deep);
+  letter-spacing: .08em; margin-bottom: 4px;
+}
+.callout {
+  background: #fdf3ea; border: 1px solid #f5dfc9; border-radius: var(--radius);
+  padding: 14px 18px; margin: 20px 0; font-size: 16px;
+}
+.callout .tag {
+  display: block; font-size: 13px; font-weight: 700; color: #b25419;
+  letter-spacing: .08em; margin-bottom: 4px;
+}
+
+/* figures */
+figure {
+  margin: 26px 0; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 18px 12px;
+}
+figure svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+figcaption {
+  font-size: 14px; color: var(--muted); margin-top: 10px; text-align: center; line-height: 1.6;
+}
+.fig-title { font-size: 15px; font-weight: 650; color: var(--ink-2); margin: 0 0 10px; }
+
+/* tables */
+.table-wrap { overflow-x: auto; margin: 22px 0; }
+table {
+  border-collapse: collapse; width: 100%; font-size: 15px;
+  background: var(--surface); border-radius: 10px; overflow: hidden;
+}
+th, td { padding: 9px 12px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }
+th { font-size: 13.5px; color: var(--ink-2); font-weight: 650; background: #f4f3f0; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td .num { font-variant-numeric: tabular-nums; }
+
+/* chapter prev/next nav */
+.chapter-nav {
+  max-width: 760px; margin: 0 auto; padding: 0 20px 30px;
+  display: flex; justify-content: space-between; gap: 14px; font-size: 15px;
+}
+.chapter-nav a {
+  flex: 1; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px; color: var(--ink-2);
+}
+.chapter-nav a:hover { text-decoration: none; border-color: var(--accent); color: var(--accent-deep); }
+.chapter-nav .dir { display: block; font-size: 12.5px; color: var(--muted); }
+.chapter-nav .next { text-align: right; }
+.chapter-nav .spacer { flex: 1; visibility: hidden; }
+
+.site-footer {
+  max-width: 760px; margin: 0 auto; padding: 0 20px 46px;
+  font-size: 13.5px; color: var(--muted); text-align: center; line-height: 1.7;
+}
+
+/* ===== TOC page ===== */
+.toc-hero { text-align: center; margin: 40px 0 30px; }
+.toc-hero h1 { font-size: 40px; margin: 10px 0 6px; }
+.toc-hero .sub { color: var(--ink-2); font-size: 17px; max-width: 560px; margin: 0 auto; }
+.toc-hero .badge {
+  display: inline-block; font-size: 13px; color: var(--accent-deep);
+  background: #eef4fc; border: 1px solid #d5e4f7; border-radius: 99px;
+  padding: 3px 14px; letter-spacing: .1em; font-weight: 600;
+}
+.toc-list { list-style: none; padding: 0; margin: 26px 0; display: grid; gap: 12px; }
+.toc-list .ch a, .toc-list .ch.pending .inner {
+  display: flex; gap: 16px; align-items: baseline;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 20px; color: var(--ink);
+}
+.toc-list .ch a:hover { text-decoration: none; border-color: var(--accent); box-shadow: 0 2px 10px rgba(42,120,214,.08); }
+.toc-list .num {
+  font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent-deep);
+  font-size: 20px; min-width: 34px;
+}
+.toc-list .t { font-size: 18px; font-weight: 650; }
+.toc-list .d { font-size: 14.5px; color: var(--ink-2); margin-top: 2px; line-height: 1.6; }
+.toc-list .ch.pending .inner { opacity: .55; }
+.toc-list .ch.pending .num { color: var(--muted); }
+.toc-list .soon {
+  font-size: 12.5px; color: var(--muted); border: 1px dashed var(--baseline);
+  border-radius: 99px; padding: 1px 10px; white-space: nowrap; margin-left: auto;
+}
+@media (max-width: 560px) {
+  h1 { font-size: 28px; }
+  .toc-hero h1 { font-size: 30px; }
+  body { font-size: 16px; }
+}
