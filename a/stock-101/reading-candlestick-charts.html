@@ -47,11 +47,11 @@ GROUP BY bar;</code></pre>
   <figure>
     <p class="fig-title">图 4-1 · 一根 K 线的解剖：同一组 OHLC，只换开收顺序</p>
     <svg viewBox="0 0 720 360" role="img" aria-label="一根 K 线的解剖：左边红色阳线收盘高于开盘，右边绿色阴线收盘低于开盘，两者最高价、最低价完全相同，中间标注上影线、实体、下影线三个部分">
-    <rect width="720" height="360" fill="#fcfcfb"/>
+    <rect width="720" height="360" fill="#faf6ec"/>
     
     <!-- same-level guides for high and low -->
-    <line x1="150" y1="90" x2="570" y2="90" stroke="#e1e0d9" stroke-dasharray="3 5"/>
-    <line x1="150" y1="250" x2="570" y2="250" stroke="#e1e0d9" stroke-dasharray="3 5"/>
+    <line x1="150" y1="90" x2="570" y2="90" stroke="#e4ddcd" stroke-dasharray="3 5"/>
+    <line x1="150" y1="250" x2="570" y2="250" stroke="#e4ddcd" stroke-dasharray="3 5"/>
     
     <!-- ============ 阳线（红，收 > 开） ============ -->
     <line x1="190" y1="90" x2="190" y2="250" stroke="#d03b3b" stroke-width="2.4"/>
@@ -61,8 +61,8 @@ GROUP BY bar;</code></pre>
     <text x="145" y="127" text-anchor="end" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">收盘价 close 10.80</text>
     <text x="145" y="223" text-anchor="end" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">开盘价 open 10.20</text>
     <text x="145" y="255" text-anchor="end" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">最低价 low 10.00</text>
-    <line x1="150" y1="122" x2="166" y2="122" stroke="#c3c2b7" stroke-dasharray="3 3"/>
-    <line x1="150" y1="218" x2="166" y2="218" stroke="#c3c2b7" stroke-dasharray="3 3"/>
+    <line x1="150" y1="122" x2="166" y2="122" stroke="#cec5b1" stroke-dasharray="3 3"/>
+    <line x1="150" y1="218" x2="166" y2="218" stroke="#cec5b1" stroke-dasharray="3 3"/>
     
     <!-- ============ 阴线（绿，收 < 开） ============ -->
     <line x1="530" y1="90" x2="530" y2="250" stroke="#0ca30c" stroke-width="2.4"/>
@@ -72,20 +72,20 @@ GROUP BY bar;</code></pre>
     <text x="575" y="127" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">开盘价 open 10.80</text>
     <text x="575" y="223" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">收盘价 close 10.20</text>
     <text x="575" y="255" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">最低价 low 10.00</text>
-    <line x1="554" y1="122" x2="570" y2="122" stroke="#c3c2b7" stroke-dasharray="3 3"/>
-    <line x1="554" y1="218" x2="570" y2="218" stroke="#c3c2b7" stroke-dasharray="3 3"/>
+    <line x1="554" y1="122" x2="570" y2="122" stroke="#cec5b1" stroke-dasharray="3 3"/>
+    <line x1="554" y1="218" x2="570" y2="218" stroke="#cec5b1" stroke-dasharray="3 3"/>
     
     <!-- ============ 中间：三段结构 ============ -->
-    <line x1="190" y1="106" x2="315" y2="106" stroke="#c3c2b7" stroke-dasharray="3 3"/>
-    <line x1="405" y1="106" x2="530" y2="106" stroke="#c3c2b7" stroke-dasharray="3 3"/>
+    <line x1="190" y1="106" x2="315" y2="106" stroke="#cec5b1" stroke-dasharray="3 3"/>
+    <line x1="405" y1="106" x2="530" y2="106" stroke="#cec5b1" stroke-dasharray="3 3"/>
     <text x="360" y="110" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">上影线</text>
     
-    <line x1="212" y1="170" x2="315" y2="170" stroke="#c3c2b7" stroke-dasharray="3 3"/>
-    <line x1="405" y1="170" x2="508" y2="170" stroke="#c3c2b7" stroke-dasharray="3 3"/>
+    <line x1="212" y1="170" x2="315" y2="170" stroke="#cec5b1" stroke-dasharray="3 3"/>
+    <line x1="405" y1="170" x2="508" y2="170" stroke="#cec5b1" stroke-dasharray="3 3"/>
     <text x="360" y="174" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">实体</text>
     
-    <line x1="190" y1="234" x2="315" y2="234" stroke="#c3c2b7" stroke-dasharray="3 3"/>
-    <line x1="405" y1="234" x2="530" y2="234" stroke="#c3c2b7" stroke-dasharray="3 3"/>
+    <line x1="190" y1="234" x2="315" y2="234" stroke="#cec5b1" stroke-dasharray="3 3"/>
+    <line x1="405" y1="234" x2="530" y2="234" stroke="#cec5b1" stroke-dasharray="3 3"/>
     <text x="360" y="238" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">下影线</text>
     
     <!-- ============ 下方说明 ============ -->
@@ -117,13 +117,13 @@ GROUP BY bar;</code></pre>
   <figure>
     <p class="fig-title">图 4-2 · 同一段行情的四种聚合粒度</p>
     <svg viewBox="0 0 720 500" role="img" aria-label="同一只股票的价格序列分别按月、周、日、5 分钟四种粒度聚合成 K 线，粒度越细趋势越难看清">
-    <rect width="720" height="500" fill="#fcfcfb"/>
+    <rect width="720" height="500" fill="#faf6ec"/>
     <text x="24" y="24" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">月线 · 24 根（近两年，每根 = 21 个交易日）</text>
     <text x="24" y="40" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 10.00 → 18.25（+82.5%）</text>
-    <rect x="24" y="46" width="300" height="150" fill="none" stroke="#e1e0d9"/>
-    <line x1="24" y1="83.5" x2="324" y2="83.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="24" y1="121.0" x2="324" y2="121.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="24" y1="158.5" x2="324" y2="158.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
+    <rect x="24" y="46" width="300" height="150" fill="none" stroke="#e4ddcd"/>
+    <line x1="24" y1="83.5" x2="324" y2="83.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="24" y1="121.0" x2="324" y2="121.0" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="24" y1="158.5" x2="324" y2="158.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
     <line x1="30.2" y1="169.4" x2="30.2" y2="176.8" stroke="#d03b3b" stroke-width="1"/>
     <rect x="26.4" y="173.0" width="7.8" height="1.4" fill="#d03b3b"/>
     <line x1="42.8" y1="171.4" x2="42.8" y2="184.7" stroke="#d03b3b" stroke-width="1"/>
@@ -176,10 +176,10 @@ GROUP BY bar;</code></pre>
     <text x="330" y="196" font-size="13" fill="#898781" font-family="system-ui, sans-serif">8.0</text>
     <text x="382" y="24" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">周线 · 26 根（近半年，每根 = 5 个交易日）</text>
     <text x="382" y="40" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 20.03 → 18.06（-9.9%）</text>
-    <rect x="382" y="46" width="300" height="150" fill="none" stroke="#e1e0d9"/>
-    <line x1="382" y1="83.5" x2="682" y2="83.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="382" y1="121.0" x2="682" y2="121.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="382" y1="158.5" x2="682" y2="158.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
+    <rect x="382" y="46" width="300" height="150" fill="none" stroke="#e4ddcd"/>
+    <line x1="382" y1="83.5" x2="682" y2="83.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="382" y1="121.0" x2="682" y2="121.0" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="382" y1="158.5" x2="682" y2="158.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
     <line x1="387.8" y1="79.3" x2="387.8" y2="140.3" stroke="#0ca30c" stroke-width="1"/>
     <rect x="384.2" y="83.8" width="7.2" height="49.8" fill="#0ca30c"/>
     <line x1="399.3" y1="122.1" x2="399.3" y2="157.4" stroke="#0ca30c" stroke-width="1"/>
@@ -236,10 +236,10 @@ GROUP BY bar;</code></pre>
     <text x="688" y="196" font-size="13" fill="#898781" font-family="system-ui, sans-serif">17.2</text>
     <text x="24" y="274" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">日线 · 30 根（近 6 周，每根 = 48 根 5 分钟线）</text>
     <text x="24" y="290" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 18.92 → 18.25（-3.6%）</text>
-    <rect x="24" y="296" width="300" height="150" fill="none" stroke="#e1e0d9"/>
-    <line x1="24" y1="333.5" x2="324" y2="333.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="24" y1="371.0" x2="324" y2="371.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="24" y1="408.5" x2="324" y2="408.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
+    <rect x="24" y="296" width="300" height="150" fill="none" stroke="#e4ddcd"/>
+    <line x1="24" y1="333.5" x2="324" y2="333.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="24" y1="371.0" x2="324" y2="371.0" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="24" y1="408.5" x2="324" y2="408.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
     <line x1="29.0" y1="354.8" x2="29.0" y2="377.3" stroke="#0ca30c" stroke-width="1"/>
     <rect x="25.9" y="363.6" width="6.2" height="6.1" fill="#0ca30c"/>
     <line x1="39.0" y1="350.5" x2="39.0" y2="372.7" stroke="#d03b3b" stroke-width="1"/>
@@ -304,10 +304,10 @@ GROUP BY bar;</code></pre>
     <text x="330" y="446" font-size="13" fill="#898781" font-family="system-ui, sans-serif">17.2</text>
     <text x="382" y="274" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">5 分钟线 · 48 根（最后 1 个交易日）</text>
     <text x="382" y="290" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 18.38 → 18.25（-0.7%）</text>
-    <rect x="382" y="296" width="300" height="150" fill="none" stroke="#e1e0d9"/>
-    <line x1="382" y1="333.5" x2="682" y2="333.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="382" y1="371.0" x2="682" y2="371.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
-    <line x1="382" y1="408.5" x2="682" y2="408.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
+    <rect x="382" y="296" width="300" height="150" fill="none" stroke="#e4ddcd"/>
+    <line x1="382" y1="333.5" x2="682" y2="333.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="382" y1="371.0" x2="682" y2="371.0" stroke="#e4ddcd" stroke-dasharray="2 4"/>
+    <line x1="382" y1="408.5" x2="682" y2="408.5" stroke="#e4ddcd" stroke-dasharray="2 4"/>
     <line x1="385.1" y1="323.7" x2="385.1" y2="350.1" stroke="#d03b3b" stroke-width="1"/>
     <rect x="383.2" y="323.7" width="3.9" height="26.4" fill="#d03b3b"/>
     <line x1="391.4" y1="305.5" x2="391.4" y2="332.2" stroke="#d03b3b" stroke-width="1"/>
@@ -524,9 +524,9 @@ GROUP BY bar;</code></pre>
   <figure>
     <p class="fig-title">图 4-3 · 一次教科书式的过拟合</p>
     <svg viewBox="0 0 720 476" role="img" aria-label="上图为一段随机游走行情的 K 线与最优均线参数的买卖点，下图为策略净值与买入持有净值的对比，样本内领先、样本外落后">
-    <rect width="720" height="476" fill="#fcfcfb"/>
+    <rect width="720" height="476" fill="#faf6ec"/>
     <text x="52" y="20" font-size="14" fill="#0b0b0b" font-weight="600" font-family="system-ui, sans-serif">同一段行情的 K 线：MA15 / MA30 金叉买、死叉卖</text>
-    <rect x="52" y="44" width="646" height="190" fill="none" stroke="#e1e0d9"/>
+    <rect x="52" y="44" width="646" height="190" fill="none" stroke="#e4ddcd"/>
     <rect x="52" y="44" width="323.0" height="190" fill="#2a78d6" opacity="0.045"/>
     <line x1="54.0" y1="139.1" x2="54.0" y2="159.2" stroke="#d03b3b" stroke-width="1"/>
     <rect x="52.8" y="139.1" width="2.5" height="20.1" fill="#d03b3b"/>
@@ -861,17 +861,17 @@ GROUP BY bar;</code></pre>
     <path d="M78.2,193.2 l-4.5,7 h9 z" fill="#2a78d6" stroke="none" stroke-width="1.2"/>
     <path d="M102.5,137.3 l-4.5,-7 h9 z" fill="#52514e" stroke="none" stroke-width="1.2"/>
     <path d="M223.6,214.0 l-4.5,7 h9 z" fill="#2a78d6" stroke="none" stroke-width="1.2"/>
-    <path d="M514.3,180.5 l-4.5,-7 h9 z" fill="#fcfcfb" stroke="#52514e" stroke-width="1.2"/>
-    <path d="M574.9,82.8 l-4.5,7 h9 z" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.2"/>
-    <path d="M663.7,93.6 l-4.5,-7 h9 z" fill="#fcfcfb" stroke="#52514e" stroke-width="1.2"/>
+    <path d="M514.3,180.5 l-4.5,-7 h9 z" fill="#faf6ec" stroke="#52514e" stroke-width="1.2"/>
+    <path d="M574.9,82.8 l-4.5,7 h9 z" fill="#faf6ec" stroke="#2a78d6" stroke-width="1.2"/>
+    <path d="M663.7,93.6 l-4.5,-7 h9 z" fill="#faf6ec" stroke="#52514e" stroke-width="1.2"/>
     <text x="54" y="251" font-size="13" fill="#52514e" font-family="system-ui, sans-serif"><tspan fill="#2a78d6">▲</tspan> 买入信号　<tspan>▼</tspan> 卖出信号　实心 = 样本内，空心 = 样本外（同一套规则，一直照常发信号）</text>
     <line x1="375.0" y1="36" x2="375.0" y2="432" stroke="#52514e" stroke-width="1.5" stroke-dasharray="5 4"/>
     <text x="367.0" y="36" font-size="13" fill="#52514e" text-anchor="end" font-weight="600" font-family="system-ui, sans-serif">← 样本内 80 天：参数在这里被调出来</text>
     <text x="383.0" y="36" font-size="13" fill="#52514e" font-weight="600" font-family="system-ui, sans-serif">样本外 80 天 →</text>
     <text x="52" y="286" font-size="14" fill="#0b0b0b" font-weight="600" font-family="system-ui, sans-serif">净值曲线：策略 vs 买入持有（起点都是 1.00）</text>
-    <rect x="52" y="300" width="646" height="132" fill="none" stroke="#e1e0d9"/>
+    <rect x="52" y="300" width="646" height="132" fill="none" stroke="#e4ddcd"/>
     <rect x="52" y="300" width="323.0" height="132" fill="#2a78d6" opacity="0.045"/>
-    <line x1="52" y1="387.1" x2="698" y2="387.1" stroke="#c3c2b7" stroke-dasharray="3 4"/>
+    <line x1="52" y1="387.1" x2="698" y2="387.1" stroke="#cec5b1" stroke-dasharray="3 4"/>
     <text x="46" y="391.1" font-size="13" fill="#898781" text-anchor="end" font-family="system-ui, sans-serif">1.00</text>
     <polyline points="52.0,387.1 56.0,376.7 60.1,376.7 64.1,376.7 68.2,376.7 72.2,376.7 76.2,376.7 80.3,374.4 84.3,372.3 88.3,367.9 92.4,376.6 96.4,368.5 100.5,363.3 104.5,363.3 108.5,363.3 112.6,363.3 116.6,363.3 120.6,363.3 124.7,363.3 128.7,363.3 132.8,363.3 136.8,363.3 140.8,363.3 144.9,363.3 148.9,363.3 152.9,363.3 157.0,363.3 161.0,363.3 165.1,363.3 169.1,363.3 173.1,363.3 177.2,363.3 181.2,363.3 185.2,363.3 189.3,363.3 193.3,363.3 197.3,363.3 201.4,363.3 205.4,363.3 209.5,363.3 213.5,363.3 217.5,363.3 221.6,363.3 225.6,362.5 229.7,366.6 233.7,351.4 237.7,350.2 241.8,348.3 245.8,338.9 249.8,344.0 253.9,353.9 257.9,349.7 261.9,348.1 266.0,351.7 270.0,356.0 274.1,346.9 278.1,349.3 282.1,351.6 286.2,353.5 290.2,349.2 294.2,361.9 298.3,356.0 302.3,349.4 306.4,343.0 310.4,335.7 314.4,334.0 318.5,342.1 322.5,343.3 326.6,338.1 330.6,338.8 334.6,340.7 338.7,348.3 342.7,348.4 346.7,348.5 350.8,355.0 354.8,351.4 358.9,353.1 362.9,340.0 366.9,333.5 371.0,325.3 375.0,327.3 379.0,325.5 383.1,314.8 387.1,336.3 391.1,332.1 395.2,331.3 399.2,338.2 403.3,341.6 407.3,333.2 411.3,348.8 415.4,337.2 419.4,340.1 423.4,354.8 427.5,347.8 431.5,337.6 435.6,326.4 439.6,323.6 443.6,324.8 447.7,313.0 451.7,312.8 455.8,324.4 459.8,316.9 463.8,324.5 467.9,328.8 471.9,325.1 475.9,331.4 480.0,334.5 484.0,329.0 488.1,340.1 492.1,345.7 496.1,344.9 500.2,352.0 504.2,355.9 508.2,351.8 512.3,357.7 516.3,357.7 520.4,357.7 524.4,357.7 528.4,357.7 532.5,357.7 536.5,357.7 540.5,357.7 544.6,357.7 548.6,357.7 552.6,357.7 556.7,357.7 560.7,357.7 564.8,357.7 568.8,357.7 572.8,357.7 576.9,359.5 580.9,365.3 585.0,366.0 589.0,365.3 593.0,359.6 597.1,356.8 601.1,355.3 605.1,369.7 609.2,369.3 613.2,361.4 617.2,368.2 621.3,368.9 625.3,386.9 629.4,387.5 633.4,380.3 637.4,383.6 641.5,386.5 645.5,386.7 649.5,376.6 653.6,382.7 657.6,379.6 661.7,378.0 665.7,378.0 669.7,378.0 673.8,378.0 677.8,378.0 681.9,378.0 685.9,378.0 689.9,378.0 694.0,378.0 698.0,378.0" fill="none" stroke="#2a78d6" stroke-width="2"/>
     <polyline points="52.0,387.1 56.0,376.7 60.1,375.3 64.1,382.3 68.2,392.5 72.2,392.6 76.2,398.6 80.3,396.5 84.3,394.5 88.3,390.5 92.4,398.5 96.4,391.0 100.5,386.2 104.5,382.9 108.5,398.0 112.6,401.7 116.6,405.3 120.6,403.5 124.7,398.6 128.7,400.9 132.8,411.2 136.8,416.8 140.8,412.5 144.9,404.2 148.9,404.7 152.9,408.5 157.0,406.3 161.0,407.8 165.1,411.2 169.1,419.2 173.1,413.2 177.2,408.8 181.2,407.0 185.2,403.8 189.3,411.1 193.3,402.1 197.3,398.8 201.4,399.4 205.4,389.8 209.5,400.5 213.5,393.4 217.5,395.2 221.6,409.2 225.6,408.6 229.7,412.0 233.7,399.1 237.7,398.1 241.8,396.4 245.8,388.4 249.8,392.7 253.9,401.2 257.9,397.7 261.9,396.3 266.0,399.3 270.0,403.0 274.1,395.2 278.1,397.3 282.1,399.3 286.2,400.9 290.2,397.2 294.2,408.0 298.3,403.0 302.3,397.4 306.4,391.9 310.4,385.7 314.4,384.3 318.5,391.1 322.5,392.2 326.6,387.7 330.6,388.3 334.6,390.0 338.7,396.4 342.7,396.5 346.7,396.6 350.8,402.1 354.8,399.1 358.9,400.5 362.9,389.4 366.9,383.9 371.0,376.8 375.0,378.6 379.0,377.0 383.1,367.9 387.1,386.2 391.1,382.6 395.2,382.0 399.2,387.8 403.3,390.7 407.3,383.6 411.3,396.9 415.4,387.0 419.4,389.4 423.4,402.0 427.5,396.0 431.5,387.3 435.6,377.7 439.6,375.4 443.6,376.4 447.7,366.4 451.7,366.2 455.8,376.1 459.8,369.7 463.8,376.2 467.9,379.8 471.9,376.6 475.9,382.0 480.0,384.7 484.0,380.0 488.1,389.4 492.1,394.2 496.1,393.5 500.2,399.6 504.2,402.9 508.2,399.4 512.3,404.5 516.3,405.1 520.4,397.8 524.4,397.5 528.4,404.4 532.5,400.7 536.5,392.4 540.5,385.9 544.6,389.3 548.6,380.0 552.6,369.1 556.7,375.1 560.7,369.2 564.8,363.8 568.8,357.0 572.8,337.6 576.9,339.5 580.9,345.7 585.0,346.4 589.0,345.7 593.0,339.7 597.1,336.7 601.1,335.1 605.1,350.4 609.2,350.0 613.2,341.5 617.2,348.8 621.3,349.5 625.3,368.6 629.4,369.3 633.4,361.7 637.4,365.1 641.5,368.2 645.5,368.5 649.5,357.8 653.6,364.2 657.6,360.9 661.7,359.2 665.7,363.2 669.7,365.4 673.8,367.7 677.8,368.1 681.9,362.1 685.9,364.8 689.9,366.3 694.0,373.3 698.0,381.2" fill="none" stroke="#eb6834" stroke-width="2"/>
