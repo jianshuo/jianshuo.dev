@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第5章 · 财报三张表 — 程序员炒股指南</title>
+<meta name="description" content="财报是公司的监控 dashboard：三张表各自回答什么问题，以及怎么快速识别造假信号。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 5 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 05</span>
+    <h1>财报三张表</h1>
+    <p class="lede">财报是公司的监控 dashboard：三张表各自回答什么问题，以及怎么快速识别造假信号。</p>
+  </div>
+
+  <p>上一章讲 K 线，那是价格的历史。这一章讲财报，那是价格背后的东西。价格每秒都在变，财报一个季度才更新一次，但长期看，是财报在拽着价格走。</p>
+
+  <p>很多人不看财报，理由是「看不懂」。其实一份年报里真正需要你看的东西不到二十个数字，剩下几百页是法律要求的样板文。这一章的目标不是把你训练成注册会计师，而是让你能在十分钟内判断一家公司「大概健康还是大概有问题」，并且知道哪几个指标一亮红灯就该走开。</p>
+
+  <h2><span class="h-num">5.1</span> 三张表的分工：三种互相校验的观测</h2>
+
+  <p>财报的主体是三张表，它们不是三份重复的报告，而是从三个不同的角度观测同一家公司。搞混它们回答的问题，是新手看财报最常见的错误。</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>表</th><th>回答什么问题</th><th>量的类型</th><th>典型问法</th></tr>
+    <tr><td><strong>利润表</strong><br>（损益表）</td><td>过去这一段时间里，赚了多少</td><td>区间量（flow）</td><td>2025 全年净赚多少？比去年多还是少？</td></tr>
+    <tr><td><strong>资产负债表</strong></td><td>在某个特定时刻，家底如何</td><td>时点量（stock）</td><td>12 月 31 日这一天，手里有多少钱、欠多少债？</td></tr>
+    <tr><td><strong>现金流量表</strong></td><td>过去这一段时间里，现金实际怎么进出</td><td>区间量（flow）</td><td>这一年真正收到手的钱有多少？</td></tr>
+  </table>
+  </div>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    三张表就是对一个系统的三种观测。<strong>利润表</strong>是一段时间的 access log 汇总——这个季度处理了多少请求、消耗了多少资源、净产出多少。<strong>资产负债表</strong>是某个时刻的内存 snapshot——你 dump 下来，看到堆里现在有什么对象、引用关系怎样。<strong>现金流量表</strong>是同一段时间里真实发生的磁盘 I/O——日志里写了什么不重要，落盘的字节数才是硬事实。三种观测互相校验，任何一种单独看都可能被误导。
+  </div>
+
+  <p>三张表由同一套账生成，所以彼此有严格的勾稽关系：利润表算出的净利润，一头结转进资产负债表的「未分配利润」（属于所有者权益），另一头是现金流量表间接法的起算点；现金流量表算出的期末现金余额，必须等于资产负债表上的「货币资金」。这套约束是硬的，就像数据库的外键——想在一张表上造假，另外两张表必须同步造假才能自洽，而这非常难，这也是后面识别造假的抓手。</p>
+
+  <figure>
+    <p class="fig-title">图 5-1 · 三张表的勾稽关系</p>
+    <svg viewBox="0 0 720 390" role="img" aria-label="三张表关系图：利润表和现金流量表在上方，资产负债表在下方，箭头标出净利润结转未分配利润、期末现金等于货币资金的勾稽关系">
+      <defs>
+        <marker id="ah51" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#898781"/>
+        </marker>
+      </defs>
+      <rect x="30" y="30" width="250" height="110" rx="10" fill="#eef4fc" stroke="#2a78d6" stroke-width="1.5"/>
+      <text x="155" y="60" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#0b0b0b">利润表</text>
+      <text x="155" y="85" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">一段时间内赚了多少（区间量）</text>
+      <text x="155" y="110" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">营收 − 成本费用 = 净利润</text>
+
+      <rect x="440" y="30" width="250" height="110" rx="10" fill="#eef4fc" stroke="#2a78d6" stroke-width="1.5"/>
+      <text x="565" y="60" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#0b0b0b">现金流量表</text>
+      <text x="565" y="85" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">一段时间内钱怎么进出（区间量）</text>
+      <text x="565" y="110" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">经营 + 投资 + 筹资 = 现金净增</text>
+
+      <rect x="180" y="240" width="360" height="105" rx="10" fill="#fdf3ea" stroke="#eb6834" stroke-width="1.5"/>
+      <text x="360" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#0b0b0b">资产负债表</text>
+      <text x="360" y="295" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">某一时刻的家底（时点量）</text>
+      <text x="360" y="320" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">资产 = 负债 + 所有者权益</text>
+
+      <line x1="284" y1="85" x2="434" y2="85" stroke="#898781" stroke-width="1.6" marker-end="url(#ah51)"/>
+      <text x="359" y="72" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">净利润是起算点</text>
+
+      <line x1="155" y1="144" x2="248" y2="236" stroke="#898781" stroke-width="1.6" marker-end="url(#ah51)"/>
+      <text x="30" y="196" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">净利润 → 未分配利润</text>
+
+      <line x1="565" y1="144" x2="472" y2="236" stroke="#898781" stroke-width="1.6" marker-end="url(#ah51)"/>
+      <text x="690" y="196" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">期末现金 = 货币资金</text>
+
+      <text x="360" y="375" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">同一套账生成，三张表必须互相对得上——对不上就是信号</text>
+    </svg>
+    <figcaption>净利润和现金余额是三张表之间的硬约束，任何一处造假都要在另外两张表上同步圆谎。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">5.2</span> 利润表：一条从营收扣到净利的流水线</h2>
+
+  <p>利润表是一条自上而下的流水线，营收进去，一层层扣掉成本和费用，剩下净利润。每一层扣的是什么，决定了这个数字的含义。</p>
+
+  <ul>
+    <li><strong>营业收入</strong>：卖东西收到的钱（会计上是确认的收入，未必已经收到现金，这一点后面会反复出现）。</li>
+    <li><strong>减营业成本 → 毛利</strong>：扣掉直接为了生产这批产品花的钱（原材料、工人工资、生产折旧）。毛利率高，说明产品本身有定价权。</li>
+    <li><strong>减期间费用 → 营业利润</strong>：扣掉销售费用（打广告、养销售）、管理费用（后台、行政）、研发费用、财务费用（利息）。这是主业赚钱能力的最终结果。</li>
+    <li><strong>减所得税等 → 净利润</strong>：再扣掉营业外收支和所得税，剩下的归股东。</li>
+  </ul>
+
+  <p>要留意两个词。一个是<strong>扣非净利润</strong>——把卖房、政府补贴、处置资产这些一次性的「非经常性损益」剔掉之后的利润。如果一家公司净利润很好看但扣非净利润很难看，说明主业其实不赚钱，是靠卖资产撑住了报表。另一个是<strong>归母净利润</strong>——净利润里真正归属于上市公司股东的那部分，子公司里少数股东的份额要扣掉。你算 EPS、算 PE，用的都是归母口径。</p>
+
+  <figure>
+    <p class="fig-title">图 5-2 · 利润表瀑布：100 元营收最后剩下多少</p>
+    <svg viewBox="0 0 720 325" role="img" aria-label="利润表瀑布图：营业收入100%，扣减营业成本68%后毛利32%，扣减期间费用与研发20%后营业利润12%，扣减所得税等3%后净利润9%">
+      <text x="140" y="40" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">营业收入</text>
+      <rect x="150" y="20" width="540" height="30" rx="3" fill="#2a78d6"/>
+      <text x="678" y="40" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff">100%</text>
+
+      <text x="140" y="80" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">− 营业成本</text>
+      <rect x="322.8" y="60" width="367.2" height="30" rx="3" fill="#eb6834"/>
+      <text x="506" y="80" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff">−68%</text>
+
+      <text x="140" y="120" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">= 毛利</text>
+      <rect x="150" y="100" width="172.8" height="30" rx="3" fill="#1baf7a"/>
+      <text x="310" y="120" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff">32%</text>
+
+      <text x="140" y="160" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">− 期间费用与研发</text>
+      <rect x="214.8" y="140" width="108" height="30" rx="3" fill="#eb6834"/>
+      <text x="268.8" y="160" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff">−20%</text>
+
+      <text x="140" y="200" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">= 营业利润</text>
+      <rect x="150" y="180" width="64.8" height="30" rx="3" fill="#1baf7a"/>
+      <text x="182" y="200" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff">12%</text>
+
+      <text x="140" y="240" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">− 所得税等</text>
+      <rect x="198.6" y="220" width="16.2" height="30" rx="3" fill="#eb6834"/>
+      <text x="224" y="240" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">−3%</text>
+
+      <text x="140" y="280" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#0b0b0b">= 净利润</text>
+      <rect x="150" y="260" width="48.6" height="30" rx="3" fill="#1c5cab"/>
+      <text x="208" y="280" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#0b0b0b">9%</text>
+
+      <path d="M690 50 L690 60" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="M322.8 90 L322.8 100" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="M322.8 130 L322.8 140" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="M214.8 170 L214.8 180" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="M214.8 210 L214.8 220" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="M198.6 250 L198.6 260" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="3 3"/>
+
+      <line x1="150" y1="298" x2="690" y2="298" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="150" y="316" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0%</text>
+      <text x="420" y="316" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">50%</text>
+      <text x="690" y="316" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">100%</text>
+    </svg>
+    <figcaption>示意用的制造业公司：毛利率 32%、净利率 9%。橙色是每一层扣掉的部分，绿色是扣完剩下的小计。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">5.3</span> 资产负债表：恒等式、负债率和商誉这颗雷</h2>
+
+  <p>资产负债表只有一个恒等式：<code>资产 = 负债 + 所有者权益</code>。这个式子永远成立，不是一条经验规律，而是复式记账的定义——公司控制的每一分资源，要么是借来的，要么是股东的。它跟守恒律一样，永远配平，所以「资产总额很大」本身不说明任何问题，关键是右边那一半里借来的占多少。</p>
+
+  <p>看资产负债表，重点看三样东西：</p>
+
+  <ul>
+    <li><strong>资产负债率</strong> = 负债 ÷ 资产。一般制造业和消费公司，60% 以下相对稳健，70% 以上就该问问为什么；但银行、地产、公用事业天生高杠杆，跨行业比这个数没有意义。</li>
+    <li><strong>短期偿债能力</strong>：账上的货币资金能不能覆盖一年内到期的短期借款。一家账上趴着几十亿现金、同时又在大量举高息短债的公司，值得警惕——真有钱为什么要借贵的钱？这正是当年康美药业露馅的关键疑点之一。</li>
+    <li><strong>商誉</strong>：这是最容易被忽略的一颗雷。公司花 10 亿收购一家净资产只有 2 亿的公司，多付的 8 亿就记成「商誉」挂在资产里。商誉不摊销，但每年要做减值测试——一旦被收购方业绩不达标，商誉就要一次性大额减值，直接砸进当年利润表。很多公司业绩「暴雷」，暴的就是这颗雷。</li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    商誉就是资产负债表上的技术债。收购时你为「协同效应」「品牌价值」这些说不清的东西多付了钱，它以资产的名义挂在账上，账面上一切正常。但只要被收购方开始掉链子，这笔债就会在某个季度一次性还清——而且是在你最不想还的时候。看财报时先看一眼商誉占净资产的比例，超过 30% 就要认真读它的构成。
+  </div>
+
+  <h2><span class="h-num">5.4</span> 现金流量表：为什么它最难造假</h2>
+
+  <p>利润是算出来的，现金是数出来的。这句话是整章的核心。</p>
+
+  <p>会计有一条叫「权责发生制」的原则：货发出去、合同签好，收入就可以确认，哪怕客户一分钱没付。这条原则本身合理（否则账期长的行业没法记账），但它给了操纵空间——只要愿意放宽赊销，营收和利润可以做得很好看，而银行账户里一分钱没多。现金流量表用的是「收付实现制」，只记真金白银的进出，所以它是对利润表的独立校验。</p>
+
+  <p>现金流量表按用途分三类，各自的正负号组合本身就是一份诊断书：</p>
+
+  <ul>
+    <li><strong>经营活动现金流</strong>：卖货收到的钱减去买料、发工资、交税付出的钱。这是公司自己造血的能力，也是最该关注的一项。长期为正且接近或高于净利润，是健康的标志。</li>
+    <li><strong>投资活动现金流</strong>：买设备、建厂、收购、买理财。扩张期的公司这一项通常为负，这是正常的，甚至是好事——说明它在往未来投钱。</li>
+    <li><strong>筹资活动现金流</strong>：借钱、发股票（正），还债、分红、回购（负）。</li>
+  </ul>
+
+  <p>一个常用的快速判断：<strong>经营为正、投资为负、筹资为负</strong>，是成熟绩优公司的典型形态——自己赚的钱够花，还能拿去扩张和分红。反过来，<strong>经营为负、筹资为正</strong>，说明主业不造血、全靠外部输血活着，这类公司要非常小心。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    净利润是接口声明的返回值，经营现金流是数据库里实际落库的行数。两者应该一致，长期对不上就该查 bug。造假的人可以改返回值，但要在磁盘上凭空造出真实的字节数，需要伪造银行流水、伪造回单、伪造整条链路——难度高一个量级，也更容易被审计和监管抓住。
+  </div>
+
+  <h2><span class="h-num">5.5</span> 利润与现金的背离：应收账款和存货</h2>
+
+  <p>「有利润没现金」是财报里最大的一盏红灯。钱去哪了？通常藏在资产负债表的两个科目里。</p>
+
+  <p><strong>应收账款</strong>：货已经发出、收入已经确认，但钱还在客户那儿。少量应收是正常经营，问题在于增速——如果营收涨 20%，应收账款涨 60%，说明这一年的增长是靠放宽赊销买来的，而且很可能收不回来（最后以「计提坏账」的形式冲回利润）。配套看一眼<strong>应收账款周转天数</strong>，逐年拉长就是危险信号。</p>
+
+  <p><strong>存货</strong>：钱变成了压在仓库里的货。存货增速远超营收增速，意味着东西卖不动了。对有保质期或技术迭代快的行业（食品、消费电子、服装），存货堆积后面跟着的一定是打折清仓和存货跌价准备，两者都会吃掉未来的利润。</p>
+
+  <figure>
+    <p class="fig-title">图 5-3 · 净利润一模一样的两家公司</p>
+    <svg viewBox="0 0 720 355" role="img" aria-label="折线图：两家公司净利润完全相同并逐年增长，A 公司经营现金流同步增长，B 公司经营现金流逐年下滑最终转负">
+      <text x="40" y="42" font-family="system-ui, sans-serif" font-size="13" fill="#898781">亿元</text>
+      <line x1="90" y1="68.5" x2="660" y2="68.5" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="105.4" x2="660" y2="105.4" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="142.3" x2="660" y2="142.3" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="179.2" x2="660" y2="179.2" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="253.1" x2="660" y2="253.1" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="290" x2="660" y2="290" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="216.2" x2="660" y2="216.2" stroke="#c3c2b7" stroke-width="1.4"/>
+
+      <text x="78" y="73" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">4</text>
+      <text x="78" y="110" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">3</text>
+      <text x="78" y="147" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2</text>
+      <text x="78" y="184" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1</text>
+      <text x="78" y="221" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <text x="78" y="258" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">-1</text>
+      <text x="78" y="295" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">-2</text>
+
+      <polyline points="90,142.3 232.5,127.5 375,112.8 517.5,98 660,83.2" fill="none" stroke="#2a78d6" stroke-width="2" stroke-dasharray="6 4"/>
+      <polyline points="90,134.9 232.5,120.2 375,105.4 517.5,86.9 660,68.5" fill="none" stroke="#1baf7a" stroke-width="2"/>
+      <polyline points="90,157.1 232.5,179.2 375,201.4 517.5,234.6 660,267.8" fill="none" stroke="#eb6834" stroke-width="2"/>
+
+      <circle cx="660" cy="68.5" r="3.5" fill="#1baf7a"/>
+      <circle cx="660" cy="83.2" r="3.5" fill="#2a78d6"/>
+      <circle cx="660" cy="267.8" r="3.5" fill="#eb6834"/>
+
+      <text x="600" y="52" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">现金与利润同步增长</text>
+      <text x="655" y="292" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">经营现金流转负</text>
+
+      <text x="90" y="312" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2021</text>
+      <text x="232.5" y="312" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2022</text>
+      <text x="375" y="312" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2023</text>
+      <text x="517.5" y="312" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2024</text>
+      <text x="660" y="312" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2025</text>
+
+      <line x1="60" y1="340" x2="84" y2="340" stroke="#2a78d6" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="90" y="345" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">净利润（两家相同）</text>
+      <line x1="270" y1="340" x2="294" y2="340" stroke="#1baf7a" stroke-width="2"/>
+      <text x="300" y="345" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">A 公司经营现金流</text>
+      <line x1="440" y1="340" x2="464" y2="340" stroke="#eb6834" stroke-width="2"/>
+      <text x="470" y="345" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">B 公司经营现金流</text>
+    </svg>
+    <figcaption>两家公司的利润表逐年一致（2.0 亿涨到 3.6 亿），只看利润表你分辨不出好坏；现金流量表一摊开，差别一目了然。</figcaption>
+  </figure>
+
+  <div class="callout"><span class="tag">避坑</span>
+    连续三年「净利润为正、经营活动现金流为负」的公司，直接从你的候选名单里划掉，不需要研究它的故事讲得多好。A 股历史上规模最大的财务造假案康美药业，2016 至 2018 年累计虚增货币资金 886 亿元，事后回看，它当年账上巨额现金与持续大额举债并存的矛盾，早就写在公开报表上了——只是绝大多数人没看。
+  </div>
+
+  <h2><span class="h-num">5.6</span> 核心比率速查：五个数字定位一家公司</h2>
+
+  <p>绝对值没有意义，比率才有。比率把不同规模的公司拉到同一个量纲上，让你能横向比较、纵向比较。</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>指标</th><th>公式</th><th>衡量什么</th><th>怎么用</th></tr>
+    <tr><td><strong>ROE</strong><br>净资产收益率</td><td>归母净利润 ÷ 归母净资产</td><td>股东每投一块钱，一年赚回几分</td><td>最重要的单一指标。长期稳定在 15% 以上，通常意味着有护城河</td></tr>
+    <tr><td><strong>毛利率</strong></td><td>毛利 ÷ 营业收入</td><td>产品本身的定价权</td><td>同行业横比；自身逐年下滑说明竞争在加剧</td></tr>
+    <tr><td><strong>净利率</strong></td><td>净利润 ÷ 营业收入</td><td>整条流水线的最终效率</td><td>与毛利率一起看：毛利高而净利低，说明费用失控</td></tr>
+    <tr><td><strong>资产负债率</strong></td><td>负债 ÷ 资产</td><td>杠杆和抗风险能力</td><td>只在同行业内比；关注趋势是否在快速上升</td></tr>
+    <tr><td><strong>现金含量</strong></td><td>经营现金流 ÷ 净利润</td><td>利润的成色</td><td>长期接近或大于 1 是健康；长期远低于 1 要追问原因</td></tr>
+  </table>
+  </div>
+
+  <p>ROE 值得单独说。它可以拆成三个因子——<code>ROE = 净利率 × 总资产周转率 × 权益乘数</code>（杜邦分析）。同样是 20% 的 ROE，可以来自高利润率（茅台式，卖得贵），可以来自高周转（超市式，卖得快），也可以来自高杠杆（银行式，借得多）。第三种最脆弱：杠杆在顺风时放大收益，在逆风时同样放大亏损。所以看到高 ROE 先拆开看它从哪来。</p>
+
+  <p>一个校准现实的参照：2025 年报显示，A 股非金融上市公司的 ROE 中位数只有 4.2%，超过一半的公司 ROE 低于 5%，ROE 高于 15% 的公司不到 9%。也就是说，真正意义上「好公司」在五千多家上市公司里是少数派。这个分布本身就解释了一件事——为什么本书后面会主张，对大多数人来说，与其在这个分布里挑，不如直接买下整个分布（第 7 章）。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    ROE 就是这家公司这台机器的资本利用率：投入的资本是算力，净利润是有效吞吐量。同样一堆机器，有人能跑出 20% 的利用率，有人只有 4%。巴菲特把 ROE 看得比增长率还重，逻辑就在这里——一家能长期把留存利润按 20% 再投出去的公司，复利会自己滚起来；而一家 ROE 只有 4% 的公司，赚的钱留在体内也只是在贬值。
+  </div>
+
+  <h2><span class="h-num">5.7</span> 去哪看，怎么读</h2>
+
+  <p>财报不需要花钱买，全是公开的：</p>
+
+  <ul>
+    <li><strong>法定披露平台</strong>：巨潮资讯网（cninfo.com.cn）以及上交所、深交所、北交所官网。这里是原始 PDF，最权威，没有二手加工。</li>
+    <li><strong>券商 App 的 F10</strong>：把关键财务数据整理成了多年趋势表和比率，适合快速扫一遍。看趋势用它，做决定前回原文核对。</li>
+    <li><strong>第三方数据平台</strong>：方便，但注意口径差异（比如是否扣非、是否归母），交叉验证一下再用。</li>
+  </ul>
+
+  <p>一份年报几百页，真正要读的是这几块：<strong>「管理层讨论与分析」</strong>（公司自己解释业绩为什么变化、行业发生了什么，是全篇信息密度最高的部分）、<strong>审计报告的意见类型</strong>（只有「标准无保留意见」是干净的，出现「保留意见」「无法表示意见」直接当红灯）、<strong>财务报表附注</strong>里应收账款账龄和商誉构成这两节，以及<strong>关联交易</strong>那一节。剩下的部分可以跳过。</p>
+
+  <p>一个实用习惯：不要只读一年，把最近五年的关键数字拉成一张表。单年数据可以粉饰，五年的趋势很难。营收、扣非净利润、经营现金流、ROE、资产负债率，五行五列，二十五个数字，比读一百页文字有用得多。</p>
+
+  <h2><span class="h-num">5.8</span> 财报的时间属性：什么时候发，为什么那几天特别晃</h2>
+
+  <p>A 股的定期报告有法定时间窗口，这些时间点是可以提前写进日历的：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>报告</th><th>法定期限</th><th>最晚披露日</th></tr>
+    <tr><td>年度报告</td><td>会计年度结束后 4 个月内</td><td>4 月 30 日</td></tr>
+    <tr><td>第一季度报告</td><td>季度结束后 1 个月内（不得早于上年年报）</td><td>4 月 30 日</td></tr>
+    <tr><td>半年度报告</td><td>上半年结束后 2 个月内</td><td>8 月 31 日</td></tr>
+    <tr><td>第三季度报告</td><td>前三季度结束后 1 个月内</td><td>10 月 31 日</td></tr>
+  </table>
+  </div>
+
+  <p>在正式报告之前还有<strong>业绩预告</strong>：按沪深交易所规则，公司预计年度出现亏损、扭亏为盈、或净利润同比变动超过 50% 等情形时，须在会计年度结束后一个月内（即次年 1 月 31 日前）发布预告。所以每年 1 月底是「暴雷季」，商誉减值的公告大多集中在这个窗口。具体适用条款各板块（主板 / 创业板 / 科创板 / 北交所）略有差异，以交易所现行规则为准。</p>
+
+  <p>为什么财报前后波动大？因为股价反映的是<strong>预期</strong>，而财报是少数几个把预期和事实强制对齐的时刻。市场早已按某个隐含预期给公司定了价，财报公布的那一瞬间，定价依据被替换成事实，价格就要跳一次。这也解释了一个反直觉的现象：业绩大增而股价下跌——因为市场原本预期的是「大增再多一点」。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+    不要试图「押财报」。财报前买入赌超预期，本质是在猜一个你没有信息优势的二元结果，而且赔率被市场定过价了——这跟买彩票的结构是一样的，不是投资。真正的内幕信息你拿不到，拿到了也是违法的。财报对你的价值在于：验证你长期持有的公司是否还在按你理解的方式赚钱，而不是提供一个短线交易的时点。
+  </div>
+
+  <hr>
+
+  <p>这一章给你的是一套体检指标：三张表看结构，五个比率看健康度，现金流看真伪。但体检结果告诉你的是「这是不是一家好公司」，它没有回答另一个同样重要的问题——<strong>这个价格值不值得买</strong>。一家 ROE 20%、现金流充沛的好公司，如果你出价过高，一样会亏钱。把好公司和好价格分开，是下一章的事。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="reading-candlestick-charts.html"><span class="dir">← 上一章</span>第4章 · 看懂 K 线</a>
+  <a class="next" href="valuation-thinking.html"><span class="dir">下一章 →</span>第6章 · 估值思维</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>

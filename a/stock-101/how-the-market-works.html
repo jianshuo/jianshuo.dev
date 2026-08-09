@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第2章 · 市场如何撮合 — 程序员炒股指南</title>
+<meta name="description" content="拆开交易所这台撮合引擎：订单簿、价格与时间优先、集合竞价与连续竞价、买卖五档与滑点。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 2 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 02</span>
+    <h1>市场如何撮合</h1>
+    <p class="lede">拆开交易所这台撮合引擎：订单簿、竞价规则、买卖五档，这是全书程序员最有快感的一章。</p>
+  </div>
+
+  <p>股价不是谁定的，是撮合出来的。交易所本质上是一个确定性的匹配服务：接收全市场的委托请求，按两条固定规则排序，能配对的当场成交，配不上的排队等着。整套逻辑简单到可以在一页纸上写完，规则全部公开，行为完全可预测。</p>
+
+  <p>理解这台引擎有两个直接好处。第一，你会知道按下「买入」之后到底发生了什么，不再把成交价的波动理解成「有人在操纵」。第二，散户交易成本里被白白浪费的那部分，大多发生在这一层：单子怎么下、什么时候下、下多大。</p>
+
+  <h2><span class="h-num">2.1</span> 订单簿：两个有序队列</h2>
+
+  <p>交易所为每一只股票维护一个<strong>订单簿（Order Book）</strong>。它就是两个按价格排序的队列：</p>
+
+  <ul>
+    <li><strong>买盘（bids）</strong>：所有想买的委托，按出价从高到低排。出价最高的在最前面，叫「买一」。</li>
+    <li><strong>卖盘（asks）</strong>：所有想卖的委托，按要价从低到高排。要价最低的在最前面，叫「卖一」。</li>
+  </ul>
+
+  <p>A 股的最小价格变动单位是 0.01 元，所以价格轴是离散的整数格子（以分为单位）。每个价格档位下面挂着若干笔委托，按进入交易所主机的先后顺序排成一条 FIFO 队列。委托的最小数量单位是「手」，买入 1 手 = 100 股。</p>
+
+  <p>买一价永远低于卖一价，两者之差叫<strong>价差（spread）</strong>。这个缺口是订单簿的空档：没人愿意跨过去，就一笔都不会成交。一旦有人跨过去——出一个不低于卖一的买价，或不高于买一的卖价——撮合立即发生。所谓「股价涨了」，物理含义就是买盘不断跨过价差、把卖盘一档一档吃光。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    订单簿就是一个 max-heap（买盘）加一个 min-heap（卖盘）。撮合引擎只做一件事：反复检查两个堆的堆顶能不能配对，能配就弹出成交，不能配就把新单 push 进去排队。真实交易所为了性能一般不用堆，而是用「价格数组 + 每档双向链表」，因为价格档位有限且连续，数组下标寻址是 O(1)。但心智模型是一样的。
+  </div>
+
+  <pre><code># 订单簿 = 两个按价格排序的队列，每档之内先到先得
+bids = MaxHeap()   # 买盘：出价越高越靠前
+asks = MinHeap()   # 卖盘：要价越低越靠前
+
+def on_order(o):
+    book = asks if o.side == BUY else bids
+    while o.qty &gt; 0 and book and crosses(o, book.top()):
+        best = book.top()                  # 对手方最优价
+        n = min(o.qty, best.qty)
+        trade(price=best.price, qty=n)     # 成交价取「先挂单」一方的价格
+        o.qty -= n; best.qty -= n
+        if best.qty == 0: book.pop()
+    if o.qty &gt; 0 and o.type == LIMIT:
+        push(o)                            # 没吃完的部分挂上去排队</code></pre>
+
+  <p>注意 <code>trade(price=best.price)</code> 这一行。A 股的成交价取<strong>先挂单一方</strong>的价格：卖一挂在 10.24 元，你出价 10.30 元买，成交价是 10.24 元而不是 10.30 元，多出来的 6 分钱不会被吃掉。这是很多新手的第一个惊喜——挂高价买入并不会让你买贵，只会让你排到队伍最前面、优先成交。</p>
+
+  <h2><span class="h-num">2.2</span> 撮合规则只有两条</h2>
+
+  <p>整台引擎的排序规则只有两条，没有第三条：</p>
+
+  <ul>
+    <li><strong>价格优先</strong>：买入价高的先于买入价低的成交；卖出价低的先于卖出价高的成交。</li>
+    <li><strong>时间优先</strong>：同一价格档位上，先到达交易所主机的委托先成交。</li>
+  </ul>
+
+  <p>第一个结论：<strong>机构没有插队特权</strong>。基金公司的一手和你的一手在同一档位上排同一条队，谁先到谁先成交。所谓公平，是这条规则给的。</p>
+
+  <p>第二个结论：想优先成交，合法手段只有出价更有诚意（价格优先）或更早挂单（时间优先）。涨停板上排队买入常常一整天买不到，就是因为前面已经有几百万手在同一价格上排着，时间优先把你钉在了队尾。</p>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    「时间」指的是委托到达<strong>交易所主机</strong>的时间，不是你点下按钮的时间。中间还隔着券商柜台的风控校验和一段网络。这就是为什么涨停板集合竞价抢筹几乎不可能靠手速赢——你和专业席位之间差的是链路，不是手指。别为这件事花钱升级设备。
+  </div>
+
+  <h2><span class="h-num">2.3</span> 限价单与市价单</h2>
+
+  <p>你能提交的委托只有两大类，区别就是有没有 <code>price</code> 这个参数。</p>
+
+  <p><strong>限价单</strong>带价格：「以不高于 10.24 元买入 10 手」。能成交就成交，成交不了就挂在订单簿上排队等。它的保证是「价格绝不劣于我说的数」，代价是可能一直不成交。</p>
+
+  <p><strong>市价单</strong>不带价格：「立刻按现在的对手方价格买 10 手」。它的保证是「大概率立刻成交」，代价是你不知道最终成交价。A 股的市价单还细分成几种，值得看一眼——名字很吓人，含义都很直白：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>委托类型</th><th>行为</th><th>适用</th></tr>
+    <tr><td>最优五档即时成交剩余撤销</td><td>只吃对手方前五档，剩余部分立刻撤销</td><td>沪、深</td></tr>
+    <tr><td>最优五档即时成交剩余转限价</td><td>只吃对手方前五档，剩余部分转成限价单挂上去</td><td>沪、深</td></tr>
+    <tr><td>对手方最优价格</td><td>按对手方第一档价格成交（买入按卖一价）</td><td>深</td></tr>
+    <tr><td>本方最优价格</td><td>按本方第一档价格挂单（买入挂在买一价）</td><td>深</td></tr>
+    <tr><td>即时成交剩余撤销（FAK）／全额成交或撤销（FOK）</td><td>成交多少算多少剩余撤销；或者要么全成交要么全撤</td><td>深</td></tr>
+  </table>
+  </div>
+
+  <p>「最优五档」这个限制是交易所替你做的兜底：即使你交了一张不设上限的市价买单，它最多也只吃到卖五，不会一路穿到涨停板。此外，科创板、创业板在连续竞价阶段还有<strong>有效竞价范围</strong>（俗称价格笼子）：买入申报价不得高于基准价的 102%，卖出不得低于 98%，超出范围直接被系统拒单。主板也有类似机制，并额外允许「基准价上下 10 个最小变动单位」作为孰高／孰低的兜底。这些规则的具体数值以交易所现行业务规则为准，但设计意图是一致的——防止离谱报价把价格瞬间打飞。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    市价单 = 一次没设 timeout、没设重试上限、也没做参数校验的下游调用。平时下游健康（盘口厚），它跑得又快又好；一旦下游抖动（盘口稀薄），它会把你所有的预算一次性烧光。限价单则是带了参数校验和熔断阈值的调用：宁可失败，也不接受一个离谱的结果。默认用限价单，是给自己加的一层防御性编程。
+  </div>
+
+  <h2><span class="h-num">2.4</span> 集合竞价：一次批处理</h2>
+
+  <p>开盘前的 9:15 到 9:25，交易所不撮合。它只做一件事：把所有委托攒起来。到 9:25 那一刻，用一次全局计算，求出一个<strong>使成交量最大</strong>的价格，然后把这个价格附近所有能成交的单子，统统按这一个价格成交掉。这个价格就是开盘价。</p>
+
+  <p>为什么这样设计？隔夜积压了大量信息（财报、政策、外盘），一开门就逐笔撮合的话，第一笔单会以一个近乎随机的价格成交，随后价格剧烈跳动。批处理把这段时间的所有信息一次性折叠成同一个价格，公平得多。</p>
+
+  <p>这个阶段还有一条关键的分段规则：</p>
+
+  <ul>
+    <li><strong>9:15–9:20</strong>：可以申报，<strong>也可以撤单</strong>。</li>
+    <li><strong>9:20–9:25</strong>：可以申报，<strong>不能撤单</strong>。</li>
+    <li><strong>9:25</strong>：一次性撮合，产生开盘价。</li>
+  </ul>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    9:15–9:20 显示的「虚拟开盘价」和巨额挂单，随时可以撤掉，所以经常是假的：挂一笔天量买单把虚拟开盘价顶到涨停，9:19:59 撤掉，成本为零。真正有约束力的只有 9:20 之后的委托。别拿前五分钟的盘口做任何判断，那是一块可以随意写、不会落盘的缓存。
+  </div>
+
+  <p>收盘时也有一次同样机制的集合竞价：<strong>14:57–15:00</strong>，全程不可撤单，15:00 一次性撮合产生收盘价，申报价格被限制在基准价上下 2% 以内。这条规则让收盘价难以被尾盘一两笔大单随意拉动，因此以收盘价为基准的指数、基金净值都更可信。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    集合竞价是批处理 job：攒够一批请求，跑一次全局最优化（求使成交量最大的那个价格），一次性输出结果。连续竞价是流式处理：来一条处理一条，状态实时更新。同一个业务，两种执行模型——批处理牺牲延迟换全局最优和抗扰动，流式牺牲全局最优换实时性。交易所在开盘、收盘这两个信息最密集的时刻用批处理，中间用流式，是一个非常干净的架构选择。
+  </div>
+
+  <figure>
+    <p class="fig-title">图 2-1 · 集合竞价怎么算出开盘价</p>
+    <svg viewBox="0 0 720 340" role="img" aria-label="集合竞价撮合示意图：横轴为申报价格，纵轴为累计买盘量和累计卖盘量两条曲线，交点附近的 10.05 元使成交量最大，成为开盘价">
+      <line x1="90" y1="270" x2="640" y2="270" stroke="#c3c2b7" stroke-width="1.5"/>
+      <line x1="90" y1="50" x2="90" y2="270" stroke="#c3c2b7" stroke-width="1.5"/>
+      <line x1="90" y1="196.7" x2="640" y2="196.7" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="123.3" x2="640" y2="123.3" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="90" y1="50" x2="640" y2="50" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="84" y="274" text-anchor="end" font-size="13" fill="#898781" font-family="system-ui, sans-serif">0</text>
+      <text x="84" y="201" text-anchor="end" font-size="13" fill="#898781" font-family="system-ui, sans-serif">500</text>
+      <text x="84" y="128" text-anchor="end" font-size="13" fill="#898781" font-family="system-ui, sans-serif">1000</text>
+      <text x="84" y="55" text-anchor="end" font-size="13" fill="#898781" font-family="system-ui, sans-serif">1500</text>
+      <text x="46" y="36" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">累计委托量（手）</text>
+
+      <text x="90" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">9.90</text>
+      <text x="181.7" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">9.95</text>
+      <text x="273.3" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">10.00</text>
+      <text x="365" y="290" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">10.05</text>
+      <text x="456.7" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">10.10</text>
+      <text x="548.3" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">10.15</text>
+      <text x="640" y="290" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">10.20</text>
+      <text x="684" y="274" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">元</text>
+
+      <polyline points="90,64.7 181.7,94 273.3,130.7 365,167.3 456.7,204 548.3,233.3 640,252.4" fill="none" stroke="#2a78d6" stroke-width="2"/>
+      <polyline points="90,248 181.7,223.1 273.3,182 365,138 456.7,101.3 548.3,72 640,50" fill="none" stroke="#eb6834" stroke-width="2"/>
+
+      <line x1="365" y1="270" x2="365" y2="138" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
+      <circle cx="365" cy="167.3" r="4.5" fill="#0b0b0b"/>
+      <line x1="252" y1="163" x2="357" y2="167" stroke="#898781" stroke-width="1"/>
+      <text x="108" y="150" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">撮合价取「成交量最大」的档位：</text>
+      <text x="108" y="172" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">开盘价 10.05 元，成交 700 手</text>
+
+      <line x1="132" y1="316" x2="168" y2="316" stroke="#2a78d6" stroke-width="2"/>
+      <text x="176" y="321" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">累计买盘（愿以该价或更高买入）</text>
+      <line x1="404" y1="316" x2="440" y2="316" stroke="#eb6834" stroke-width="2"/>
+      <text x="448" y="321" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">累计卖盘（愿以该价或更低卖出）</text>
+    </svg>
+    <figcaption>价格越高，愿意买的人越少、愿意卖的人越多，两条累计曲线必然相交。交易所在离散价格档里挑出让 min(买量, 卖量) 最大的那一档，这一档就是开盘价，所有落在成交区间内的委托都按这一个价格成交。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">2.5</span> 连续竞价：来一条处理一条</h2>
+
+  <p>9:30 开始，引擎切换到流式模式。交易时段是 9:30–11:30 和 13:00–15:00。每收到一笔新委托，就立刻和订单簿另一侧比对：买入价 ≥ 卖一价（或卖出价 ≤ 买一价）就成交，成交完还有剩余就挂上去排队。撮合本身是微秒级的，没有「每秒撮合一次」这种批次。</p>
+
+  <p>所以「最新价」这个数字，含义非常具体：它是最近一笔成交的价格，仅此而已。它不代表公司值多少钱，也不代表你现在一定能按这个价买到——它只是历史上某一微秒发生过的一次配对。</p>
+
+  <p>另外，部分板块在 15:05–15:30 还有<strong>盘后固定价格交易</strong>，所有成交统一按当日收盘价撮合，只排时间优先。2026 年 7 月的交易新规把这一机制从科创板、创业板扩容到了沪深主板股票和 ETF。对普通投资者，这只是一个「错过了收盘、还能按收盘价补一笔」的备用通道，具体范围以交易所最新公告为准。</p>
+
+  <h2><span class="h-num">2.6</span> 买卖五档：盘口怎么读</h2>
+
+  <p>行情软件上那个「卖五到卖一、买一到买五」的小表格，就是订单簿最靠近价差的十个价格档位的切片。每一档两个数：价格，以及这一档上所有委托的总量。</p>
+
+  <p>读盘口只需要问两个问题：<strong>每档有多厚？档与档之间隔多远？</strong>厚且密，说明流动性好，你的单子进出不会撼动价格；薄且稀，说明一笔中等大小的单子就能把价格推走几个百分点。</p>
+
+  <figure>
+    <p class="fig-title">图 2-2 · 一笔市价买单如何逐档吃掉卖盘</p>
+    <svg viewBox="0 0 720 380" role="img" aria-label="买卖五档盘口示意图，左侧为卖五到买五共十档的价格与挂单量，右侧展示一笔 10 手市价买单依次吃掉卖一、卖二、卖三后的成交均价与滑点">
+      <text x="40" y="30" font-size="15" font-weight="600" fill="#0b0b0b" font-family="system-ui, sans-serif">盘口：每档 = 价格 + 挂单量</text>
+      <text x="40" y="52" font-size="13" fill="#898781" font-family="system-ui, sans-serif">卖盘在上（要价从低到高），买盘在下（出价从高到低）</text>
+
+      <rect x="36" y="118" width="300" height="82" rx="6" fill="none" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="5 4"/>
+
+      <text x="48" y="88" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">卖五</text>
+      <text x="100" y="88" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.28</text>
+      <rect x="152" y="78" width="43" height="13" rx="3" fill="#eb6834" opacity="0.7"/>
+      <text x="203" y="88" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">12 手</text>
+
+      <text x="48" y="114" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">卖四</text>
+      <text x="100" y="114" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.27</text>
+      <rect x="152" y="104" width="32" height="13" rx="3" fill="#eb6834" opacity="0.7"/>
+      <text x="192" y="114" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">9 手</text>
+
+      <text x="48" y="140" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">卖三</text>
+      <text x="100" y="140" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.26</text>
+      <rect x="152" y="130" width="22" height="13" rx="3" fill="#eb6834" opacity="0.7"/>
+      <text x="182" y="140" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">6 手</text>
+
+      <text x="48" y="166" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">卖二</text>
+      <text x="100" y="166" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.25</text>
+      <rect x="152" y="156" width="14" height="13" rx="3" fill="#eb6834" opacity="0.7"/>
+      <text x="174" y="166" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">4 手</text>
+
+      <text x="48" y="192" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">卖一</text>
+      <text x="100" y="192" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.24</text>
+      <rect x="152" y="182" width="11" height="13" rx="3" fill="#eb6834" opacity="0.7"/>
+      <text x="171" y="192" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">3 手</text>
+
+      <line x1="40" y1="205" x2="336" y2="205" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="48" y="223" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">最新成交价</text>
+      <text x="140" y="223" font-size="13.5" font-weight="600" fill="#0b0b0b" font-family="system-ui, sans-serif">10.23</text>
+      <text x="200" y="223" font-size="13" fill="#898781" font-family="system-ui, sans-serif">价差 0.01 元</text>
+      <line x1="40" y1="232" x2="336" y2="232" stroke="#c3c2b7" stroke-width="1"/>
+
+      <text x="48" y="252" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">买一</text>
+      <text x="100" y="252" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.23</text>
+      <rect x="152" y="242" width="18" height="13" rx="3" fill="#2a78d6" opacity="0.75"/>
+      <text x="178" y="252" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">5 手</text>
+
+      <text x="48" y="278" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">买二</text>
+      <text x="100" y="278" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.22</text>
+      <rect x="152" y="268" width="29" height="13" rx="3" fill="#2a78d6" opacity="0.75"/>
+      <text x="189" y="278" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">8 手</text>
+
+      <text x="48" y="304" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">买三</text>
+      <text x="100" y="304" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.21</text>
+      <rect x="152" y="294" width="54" height="13" rx="3" fill="#2a78d6" opacity="0.75"/>
+      <text x="214" y="304" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">15 手</text>
+
+      <text x="48" y="330" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">买四</text>
+      <text x="100" y="330" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.20</text>
+      <rect x="152" y="320" width="94" height="13" rx="3" fill="#2a78d6" opacity="0.75"/>
+      <text x="254" y="330" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">26 手</text>
+
+      <text x="48" y="356" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">买五</text>
+      <text x="100" y="356" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">10.19</text>
+      <rect x="152" y="346" width="32" height="13" rx="3" fill="#2a78d6" opacity="0.75"/>
+      <text x="192" y="356" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">9 手</text>
+
+      <line x1="342" y1="159" x2="374" y2="159" stroke="#eb6834" stroke-width="1.5"/>
+      <polygon points="374,159 366,155 366,163" fill="#eb6834"/>
+
+      <text x="386" y="88" font-size="15" font-weight="600" fill="#0b0b0b" font-family="system-ui, sans-serif">市价买入 10 手，逐档吃掉：</text>
+      <text x="386" y="118" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">① 卖一 3 手 × 10.24 元 = 3 072 元</text>
+      <text x="386" y="144" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">② 卖二 4 手 × 10.25 元 = 4 100 元</text>
+      <text x="386" y="170" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">③ 卖三 3 手 × 10.26 元 = 3 078 元</text>
+      <line x1="386" y1="186" x2="690" y2="186" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="386" y="210" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">合计成交 10 手，付出 10 250 元</text>
+      <text x="386" y="236" font-size="13.5" font-weight="600" fill="#0b0b0b" font-family="system-ui, sans-serif">成交均价 10.25 元 / 股</text>
+      <text x="386" y="262" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">比卖一价 10.24 元多付 0.10%</text>
+      <text x="386" y="284" font-size="13.5" fill="#52514e" font-family="system-ui, sans-serif">——这 0.10% 就是滑点</text>
+      <text x="386" y="322" font-size="13.5" fill="#898781" font-family="system-ui, sans-serif">撮合后：卖一变成 10.26 元 × 3 手，</text>
+      <text x="386" y="344" font-size="13.5" fill="#898781" font-family="system-ui, sans-serif">价格被这一笔单子推高了 3 分钱。</text>
+    </svg>
+    <figcaption>市价单从对手方最优价开始，一档一档往上吃，直到数量填满。吃掉的档位越多，成交均价偏离首档价格越远。这张盘口的卖一到卖三总共只有 13 手，所以一笔 10 手的单子就已经能推动价格。</figcaption>
+  </figure>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    普通行情（Level-1）里的五档盘口是<strong>每 3 秒一张快照</strong>，不是实时流。两张快照之间发生的挂单、撤单、成交，你一概看不到。这意味着：一，你看到的「巨量买单」可能在你下单前的 2.9 秒里已经撤了；二，任何基于盘口逐笔变化的「主力意图分析」，在采样精度上就不成立。Level-2 行情提供十档和逐笔委托，但那是解决数据精度问题，不是解决预测问题。
+  </div>
+
+  <h2><span class="h-num">2.7</span> 流动性与滑点：你的单子会不会撼动价格</h2>
+
+  <p><strong>流动性</strong>的工程定义很简单：把一定数量的股票立刻变成现金，需要付出多大的价格代价。代价越小，流动性越好。</p>
+
+  <p>这个代价有两个来源。第一是价差：茅台这种股票买一卖一常年只差一两分，价差成本可以忽略；一些冷门小盘股价差能到几分甚至更多。第二是<strong>冲击成本</strong>，也就是图 2-2 演示的逐档吃单——你的单子越大、盘口越薄，吃穿的档位越多，成交均价越差。</p>
+
+  <p>散户的单子通常小到吃不穿一档，所以日常感受不到。但下面几种情况会让滑点突然变得很贵：</p>
+
+  <ul>
+    <li><strong>冷门小盘股</strong>：日成交额只有几千万甚至更少，每档只挂着一两手。你买 10 万元就可能把价格拉高一两个点，卖出时同样再亏一两个点，一进一出白白蒸发几个百分点。</li>
+    <li><strong>开盘和收盘的几分钟</strong>：价格波动最剧烈的时段，市价单的实际成交价和你按下按钮时看到的价格可能相差很远。</li>
+    <li><strong>突发消息瞬间</strong>：盘口会在毫秒内被抽空，市价单直接吃到很远的档位。</li>
+    <li><strong>涨跌停附近</strong>：跌停时买盘一侧几乎是空的，你想卖，只能排在跌停价的长队里等，很可能一整天都卖不出去——这时流动性不是变差，是<strong>归零</strong>了。</li>
+  </ul>
+
+  <p>所以有一条几乎无成本的纪律：<strong>默认永远用限价单</strong>。你只需要多花两秒钟填一个价格，就把「成交价不确定」这个风险彻底关掉了。想要成交快，就把限价定得比对手方最优价高一两分（买入时），依然能立刻成交，同时给自己留了一道上限。</p>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    别把「成交量大」当成买入理由，但一定要把「成交量小」当成回避理由。一只日均成交额只有几千万的股票，无论故事讲得多好，你都可能在需要离场的那天发现自己出不来。流动性是仓位的容量上限，这是一个硬约束，和你的判断对不对无关。
+  </div>
+
+  <h2><span class="h-num">2.8</span> A 股竞价制 vs 美股做市商制</h2>
+
+  <p>上面讲的整套机制叫<strong>订单驱动（order-driven）</strong>：所有人的委托进同一个订单簿，互相直接配对，交易所只做撮合，自己不参与买卖。A 股的主体就是这套集中竞价制度。</p>
+
+  <p>美股主流是<strong>报价驱动（quote-driven）</strong>：做市商同时挂出买价和卖价，随时用自己的账户接下你的单子，赚价差作为提供流动性的报酬。而且美股不是一个市场，是几十个交易场所（多家交易所加暗池），监管要求订单以全市场最优报价 NBBO 成交，券商会把单子路由到价格最好的地方——这是美股常有「成交价比我挂的还好」的原因。</p>
+
+  <p>两种制度各有代价。竞价制透明、规则简单、一视同仁，但冷门股票没人负责提供流动性，盘口可能极薄。做市商制保证随时有对手方，代价是你付了价差，而且路由链条复杂（比如订单流付费 PFOF），透明度不如前者。</p>
+
+  <p>A 股也在做混合尝试：科创板自 2022 年 10 月 31 日起在竞价基础上引入做市商，由有资格的券商双边报价改善流动性。但对个人投资者，心智模型依然是订单簿加两条优先规则，做市商只是簿里一个报价特别勤快的参与者。</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>A 股（竞价制为主）</th><th>美股（做市商制为主）</th></tr>
+    <tr><td>价格形成</td><td>全部委托进同一订单簿互相配对</td><td>做市商双边报价，多场所竞价</td></tr>
+    <tr><td>对手方</td><td>另一个投资者</td><td>常常是做市商的自营账户</td></tr>
+    <tr><td>市场结构</td><td>沪、深、北三家交易所，各股票单一场所</td><td>数十个交易场所 + 暗池，NBBO 最优价保护</td></tr>
+    <tr><td>流动性保障</td><td>无人负责，冷门股盘口可能极薄</td><td>做市商有义务持续报价</td></tr>
+    <tr><td>你付出的隐性成本</td><td>价差 + 冲击成本</td><td>价差（做市商的利润）+ 路由差异</td></tr>
+  </table>
+  </div>
+
+  <h2><span class="h-num">2.9</span> 一笔订单的一生</h2>
+
+  <p>最后把链路串起来。你在手机上点「买入」之后，这笔委托要穿过四个系统。</p>
+
+  <figure>
+    <p class="fig-title">图 2-3 · 从点击「买入」到真正过户</p>
+    <svg viewBox="0 0 720 360" role="img" aria-label="一笔订单的生命周期时序图：从你的 App 到券商柜台、交易所撮合引擎，再到中国结算完成 T+1 交收">
+      <rect x="30" y="18" width="120" height="32" rx="6" fill="#eef4fc" stroke="#d5e4f7"/>
+      <text x="90" y="39" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">你的 App</text>
+      <rect x="210" y="18" width="120" height="32" rx="6" fill="#eef4fc" stroke="#d5e4f7"/>
+      <text x="270" y="39" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">券商柜台</text>
+      <rect x="378" y="18" width="144" height="32" rx="6" fill="#eef4fc" stroke="#d5e4f7"/>
+      <text x="450" y="39" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">交易所撮合引擎</text>
+      <rect x="558" y="18" width="124" height="32" rx="6" fill="#eef4fc" stroke="#d5e4f7"/>
+      <text x="620" y="39" text-anchor="middle" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">中国结算</text>
+
+      <line x1="90" y1="50" x2="90" y2="330" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 5"/>
+      <line x1="270" y1="50" x2="270" y2="330" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 5"/>
+      <line x1="450" y1="50" x2="450" y2="330" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 5"/>
+      <line x1="620" y1="50" x2="620" y2="330" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 5"/>
+
+      <text x="180" y="79" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">限价委托：买入 10 手 @ 10.24 元</text>
+      <line x1="90" y1="88" x2="262" y2="88" stroke="#2a78d6" stroke-width="2"/>
+      <polygon points="270,88 260,83.5 260,92.5" fill="#2a78d6"/>
+
+      <text x="360" y="114" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">校验资金、持仓、权限后报盘</text>
+      <line x1="270" y1="123" x2="442" y2="123" stroke="#2a78d6" stroke-width="2"/>
+      <polygon points="450,123 440,118.5 440,127.5" fill="#2a78d6"/>
+
+      <rect x="362" y="142" width="176" height="48" rx="6" fill="#fdf3ea" stroke="#f5dfc9"/>
+      <text x="450" y="161" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">进入订单簿排队</text>
+      <text x="450" y="180" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">价格优先 → 时间优先撮合</text>
+
+      <text x="360" y="212" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">成交回报</text>
+      <line x1="450" y1="221" x2="278" y2="221" stroke="#1baf7a" stroke-width="2"/>
+      <polygon points="270,221 280,216.5 280,225.5" fill="#1baf7a"/>
+
+      <text x="180" y="247" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">App 显示「已成交」，持仓 +10 手</text>
+      <line x1="270" y1="256" x2="98" y2="256" stroke="#1baf7a" stroke-width="2"/>
+      <polygon points="90,256 100,251.5 100,260.5" fill="#1baf7a"/>
+
+      <text x="535" y="288" text-anchor="middle" font-size="13" fill="#0b0b0b" font-family="system-ui, sans-serif">当日成交数据送清算</text>
+      <line x1="450" y1="297" x2="612" y2="297" stroke="#eb6834" stroke-width="2"/>
+      <polygon points="620,297 610,292.5 610,301.5" fill="#eb6834"/>
+      <text x="620" y="320" text-anchor="middle" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">T+1 完成股份与资金交收</text>
+
+      <text x="360" y="348" text-anchor="middle" font-size="13" fill="#898781" font-family="system-ui, sans-serif">上半程通常在 1 秒内跑完；真正的所有权变更发生在次日的清算交收环节</text>
+    </svg>
+    <figcaption>撮合和交收是两件事。撮合确定了「谁和谁按什么价成交」，交收才真正把股份和资金在账户之间划转。A 股股份 T+1 交收，这正是下一章要讲的 T+1 制度的底层原因。</figcaption>
+  </figure>
+
+  <p>四个环节各司其职：<strong>App</strong> 只是输入界面；<strong>券商柜台</strong>做资金和权限校验，是链路上唯一会因为你自己的问题（余额不足、无权限）打回委托的地方；<strong>交易所</strong>只负责撮合，不碰钱也不碰股份；<strong>中国结算</strong>做清算交收，持股最终登记在它的账本上。</p>
+
+  <p>成交回报到你的手机通常在一秒之内，但所有权变更要到 T+1 才完成。理解了这一点，「今天买明天才能卖」就不是一条奇怪的限制，而是交收周期在交易层的直接映射。下一章会把它和涨跌停、税费一起，当成这套协议的规范文档来读。</p>
+
+  <h2><span class="h-num">2.10</span> 这一章的可操作结论</h2>
+
+  <ul>
+    <li><strong>默认用限价单</strong>。多填一个数字，换掉一整类不确定性。想快速成交就把价格定得比对手方最优价好一两分，成交速度几乎不受影响。</li>
+    <li><strong>挂高价买不会买贵</strong>。成交价取先挂单一方的价格，高出的部分不会被吃掉，只会让你在队伍里排得更靠前。</li>
+    <li><strong>9:20 之前的盘口不要信</strong>。那五分钟的挂单可以随意撤销，虚拟开盘价是可以被免费操纵的。</li>
+    <li><strong>把成交额当成仓位的容量上限</strong>。日成交额太小的股票，进得去出不来，这和你看好不看好无关。</li>
+    <li><strong>五档盘口是 3 秒一张的快照，不是实时流</strong>。任何建立在「逐笔观察主力挂单」上的方法论，在数据精度上就已经站不住。</li>
+    <li><strong>撮合规则完全公开、对所有人一致</strong>。你在这一层不会被暗算。真正的成本发生在你自己按了多少次买入按钮上——那是第 3 章和第 9 章的主题。</li>
+  </ul>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="what-is-a-stock.html"><span class="dir">← 上一章</span>第1章 · 股票是什么</a>
+  <a class="next" href="opening-an-account-and-trading-rules.html"><span class="dir">下一章 →</span>第3章 · 开户与交易规则</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>

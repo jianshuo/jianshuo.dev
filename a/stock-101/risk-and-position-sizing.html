@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第8章 · 风险与仓位 — 程序员炒股指南</title>
+<meta name="description" content="收益是市场给的，风险是自己管的：用容灾设计的思路做仓位管理、分散化、再平衡，并彻底远离杠杆。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 8 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 08</span>
+    <h1>风险与仓位</h1>
+    <p class="lede">收益是市场给的，风险是自己管的：先保证活下来，再谈收益率。</p>
+  </div>
+
+  <p>前七章讲的是「买什么」。这一章讲「买多少」，以及「万一错了会怎样」。这两个问题的重要性远超前者。一个选股水平平庸但仓位管得住的人，长期结果通常好过一个眼光很准但一次重仓踩雷的人。原因很简单：投资的收益是加法，风险是乘法，任何一次乘以零，前面所有的加法都白做。</p>
+
+  <p>工程师对这件事其实早有直觉。你不会因为服务跑了三个月没挂就把监控关掉，也不会因为代码写得漂亮就跳过灰度发布。系统可靠性不是靠「不出错」实现的，是靠「出错了也不致命」实现的。投资完全同理。</p>
+
+  <h2><span class="h-num">8.1</span> 风险的量化语言：波动率与最大回撤</h2>
+
+  <p>「风险」这个词在日常语境里很含糊，在投资里有两个可测量的定义。</p>
+
+  <p><strong>波动率</strong>是收益率序列的标准差，衡量资产价格上下摆动的剧烈程度。宽基指数的年化波动率大致在 15%–25% 区间，单只个股常在 40% 以上，这是数量级上的差别。波动率高不代表一定亏钱，但它决定了你账户每天的数字会有多难看。</p>
+
+  <p><strong>最大回撤</strong>（Max Drawdown）更贴近你的真实体感：从历史最高点跌到后续最低点的跌幅。它回答的是「如果我在最差的时点入场，最惨会亏多少」。沪深 300 指数在 2008 年金融危机中的最大回撤约为 -72%，2015 年那轮从 6 月高点算起也跌了四成以上。这不是黑天鹅，这是宽基指数的正常工作范围。</p>
+
+  <p>最大回撤之所以是核心指标，是因为回本这件事在数学上是不对称的。跌 X% 之后要涨回原点，需要的涨幅是 <code>X / (1 - X)</code>，永远大于 X。</p>
+
+  <figure>
+    <p class="fig-title">图 8-1 · 亏损与回本涨幅的不对称</p>
+    <svg viewBox="0 0 720 380" role="img" aria-label="折线图：横轴为亏损幅度 0 到 -80%，纵轴为回本所需涨幅。亏 10% 需涨 11%，亏 50% 需涨 100%，亏 80% 需涨 400%，曲线陡峭上翘。">
+      <line x1="70" y1="310" x2="700" y2="310" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="40" x2="70" y2="310" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="242.5" x2="700" y2="242.5" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="175" x2="700" y2="175" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="107.5" x2="700" y2="107.5" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="40" x2="700" y2="40" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="62" y="315" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">0%</text>
+      <text x="62" y="247" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">100%</text>
+      <text x="62" y="180" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">200%</text>
+      <text x="62" y="112" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">300%</text>
+      <text x="62" y="45" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">400%</text>
+      <text x="70" y="28" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">回本所需涨幅</text>
+      <text x="225" y="330" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">-20%</text>
+      <text x="380" y="330" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">-40%</text>
+      <text x="535" y="330" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">-60%</text>
+      <text x="690" y="330" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">-80%</text>
+      <text x="70" y="352" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">亏损幅度 →</text>
+      <line x1="70" y1="310" x2="690" y2="256" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="688" y="246" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">直觉线：亏 X% 涨 X%</text>
+      <polyline points="70,310 147.5,302.5 225,293.1 302.5,281 380,265 457.5,242.5 535,208.8 612.5,152.5 651,107.5 690,40"
+                fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="147.5" cy="302.5" r="4" fill="#2a78d6"/>
+      <circle cx="302.5" cy="281" r="4" fill="#2a78d6"/>
+      <circle cx="457.5" cy="242.5" r="4" fill="#2a78d6"/>
+      <circle cx="690" cy="40" r="4" fill="#2a78d6"/>
+      <text x="100" y="72" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">亏 10%　→　需涨 11%</text>
+      <text x="100" y="96" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">亏 30%　→　需涨 43%</text>
+      <text x="100" y="120" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">亏 50%　→　需涨 100%</text>
+      <text x="100" y="144" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">亏 80%　→　需涨 400%</text>
+    </svg>
+    <figcaption>小亏损时，回本涨幅几乎等于亏损幅度；一旦跌破 50%，曲线急速上翘——深度亏损的可修复性会断崖式消失。</figcaption>
+  </figure>
+
+  <p>这条曲线的实际含义是：<strong>控制回撤的价值远大于追逐收益</strong>。少亏 10 个点，比多赚 10 个点在复利上更值钱，而且更容易做到。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    最大回撤就是你的 SLO 违约上限。做系统设计时你不会问「能不能永远不宕机」，你问的是「最长可容忍多久不可用」，然后按这个数字反推架构。仓位设计也是先定「我能承受账户回撤多少」，再反推股票该占多大比例——顺序反了就没有设计，只有赌博。
+  </div>
+
+  <h2><span class="h-num">8.2</span> 先建防火墙，再入场</h2>
+
+  <p>入市之前有两件事必须先做完，顺序不能颠倒。</p>
+
+  <p><strong>第一，3–6 个月的应急现金。</strong>放在活期、货币基金或短债里，随时能取。它的作用不是赚钱，是让你在失业、生病、家里出事的时候，不需要在市场最低点被迫卖股票。历史上绝大多数「割在地板上」的操作，不是因为看错了行情，是因为那天必须用钱。</p>
+
+  <p><strong>第二，把保险买齐。</strong>医疗险和意外险的年保费只占很小比例，但它挡住的是那种能一次性击穿全部投资的尾部事件。用工程语言说，这是把低频高损事件从你的资产负债表上转移出去。</p>
+
+  <p>做完这两件，剩下的钱才有资格进股市，而且还要再过一道筛子：<strong>只投五年内确定用不到的钱</strong>。首付、彩礼、明年的学费、下季度的房租，一律不进。原因回到 8.1——如果你的持有期由外部现金流决定而不是由你决定，那你就没有「等回本」的权利，市场任何一次正常回撤都可能变成你的永久亏损。</p>
+
+  <figure>
+    <p class="fig-title">图 8-2 · 资产配置金字塔</p>
+    <svg viewBox="0 0 720 380" role="img" aria-label="金字塔图：从下到上依次是保障层（应急现金与保险）、稳健层（债券与存单）、核心层（宽基指数基金）、卫星层（个股与行业主题），各层标注建议比例。">
+      <polygon points="80,320 500,320 455,252 125,252" fill="#eda100" fill-opacity="0.16" stroke="#eda100" stroke-width="1.5"/>
+      <polygon points="125,252 455,252 410,184 170,184" fill="#1baf7a" fill-opacity="0.16" stroke="#1baf7a" stroke-width="1.5"/>
+      <polygon points="170,184 410,184 365,116 215,116" fill="#2a78d6" fill-opacity="0.16" stroke="#2a78d6" stroke-width="1.5"/>
+      <polygon points="215,116 365,116 320,48 260,48" fill="#eb6834" fill-opacity="0.16" stroke="#eb6834" stroke-width="1.5"/>
+      <text x="290" y="291" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b" text-anchor="middle">保障层</text>
+      <text x="290" y="223" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b" text-anchor="middle">稳健层</text>
+      <text x="290" y="155" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b" text-anchor="middle">核心层</text>
+      <text x="290" y="87" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b" text-anchor="middle">卫星层</text>
+      <line x1="348" y1="82" x2="512" y2="82" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="393" y1="150" x2="512" y2="150" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="438" y1="218" x2="512" y2="218" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="483" y1="286" x2="512" y2="286" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="520" y="68" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">个股 / 行业主题</text>
+      <text x="520" y="86" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">合计 ≤ 总仓位 20%</text>
+      <text x="520" y="104" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">单只 ≤ 10%</text>
+      <text x="520" y="144" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">宽基指数基金</text>
+      <text x="520" y="162" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">长期资金的主体</text>
+      <text x="520" y="212" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">债券 / 大额存单</text>
+      <text x="520" y="230" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">波动的缓冲垫</text>
+      <text x="520" y="272" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">3–6 个月应急现金</text>
+      <text x="520" y="290" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">+ 医疗与意外保险</text>
+      <text x="520" y="308" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">不入市，永远不动</text>
+      <text x="290" y="352" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">越往上越能承受归零，越往下越不能碰</text>
+    </svg>
+    <figcaption>下面两层决定你能不能活下来，上面两层决定你能赚多少。搭建顺序永远是自下而上，不能跳级。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">8.3</span> 仓位管理的基本框架</h2>
+
+  <p>仓位管理要回答两个数：股票类资产占总资产多少，单个标的最多占多少。</p>
+
+  <p><strong>股债比例</strong>有个流传很广的经验公式：股票比例 = 100 − 年龄。35 岁就是 65% 股票、35% 债券。这只是个起点，不是定律。真正决定这个数的是三个变量：这笔钱多久后要用、你的收入稳定性、你在 -30% 时的实际行为。第三个变量最容易被高估——很多人在纸面上说能扛住 -40%，真跌 -20% 就睡不着了。合理的做法是先按公式给一个初值，经历一轮真实下跌之后再校准。</p>
+
+  <p><strong>单只个股上限</strong>建议不超过总仓位的 10%，全部个股加起来不超过 20%–30%。这个约束的意义不在于「我不看好它」，恰恰相反——正是因为你看好才会重仓，而你对一家公司的判断可能因为一条你根本看不到的信息（财务造假、监管处罚、核心人员出走）在一夜之间彻底失效。10% 的上限保证了任何一次判断失效都只是伤，不是死。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    仓位管理就是容灾设计。单只个股上限 = 消除单点故障，任何一个实例挂掉，服务整体降级但不中断；跨市场配置 = 多可用区部署，一个区域出问题不会带走全部流量。你不会把全部数据只存一块盘，也不该把全部资产只押一家公司——理由是同一个：你无法预测哪块盘会坏，只能保证坏了之后还能跑。
+  </div>
+
+  <h2><span class="h-num">8.4</span> 分散化：数量不等于分散</h2>
+
+  <p>分散化是投资里唯一一个「免费的午餐」——在不降低期望收益的前提下降低波动。但前提是分散得对。</p>
+
+  <p>持有十只银行股不叫分散，那叫把同一个服务的十个副本部署在同一个机架上，机架断电就全没了。真正的分散看的是<strong>相关性</strong>：两个资产的涨跌是不是由同一个因素驱动。银行股之间的相关性通常在 0.8 以上，等于你只持有了一个头寸。</p>
+
+  <p>有效的分散有三个维度：</p>
+
+  <ul>
+    <li><strong>跨资产</strong>：股票、债券、现金。股债在多数时期呈现弱相关甚至负相关，这是组合波动率下降的主要来源。</li>
+    <li><strong>跨行业</strong>：金融、消费、医药、科技、制造。避免你的组合实质上是对某一个行业周期的单一押注。</li>
+    <li><strong>跨市场</strong>：A 股、港股、海外（通过 QDII 基金等合规渠道）。不同市场的经济周期和货币周期并不同步。</li>
+  </ul>
+
+  <p>好消息是，如果你按第 7 章的建议以宽基指数基金为主，前两个维度已经天然满足了——沪深 300 本身就是 300 家公司、几十个行业的加权组合。你需要额外操心的主要是跨市场那一层，以及别让卫星仓位悄悄膨胀成集中押注。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+    「分散」不等于「持有很多只基金」。买了五只不同公司的沪深 300 指数基金，本质上还是一只——它们跟踪的是同一个指数，相关性接近 1。挑基金看的是<strong>底层跟踪的指数是否不同</strong>，不是看基金公司的 logo 有几种。
+  </div>
+
+  <h2><span class="h-num">8.5</span> 再平衡：机械化的高抛低吸</h2>
+
+  <p>假设你设定了 70% 股票 / 30% 债券。一轮上涨之后股票涨到了 80%，你的组合风险已经悄悄超标了——你并没有做任何决定，市场替你加了仓。再平衡就是定期把比例调回目标值：卖掉涨多的、买入跌多的。</p>
+
+  <p>它的妙处在于强制你做正确但反人性的事。市场狂热时你被迫减仓，市场绝望时你被迫加仓，而且整个过程不需要你判断顶部和底部在哪，只需要比较两个数字。</p>
+
+  <p>操作上有两种触发方式，选一种，别两种混用：</p>
+
+  <ul>
+    <li><strong>时间触发</strong>：每年固定日期（比如生日或元旦）检查一次。频率不必高，一年一次足够；过于频繁会增加交易成本，反而侵蚀收益。</li>
+    <li><strong>阈值触发</strong>：任一类资产偏离目标值超过 5 个百分点（如股票从 70% 变成 75% 或 65%）时才调整，平时不管。</li>
+  </ul>
+
+  <figure>
+    <p class="fig-title">图 8-3 · 70/30 组合走过一轮牛熊：再平衡 vs 不再平衡</p>
+    <svg viewBox="0 0 720 360" role="img" aria-label="折线图：起点均为 100 的两条组合净值曲线，年度再平衡组合六年后达到 152.2 且回撤 -33%，从不再平衡组合达到 144.4 且回撤 -37%。">
+      <line x1="70" y1="300" x2="700" y2="300" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="45" x2="70" y2="300" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="271.7" x2="700" y2="271.7" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="215" x2="700" y2="215" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="158.3" x2="700" y2="158.3" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="101.7" x2="700" y2="101.7" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="45" x2="700" y2="45" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="62" y="276" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">100</text>
+      <text x="62" y="220" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">120</text>
+      <text x="62" y="163" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">140</text>
+      <text x="62" y="106" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">160</text>
+      <text x="62" y="50" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="end">180</text>
+      <text x="70" y="32" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">组合净值（起点 = 100）</text>
+      <text x="70" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">0</text>
+      <text x="171.7" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">1</text>
+      <text x="273.3" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">2</text>
+      <text x="375" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">3</text>
+      <text x="476.7" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">4</text>
+      <text x="578.3" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">5</text>
+      <text x="680" y="320" font-family="system-ui, sans-serif" font-size="13" fill="#898781" text-anchor="middle">6</text>
+      <text x="700" y="342" font-family="system-ui, sans-serif" font-size="13" fill="#52514e" text-anchor="end">第 N 年</text>
+      <polyline points="70,271.7 171.7,208.4 273.3,76.0 375,207.6 476.7,254.4 578.3,200.2 680,145.7"
+                fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round"/>
+      <polyline points="70,271.7 171.7,208.4 273.3,83.1 375,193.0 476.7,239.6 578.3,180.5 680,123.6"
+                fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="171.7" cy="208.4" r="3.5" fill="#2a78d6"/>
+      <circle cx="273.3" cy="83.1" r="3.5" fill="#2a78d6"/>
+      <circle cx="375" cy="193.0" r="3.5" fill="#2a78d6"/>
+      <circle cx="476.7" cy="239.6" r="3.5" fill="#2a78d6"/>
+      <circle cx="578.3" cy="180.5" r="3.5" fill="#2a78d6"/>
+      <rect x="88" y="55" width="16" height="3" rx="1.5" fill="#2a78d6"/>
+      <text x="112" y="61" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">年度再平衡（圆点 = 调仓时刻）</text>
+      <rect x="88" y="79" width="16" height="3" rx="1.5" fill="#eb6834"/>
+      <text x="112" y="85" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">从不再平衡</text>
+      <text x="676" y="112" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b" text-anchor="end">152.2</text>
+      <text x="676" y="182" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b" text-anchor="end">144.4</text>
+      <text x="88" y="292" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">峰值到谷底最大回撤：再平衡 -33%，不再平衡 -37%</text>
+    </svg>
+    <figcaption>同一段行情、同一个 70/30 起点。再平衡组合在牛市顶部被迫减仓，涨得少一点；也因此在随后的下跌中回撤更小，六年后反而跑赢。</figcaption>
+  </figure>
+
+  <p>图中的场景是股票经历 +30%、+50%、-35%、-20%、+25%、+20%，债券每年 +4%。要注意的是，再平衡不保证每一轮都跑赢——在单边长牛里它一定跑输，因为它在不停地卖出上涨的资产。它换来的是<strong>更小的回撤和更稳定的风险敞口</strong>，这才是它的产品定位。把它当成收益增强工具，迟早会失望。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    再平衡是一个负反馈控制回路。设定值（70/30）、测量当前值、算出偏差、执行纠偏——和恒温器、PID 控制、Kubernetes 的 reconcile loop 是同一个结构：观测实际状态，与期望状态比对，收敛。它的价值恰恰在于机械执行、不带情绪，一旦你开始「这次先不调，感觉还能涨」，控制回路就断了。
+  </div>
+
+  <h2><span class="h-num">8.6</span> 杠杆是禁区</h2>
+
+  <p>这一节我不打算给出「适度使用」的中间选项。对个人投资者，杠杆就是禁区。</p>
+
+  <p>先看合规的那一种：<strong>融资融券</strong>。开通门槛是申请前 20 个交易日日均资产不低于 50 万元、且有 6 个月以上交易经验，融资年化利率通常在 5%–8% 区间（可与券商协商）。核心机制是<strong>维持担保比例</strong> = 账户总资产 ÷ 负债。多数券商设警戒线 150%、平仓线 130%：跌破 130% 后你需要在规定期限内追加担保物，否则券商有权强制平仓。具体比例各家券商可自行调整并公告，以你签的合同为准。</p>
+
+  <p>把这套规则代入数字，就能看清杠杆真正可怕的地方。</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>形式</th><th>自有资金</th><th>总仓位</th><th>负债</th><th>跌多少触及强平</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>纯自有资金</td><td class="num">100 万</td><td class="num">100 万</td><td class="num">0</td><td>不存在强平，跌 50% 也只是浮亏</td></tr>
+      <tr><td>融资融券 1:1</td><td class="num">100 万</td><td class="num">200 万</td><td class="num">100 万</td><td>约 -35%（担保比例跌至 130%）</td></tr>
+      <tr><td>场外配资 1:5（违法）</td><td class="num">10 万</td><td class="num">60 万</td><td class="num">50 万</td><td>约 -12%，且平仓线由对方单方面设定</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>关键不在于杠杆放大了亏损比例，而在于它<strong>改变了亏损的性质</strong>。不加杠杆时，-35% 是一段难熬的浮亏，你可以什么都不做，等企业盈利慢慢消化估值；加了 1:1 杠杆，同样的 -35% 会触发强制平仓，你的仓位在最低点被系统卖掉，之后市场涨回来跟你没有任何关系。<strong>杠杆把「暂时的下跌」变成了「永久的出局」</strong>，把一个可以用时间解决的问题变成了一个不可逆的事件。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    强制平仓就是 OOM killer。你的进程只是短暂内存尖峰，本来撑过去就没事，但内核不跟你商量，直接 SIGKILL，连 graceful shutdown 都没有。加杠杆等于把可用内存压到刚好够用——平时跑得飞快，一个流量毛刺就是雪崩，而且没有任何降级路径。
+  </div>
+
+  <div class="callout"><span class="tag">避坑</span>
+    <strong>场外配资是另一个量级的风险。</strong>它不是「利率高一点的融资」，而是法律上不受保护的行为：最高人民法院在《九民纪要》中明确，未取得证券业务许可的主体开展的场外配资合同<strong>无效</strong>。这意味着你和配资方之间的所有约定——包括账户里的钱归谁——都得不到合同法意义上的保护。加上你的股票通常是买在对方的账户里，平仓线和交易权限也捏在对方手上，被恶意穿仓、拒不返还本金的案例并不罕见。凡是宣传「十倍杠杆、无门槛、当天到账」的，一律远离。
+  </div>
+
+  <h2><span class="h-num">8.7</span> 凯利公式的启示：优势不大时重仓是数学错误</h2>
+
+  <p>凯利公式给出的是在已知胜率和赔率时，让长期资金增长率最大的下注比例：</p>
+
+  <pre><code>f* = (b·p − q) / b
+
+p = 胜率, q = 1 − p, b = 赔率（赢时的净收益倍数）</code></pre>
+
+  <p>不要试图用它精确计算炒股仓位——股票的 p 和 b 都不可知，代进去只是给直觉套了个数学外壳。真正有用的是它的三个结论：</p>
+
+  <ul>
+    <li><strong>优势越小，仓位应该越小</strong>。胜率 55%、赔率 1:1 时，最优下注比例只有 10%。你以为自己「看得很准」的那些判断，实际胜率大多不到 55%。</li>
+    <li><strong>超过最优比例后，下注越多，长期增长率越低</strong>，直到某个点变成负数。重仓不是「收益翻倍」，而是穿过某条线之后期望值反向。</li>
+    <li><strong>破产是吸收态</strong>。凯利公式的下注比例永远是资金的一个百分比，永远不会 all in，因为归零一次之后再高的胜率也无法挽回——这在数学上叫遍历性问题：多人分摊的平均结果，和一个人反复经历的结果，完全不是一回事。</li>
+  </ul>
+
+  <p>实践中，专业机构通常只用<strong>半凯利</strong>甚至更低——因为 p 的估计误差本身会让全凯利变成过度下注。对个人投资者，这意味着即使你对某个判断极度有信心，正确的表达方式也是把它的仓位从 5% 提到 10%，而不是提到 50%。</p>
+
+  <h2><span class="h-num">8.8</span> 压力测试你的组合</h2>
+
+  <p>所有的仓位设计都要过一遍压测，方法很简单：<strong>假设明天大盘直接 -20%，把数字写下来</strong>。</p>
+
+  <p>举个例子。100 万的组合，70% 是宽基指数基金，30% 是债券基金。大盘 -20% 时股票部分跌 20%（约 -14 万），债券小幅上涨约 +1%（约 +0.3 万），组合整体约 -13.7%，账户从 100 万变成 86.3 万。</p>
+
+  <p>然后回答三个问题，答案必须诚实：</p>
+
+  <ol>
+    <li>看到账户上 -13.7 万这个数字，我今晚睡得着吗？</li>
+    <li>我会不会因此想「先卖出躲一躲」？</li>
+    <li>这期间如果我恰好要用一笔钱，我需不需要动这个账户？</li>
+  </ol>
+
+  <p>任何一个答案不理想，都说明你的股票仓位偏高，应该<strong>现在</strong>调整——在平静的时候调整成本极低，在恐慌的时候调整叫割肉。真实的下跌幅度还可能更大：把 -20% 换成 -40% 再算一遍，那才是宽基指数的历史正常波动范围。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    这就是混沌工程。Netflix 不等机器真的挂掉才去验证容错，而是主动去 kill 实例，在可控的时间点暴露问题。压力测试同理：在真的暴跌之前，先在纸面上把暴跌演一遍，看你的「架构」——仓位、现金流、心理承受力——哪一环先断。区别只在于，市场那次演习不会挑你方便的时候来。
+  </div>
+
+  <p>最后回到这一章的第一句话。你无法控制市场给你多少收益，能控制的只有三件事：<strong>成本、仓位、持有时间</strong>。第 7 章解决了成本，这一章解决了仓位，第 10 章会解决持有时间。而在此之前，下一章我们先把市场里那些专门冲着你的钱来的东西——从荐股群到题材炒作——做成一份漏洞清单。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="index-funds-and-dca.html"><span class="dir">← 上一章</span>第7章 · 指数基金与定投</a>
+  <a class="next" href="retail-traps.html"><span class="dir">下一章 →</span>第9章 · 韭菜陷阱图鉴</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>

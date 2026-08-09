@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第1章 · 股票是什么 — 程序员炒股指南</title>
+<meta name="description" content="把股票还原成它的本质——公司所有权的最小可分割单位，理解你买的到底是什么。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 1 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 01</span>
+    <h1>股票是什么</h1>
+    <p class="lede">把股票还原成它的本质——公司所有权的最小可分割单位，理解你买的到底是什么。</p>
+  </div>
+
+  <p>先把一件事说死：你在券商 App 上点「买入」，买到的不是一个代码、不是一条会跳动的曲线、更不是一张彩票。你买到的是一家真实公司的一小片<strong>所有权</strong>，以及这片所有权附带的一组法律权利。这一章不讲怎么赚钱，只讲这片所有权到底是什么、它凭什么值钱、它记在谁的账本上。后面九章全部建立在这一章之上。</p>
+
+  <h2><span class="h-num">1.1</span> 一股，是所有权的最小可分割单位</h2>
+
+  <p>一家股份有限公司成立时会做一件很工程化的事：把「这家公司归谁」这个连续的、模糊的概念，切成 N 等份，每一份叫作<strong>一股</strong>。从此以后，所有权关系就变成了一个纯粹的整数问题——你的持股比例 = 你持有的股数 ÷ 总股本。没有第二种解释，没有讨价还价的空间。</p>
+
+  <p>这个设计有三个关键性质，缺一不可：</p>
+  <ul>
+    <li><strong>等额</strong>：每一股的权利完全相同（同一类别下）。你的第 100 股和董事长的第 100 股，含金量一模一样。</li>
+    <li><strong>可分割</strong>：所有权被切到足够细，普通人也买得起一片。A 股最小交易单位是 1 手 = 100 股。</li>
+    <li><strong>可转让</strong>：你可以把这片所有权卖给任何人，不需要征得公司同意，也不需要公司配合过户。</li>
+  </ul>
+
+  <p>举个贯穿全章的例子。某公司总股本 10 亿股，去年净利润 50 亿元。那么每股收益（EPS）= 50 亿 ÷ 10 亿 = 5 元。你买了 1 手也就是 100 股，你占公司的 0.00001%，去年公司赚的钱里有 500 元在法律意义上是属于你的。注意是「属于你的」，不是「打给你的」——这两者的差别就是 1.5 节要讲的分红。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    股权结构表（CAP table）就是这家公司的 <code>package.json</code>：每个 owner 占多少，写得清清楚楚，加总必须等于 100%。发新股相当于新增一个依赖项——总数变了，所有老依赖的占比被<strong>等比例稀释</strong>。区别在于 <code>package.json</code> 你可以随便改，CAP table 改一行要开股东大会、要公告、要中登登记。
+  </div>
+
+  <figure>
+    <p class="fig-title">图 1-1 · 一家公司的所有权被切成了什么样</p>
+    <svg viewBox="0 0 720 280" role="img" aria-label="饼图：一家总股本 10 亿股的公司，创始人及一致行动人占 42%，机构投资者占 28%，战略与产业投资者占 12%，个人投资者占 18%；个人持有的 100 股占 0.00001%，小到需要放大数万倍才画得出来">
+      <text x="20" y="32" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">你的 100 股（放大数万倍）</text>
+      <path d="M100 42 L102 80" stroke="#898781" stroke-width="1" fill="none"/>
+      <path d="M175 145 L175 40 A105 105 0 0 1 225.6 237.0 Z" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+      <path d="M175 145 L225.6 237.0 A105 105 0 0 1 75.1 177.4 Z" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+      <path d="M175 145 L75.1 177.4 A105 105 0 0 1 80.0 100.3 Z" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+      <path d="M175 145 L80.0 100.3 A105 105 0 0 1 175 40 Z" fill="#eda100" stroke="#fcfcfb" stroke-width="2"/>
+      <circle cx="102" cy="84" r="3.5" fill="#fcfcfb" stroke="#0b0b0b" stroke-width="1.4"/>
+
+      <rect x="400" y="52" width="14" height="14" rx="3" fill="#2a78d6"/>
+      <text x="424" y="64" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">创始人及一致行动人　42%</text>
+      <rect x="400" y="87" width="14" height="14" rx="3" fill="#eb6834"/>
+      <text x="424" y="99" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">机构（基金 / 保险 / 外资）　28%</text>
+      <rect x="400" y="122" width="14" height="14" rx="3" fill="#1baf7a"/>
+      <text x="424" y="134" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">战略与产业投资者　12%</text>
+      <rect x="400" y="157" width="14" height="14" rx="3" fill="#eda100"/>
+      <text x="424" y="169" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">个人投资者（散户）　18%</text>
+
+      <line x1="400" y1="192" x2="700" y2="192" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="400" y="215" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">总股本 10 亿股 · 你的 100 股 = 0.00001%</text>
+      <text x="400" y="238" font-family="system-ui, sans-serif" font-size="13" fill="#898781">把这张饼铺满 4K 屏（约 830 万像素），</text>
+      <text x="400" y="258" font-family="system-ui, sans-serif" font-size="13" fill="#898781">你那一份连一个像素都填不满。</text>
+    </svg>
+    <figcaption>持股比例决定一切权利的大小。散户单个体量极小，但 18% 的散户合在一起，是每天交易量的主要来源——这个反差会在第 9 章反复出现。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">1.2</span> 这片所有权给了你什么权利</h2>
+
+  <p>股东权利不是虚的，《公司法》和交易所规则写得很具体。核心是三项，按重要性从高到低排：</p>
+
+  <ul>
+    <li><strong>分红权（剩余索取权）</strong>：公司赚了钱、交完税、还完债、留够扩张的钱之后，剩下的可以按持股比例分给股东。注意「剩余」两个字——股东排在最后。</li>
+    <li><strong>投票权</strong>：股东大会上 1 股 1 票，选董事、审议重大资产重组、决定利润分配方案。A 股上市公司普遍支持网络投票，你在券商 App 上就能投。散户单独一票影响力约等于零，但这项权利的存在本身构成了对管理层的约束。</li>
+    <li><strong>剩余财产分配权</strong>：公司清算时，卖掉全部资产的钱先还员工工资和社保、再还税、再还债权人，最后剩下的才轮到股东按比例分。绝大多数破产清算走到股东这一步时，已经一分不剩。</li>
+  </ul>
+
+  <p>还有一项容易被忽略但极其重要的性质：<strong>有限责任</strong>。公司欠再多债，债主也追不到你个人头上。你在这笔投资上的最大亏损，永远是你投进去的本金——不会更多。这是现代股份公司最了不起的制度发明，也是股票和第 8 章会讲的杠杆之间那条根本分界线：一旦上了融资或配资，「最多亏光本金」这条保护就被你自己拆掉了。</p>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    「剩余索取权」意味着股东在所有人的后面排队。这不是文字游戏，而是股票风险高于债券的<strong>结构性原因</strong>：公司好的时候，股东拿走全部超额收益，上不封顶；公司烂掉的时候，股东是第一个归零的。1.8 节的表格会把这个顺序画出来。
+  </div>
+
+  <h2><span class="h-num">1.3</span> 一级市场和二级市场：你的钱去哪了</h2>
+
+  <p>这是新手误解最深、也最影响心态的一件事。同样叫「买股票」，钱的去向完全不同。</p>
+
+  <p><strong>一级市场（IPO、增发、配股）</strong>：公司<strong>发行新股</strong>，投资者掏钱认购，钱扣掉承销费后进入公司账户，公司拿去建厂、研发、还债。这是股票市场存在的原始目的——把社会闲散资金导给需要钱的企业。这一刻，总股本增加，老股东被稀释。</p>
+
+  <p><strong>二级市场（你平时的买卖）</strong>：股份已经存在，只是在股民之间转手。你付的钱进了卖家的口袋，公司<strong>一分钱都拿不到</strong>，公司的现金、资产、负债一点没变。股价从 60 元涨到 120 元，公司账上的钱不多一分；跌到 30 元，也不少一分。</p>
+
+  <figure>
+    <p class="fig-title">图 1-2 · 两个市场里，钱的流向完全不同</p>
+    <svg viewBox="0 0 720 330" role="img" aria-label="资金流向对比图：一级市场 IPO 中投资者的认购款流入公司账户；二级市场中钱只在买家和卖家之间转手，公司到账 0 元">
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#52514e"/>
+        </marker>
+      </defs>
+
+      <text x="20" y="34" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">一级市场 · IPO 与增发</text>
+      <rect x="40" y="48" width="160" height="56" rx="8" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.6"/>
+      <text x="120" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">投资者</text>
+      <rect x="360" y="48" width="160" height="56" rx="8" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.6"/>
+      <text x="440" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">上市公司</text>
+      <line x1="206" y1="64" x2="354" y2="64" stroke="#52514e" stroke-width="1.6" marker-end="url(#arw)"/>
+      <text x="280" y="55" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">认购款（真金白银）</text>
+      <line x1="354" y1="92" x2="206" y2="92" stroke="#52514e" stroke-width="1.6" marker-end="url(#arw)"/>
+      <text x="280" y="112" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">新发行的股份</text>
+      <text x="546" y="70" font-family="system-ui, sans-serif" font-size="13" fill="#898781">公司账上多了一笔钱，</text>
+      <text x="546" y="90" font-family="system-ui, sans-serif" font-size="13" fill="#898781">拿去建厂、研发、还债。</text>
+
+      <line x1="20" y1="145" x2="700" y2="145" stroke="#e1e0d9" stroke-width="1"/>
+
+      <text x="20" y="184" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">二级市场 · 你平时的每一笔买卖</text>
+      <rect x="40" y="198" width="160" height="56" rx="8" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.6"/>
+      <text x="120" y="232" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">卖出的股民 A</text>
+      <rect x="360" y="198" width="160" height="56" rx="8" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.6"/>
+      <text x="440" y="232" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">买入的股民 B</text>
+      <line x1="354" y1="214" x2="206" y2="214" stroke="#52514e" stroke-width="1.6" marker-end="url(#arw)"/>
+      <text x="280" y="205" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">成交金额</text>
+      <line x1="206" y1="242" x2="354" y2="242" stroke="#52514e" stroke-width="1.6" marker-end="url(#arw)"/>
+      <text x="280" y="262" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">存量股份</text>
+      <path d="M280 268 L280 292" stroke="#c3c2b7" stroke-width="1.4" stroke-dasharray="4 4" fill="none"/>
+      <rect x="200" y="292" width="160" height="34" rx="8" fill="#f4f3f0" stroke="#c3c2b7" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <text x="280" y="314" text-anchor="middle" font-family="system-ui, sans-serif" font-size="14" fill="#52514e">上市公司 · 到账 0 元</text>
+      <text x="546" y="212" font-family="system-ui, sans-serif" font-size="13" fill="#898781">公司只是旁观者，股价</text>
+      <text x="546" y="232" font-family="system-ui, sans-serif" font-size="13" fill="#898781">再怎么波动，也不改变</text>
+      <text x="546" y="252" font-family="system-ui, sans-serif" font-size="13" fill="#898781">它账上的现金。</text>
+    </svg>
+    <figcaption>「我买这只股票是支持这家公司」在二级市场上不成立。二级市场真正的作用是给资产定价、提供流动性，并为公司下一次融资提供参考价。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">1.4</span> 股价是谁定的：没有人</h2>
+
+  <p>行情软件上那个不断跳动的「最新价」，不是公司定的，不是交易所定的，也不是哪个专家定的。它就是<strong>最近一笔成交的价格</strong>——某个愿意卖的人和某个愿意买的人，在同一个价格上握了手，这个数字就被打出来了。</p>
+
+  <p>这有两个反直觉的推论，值得你现在就记住：</p>
+  <ul>
+    <li><strong>成交价只代表边际上的两个人</strong>。一家公司 10 亿股，其中 999,999,900 股的持有者今天什么都没做，但最后 100 股的一笔成交，就重新标定了全部 10 亿股的「市值」。市值是一个外推出来的数字，不是能兑现的数字。</li>
+    <li><strong>公司公告改变不了股价，只能改变预期</strong>。业绩暴增的公告本身不会把股价推上去，是看到公告的人改变了出价，才把股价推上去。所以经常出现「利好出尽是利空」——预期早就打进价格里了。</li>
+  </ul>
+
+  <p>这些出价和挂单如何排队、如何撮合成一笔成交，是第 2 章整章的内容，也是全书对程序员最友好的一章。这里你只需要接受一个结论：<strong>股价是市场博弈的输出，不是任何人的输入。</strong></p>
+
+  <h2><span class="h-num">1.5</span> 赚钱只有两条路径</h2>
+
+  <p>股票投资的全部收益来源，只有两项，加起来就是你的总回报，没有第三项。</p>
+
+  <h3>路径一：分红</h3>
+  <p>公司把利润的一部分以现金形式派给股东。回到 1.1 的例子：EPS 5 元，公司决定每股派 2 元，你 100 股就收到 200 元现金，直接到你的资金账户。剩下 3 元叫<strong>留存收益</strong>，公司拿去继续经营。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    分红和留存的取舍，就是一个函数是把结果 <code>return</code> 给调用方，还是把结果重新喂回主循环继续迭代。年轻的高成长公司几乎不分红——留在体内滚复利的收益率更高；成熟稳定的公司（银行、电力、高速公路）现金流用不完，就大方 <code>return</code>。两种都可以是好公司，但对应完全不同的持有逻辑。
+  </div>
+
+  <p>2025 年，A 股上市公司全年现金分红总额达到 2.5 万亿元以上（不同统计口径在 2.4 万亿至 2.6 万亿之间），连续多年创历史新高，股利支付率约 39%。这说明「A 股不分红」这个流传很广的印象已经过时了。</p>
+
+  <div class="callout">
+    <span class="tag">避坑</span>
+    <strong>分红当天你并没有变富。</strong>分红要<strong>除权除息</strong>：每股派 2 元，股价就在除息日直接下调 2 元。你左口袋少了 2 元市值，右口袋多了 2 元现金，账户总资产分文未增。分红真正的价值在于——它证明公司账上有真钱（第 5 章会讲这为什么难以造假），并把利润的处置权交回给你。所以「为了吃分红而在股权登记日前抢入」是纯粹的自我安慰。<br><br>
+    更实际的是<strong>股息红利税</strong>：持股超过 1 年<strong>免征</strong>；持股 1 个月至 1 年，实际税负 10%；持股 1 个月以内，实际税负 20%。税在你卖出时由中登按持股期限计算、券商代扣。制度明明白白地在奖励长期持有。
+  </div>
+
+  <h3>路径二：资本利得</h3>
+  <p>低买高卖赚差价。这是绝大多数人心里「炒股」的全部含义，但它并不凭空产生价值——你赚的钱来自把股票卖给出价更高的下一个人。当一群人只靠这条路径互相博弈时，整体是一个扣掉交易成本后的负和游戏（第 9 章会把这笔账算给你看）。目前 A 股对个人投资者的股票转让所得暂免征收个人所得税，但印花税、佣金、过户费一样不少，具体费率在第 3 章精算。</p>
+
+  <h2><span class="h-num">1.6</span> 股价长期锚定什么</h2>
+
+  <p>把股价拆开，只有一个恒等式，而且它是定义式，永远成立：</p>
+
+  <pre><code>股价 = 每股收益 EPS × 市盈率 PE
+       ↑ 公司赚的钱      ↑ 市场愿意为每 1 元利润付的倍数</code></pre>
+
+  <p>左边那一项由公司的经营决定，是慢变量，年度级别，可以研究、可以预测得八九不离十。右边那一项由市场情绪、利率环境、资金面决定，是快变量，一年翻倍或腰斩都很正常，基本无法预测。你在新闻里看到的所有股价剧烈波动，绝大部分是 PE 在动，不是 EPS 在动。</p>
+
+  <figure>
+    <p class="fig-title">图 1-3 · 十年里，股价的锯齿是谁贡献的</p>
+    <svg viewBox="0 0 720 270" role="img" aria-label="三联图：左图每股收益 EPS 从 1.00 元平稳增长到 3.52 元；中图市盈率 PE 在 12 到 30 倍之间剧烈震荡；右图两者相乘得到的股价从 15 元涨到 63.4 元，路径充满锯齿">
+      <text x="125" y="42" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">每股收益 EPS（元）</text>
+      <line x1="45" y1="200" x2="205" y2="200" stroke="#c3c2b7" stroke-width="1.2"/>
+      <text x="40" y="64" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">4</text>
+      <text x="40" y="204" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <polyline points="45,165 62.8,159.8 80.6,153.8 98.3,146.8 116.1,138.8 133.9,129.7 151.7,119.2 169.4,106.9 187.2,92.9 205,76.8" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+      <text x="48" y="182" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">1.00</text>
+      <text x="205" y="68" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">3.52</text>
+      <text x="125" y="222" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 1 年 → 第 10 年</text>
+
+      <text x="245" y="140" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" fill="#52514e">×</text>
+
+      <text x="365" y="42" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">市盈率 PE（倍）</text>
+      <line x1="285" y1="200" x2="445" y2="200" stroke="#c3c2b7" stroke-width="1.2"/>
+      <text x="280" y="64" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">32</text>
+      <text x="280" y="204" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <polyline points="285,134.4 302.8,103.8 320.6,68.8 338.3,121.3 356.1,147.5 373.9,130 391.7,90.6 409.4,112.5 427.2,138.8 445,121.3" fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round"/>
+      <text x="324" y="62" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">30</text>
+      <text x="356" y="164" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">12</text>
+      <text x="365" y="222" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 1 年 → 第 10 年</text>
+
+      <text x="485" y="140" text-anchor="middle" font-family="system-ui, sans-serif" font-size="22" fill="#52514e">=</text>
+
+      <text x="605" y="42" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">股价（元）</text>
+      <line x1="525" y1="200" x2="685" y2="200" stroke="#c3c2b7" stroke-width="1.2"/>
+      <text x="520" y="64" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">70</text>
+      <text x="520" y="204" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <polyline points="525,170 542.8,149.4 560.6,120.8 578.3,145.2 596.1,158 613.9,135.6 631.7,84.4 649.4,93.6 667.2,114.4 685,73.2" fill="none" stroke="#1baf7a" stroke-width="2" stroke-linejoin="round"/>
+      <text x="528" y="186" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">15.0</text>
+      <text x="685" y="64" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">63.4</text>
+      <text x="605" y="222" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 1 年 → 第 10 年</text>
+
+      <text x="360" y="252" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">EPS 单调涨了 2.5 倍，股价却上下翻飞——那些锯齿几乎全部由中间的 PE 贡献。</text>
+    </svg>
+    <figcaption>第 5 年股价比第 3 年低了近一半，可公司这两年的每股收益还涨了 33%。买在第 3 年 PE 30 倍的人，需要等到第 7 年才解套。价格和价值是两件事，第 6 章会教你怎么量化这个「贵」。</figcaption>
+  </figure>
+
+  <p>格雷厄姆那句被引用滥了的话，说的就是这张图：<strong>市场短期是投票机，长期是称重机。</strong>短期股价取决于有多少人愿意投票买它，长期则回归到这家公司到底能称出多少利润。这也解释了为什么本书从第 7 章开始把重心放在指数基金——单只公司的 EPS 可能归零，而一个宽基指数的成分股会被规则自动汰换，整体 EPS 的长期方向跟随的是一国经济的重量。</p>
+
+  <h2><span class="h-num">1.7</span> 你的股票，实际存在哪里</h2>
+
+  <p>很多人以为持仓记录存在券商的数据库里，券商倒了股票就没了。<strong>不是这样的。</strong></p>
+
+  <p>A 股实行的是中央登记存管，你的股票登记在<strong>中国证券登记结算有限责任公司</strong>（中登，CSDC）的中心化账本上，实名、穿透到自然人。账户体系是两层：你在全市场只有一个<strong>一码通账户</strong>，作为汇总的总账；下面挂着 A 股账户、封闭式基金账户、信用账户等一系列证券子账户，记录具体品种的持有和变动。</p>
+
+  <p>这与美股常见的<strong>名义持有</strong>（street name）模式有本质区别：在那边，股票通常登记在券商名下，券商内部再记你是谁；在这边，中登的账本上直接写着你的名字。所以中国的上市公司理论上能穿透看到自己的全部股东名册，而美国公司要拿股东名单得费一番周折。</p>
+
+  <div class="analogy">
+    <span class="tag">程序员视角</span>
+    中登是<strong>单一真源（single source of truth）</strong>的中心化 ledger，券商 App 只是一个客户端——它渲染界面、发送指令、展示缓存。客户端崩了，数据库里的记录一行都不会少。这就是为什么券商倒闭你的股票还在（配套的资金安全靠三方存管，第 3 章讲）。顺便说一句：这也意味着「换券商」不是数据迁移，只是把托管指令从一个客户端转到另一个客户端，你的股票根本没动过。
+  </div>
+
+  <p>顺带给你一个市场体量的坐标系：截至 2026 年 6 月末，境内股票市场上市公司约 5535 家，总市值约 119 万亿元。投资者账户方面，中登口径的 A 股投资者数在 2024 年底约 2.37 亿，2026 年内正在向 2.6 亿逼近。你不是在一个小池塘里，你是在一个由两亿多人参与、日成交额上万亿的系统里下单——这个认知会在第 9 章救你的命。</p>
+
+  <h2><span class="h-num">1.8</span> 股票、债券、存款：三种完全不同的东西</h2>
+
+  <p>把这三样放在一起对比，你才能明白股票的高收益到底是从哪来的——它不是天上掉的，是承担了别人不愿承担的那部分风险换来的。</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr>
+      <th>维度</th>
+      <th>银行存款</th>
+      <th>债券</th>
+      <th>股票</th>
+    </tr>
+    <tr>
+      <td>法律关系</td>
+      <td>存款合同</td>
+      <td>债权（你是债主）</td>
+      <td>所有权（你是老板之一）</td>
+    </tr>
+    <tr>
+      <td>收益来源</td>
+      <td>约定利率</td>
+      <td>票息 + 价格波动</td>
+      <td>分红 + 资本利得</td>
+    </tr>
+    <tr>
+      <td>收益是否承诺</td>
+      <td>是，写在合同里</td>
+      <td>是，除非违约</td>
+      <td><strong>否，完全不承诺</strong></td>
+    </tr>
+    <tr>
+      <td>清偿顺序</td>
+      <td>最优先（且有存款保险）</td>
+      <td>优先于股东</td>
+      <td><strong>最后一位</strong></td>
+    </tr>
+    <tr>
+      <td>上行空间</td>
+      <td>封顶</td>
+      <td>基本封顶</td>
+      <td><strong>不封顶</strong></td>
+    </tr>
+    <tr>
+      <td>2026 年参考收益</td>
+      <td class="num">1 年定存约 0.95%（国有大行）</td>
+      <td class="num">10 年国债约 1.7%</td>
+      <td class="num">无承诺，长期取决于企业盈利</td>
+    </tr>
+    <tr>
+      <td>本金风险</td>
+      <td>极低</td>
+      <td>低至中（看信用等级）</td>
+      <td><strong>高，可能归零</strong></td>
+    </tr>
+  </table>
+  </div>
+
+  <p>看懂这张表，就看懂了一条铁律：<strong>你能拿到的超额收益，本质上是你承担了「排在最后一位、且没有任何承诺」这个身份的补偿。</strong>凡是宣称「像股票一样高收益、像存款一样保本」的产品，要么在骗你，要么把风险藏在了你看不见的地方——第 9 章会把这类东西的话术剧本完整拆开。</p>
+
+  <p>顺便注意 2026 年的利率环境：一年定存不到 1%，十年国债 1.7% 出头。低利率会同时抬高股票的估值（第 6 章的 DCF 会解释为什么），也会让「全部资产躺在存款里」的机会成本变得明显。但这不是让你 all in 股票的理由，而是第 8 章要讲的资产配比问题。</p>
+
+  <h2><span class="h-num">1.9</span> 这一章你要带走的东西</h2>
+
+  <ul>
+    <li>股票是公司所有权的最小可分割单位，持股比例决定你对利润和剩余财产的索取权比例。</li>
+    <li>股东排在所有债权人后面，但享有有限责任和不封顶的上行空间——这就是风险与收益的来源。</li>
+    <li>二级市场买卖，钱在股民之间转手，公司拿不到。你不是在「支持公司」，你是在给资产定价。</li>
+    <li>股价没有人定，它是最近一笔成交价，是博弈的输出。</li>
+    <li>总回报 = 分红 + 资本利得，仅此两项。分红当天不会让你变富，但制度在用税率奖励长期持有。</li>
+    <li>股价 = EPS × PE。EPS 是慢变量、可研究，PE 是快变量、难预测，短期波动几乎都是 PE 在动。</li>
+    <li>你的股票记在中登的中心化账本上，券商只是客户端。</li>
+  </ul>
+
+  <p>下一章我们把交易所这台撮合引擎彻底拆开：订单簿的数据结构、价格优先与时间优先两条规则、集合竞价这个批处理任务如何求出开盘价，以及为什么你的大单会把价格打穿好几档。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="./"><span class="dir">← 返回</span>目录</a>
+  <a class="next" href="how-the-market-works.html"><span class="dir">下一章 →</span>第2章 · 市场如何撮合</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>
