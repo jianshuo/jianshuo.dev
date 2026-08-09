@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第7章 · 指数基金与定投 — 程序员炒股指南</title>
+<meta name="description" content="对绝大多数人，低成本宽基指数基金加自动定投，是期望值最优的默认方案——本章讲清它为什么成立，以及怎么落地。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 7 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 07</span>
+    <h1>指数基金与定投</h1>
+    <p class="lede">对绝大多数人，低成本宽基指数基金加自动定投，是期望值最优的默认方案——本章讲清它为什么成立，以及怎么落地。</p>
+  </div>
+
+  <p>前六章都在教你怎么看清楚一件事：市场怎么撮合、K 线怎么读、财报怎么拆、估值怎么算。这一章要给出的是一个结论：<strong>把上面这些学明白之后，你多半仍然应该买指数基金。</strong></p>
+
+  <p>这不是自相矛盾。学会读财报是为了看懂你手里的东西，不是为了证明你能选出下一个十倍股。就像懂编译原理不意味着你该自己写编译器上生产——懂原理让你知道现成的方案好在哪儿、什么时候会失效。指数基金加定投，就是投资这件事上那个「现成的、被无数人验证过的标准库实现」。</p>
+
+  <h2><span class="h-num">7.1</span> 指数是什么：一段公开的选股代码</h2>
+
+  <p>指数不是一堆股票的随意集合，它是<strong>一段公开的、可复现的规则</strong>：选股范围是什么、按什么排序、取前多少只、权重怎么算、多久调整一次成分股。规则写在编制方案里，任何人都能下载。基金公司做的事情，只是照着这段规则去市场上买股票。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    买指数基金，是面向 <code>interface</code> 编程，而不是绑定某一个 <code>implementation</code>。个股会退市、会造假、会被行业颠覆；指数不会——它每半年跑一次调样，把不再符合条件的成分股换掉，把新长起来的换进来。你持有的是「A 股大盘」这个抽象，具体由哪些公司实现，指数编制委员会替你维护。这也意味着，你永远拿不到超越接口定义的收益：指数涨你就涨，不多也不少。
+  </div>
+
+  <p>需要认识的几个宽基指数（宽基＝不限行业、覆盖面广）：</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>指数</th><th>选股规则（简化）</th><th>代表什么</th></tr></thead>
+    <tbody>
+      <tr><td>沪深 300</td><td>沪深两市规模最大、流动性最好的 300 只</td><td>A 股大盘蓝筹，成熟龙头</td></tr>
+      <tr><td>中证 500</td><td>剔除沪深 300 成分后，市值靠前的 500 只</td><td>A 股中盘成长，弹性更大</td></tr>
+      <tr><td>中证 A500</td><td>各行业内选龙头，500 只，行业分布对齐全市场</td><td>行业均衡的 A 股核心资产</td></tr>
+      <tr><td>标普 500</td><td>美国各行业 500 家龙头，委员会择定</td><td>美股大盘，全球最主流基准</td></tr>
+      <tr><td>纳斯达克 100</td><td>纳斯达克非金融公司市值前 100</td><td>美股科技成长，波动更大</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>中证 A500 是这几年新增的一只，逻辑值得注意：它不是简单按市值取前 500，而是先按行业分组、组内选龙头，让指数的行业分布贴近整个 A 股。所以它和另外两只有大量重叠——500 只成分里，234 只同时是沪深 300 成分股，206 只同时是中证 500 成分股，只有 60 只两边都不属于。<strong>买了沪深 300 又买中证 A500，不叫分散，叫重复计算。</strong></p>
+
+  <p>选哪只？如果只买一只 A 股宽基，沪深 300 或中证 A500 都是合理的默认值；想要更多中小盘弹性，加一点中证 500。别在这个选择上纠结太久——它们的长期相关性极高，选择带来的差异，远小于「你有没有坚持投下去」带来的差异。</p>
+
+  <h2><span class="h-num">7.2</span> 主动 vs 被动：数据不站在主动这边</h2>
+
+  <p>「找个厉害的基金经理帮我选股，不比傻买指数强？」这是最自然的想法，也是被检验得最彻底的想法。标普道琼斯指数公司每半年发一次 SPIVA 记分卡，把主动基金和它们各自的基准逐一对账，做了二十多年。</p>
+
+  <ul>
+    <li><strong>美国（截至 2025 年末）</strong>：过去 20 年，约 92% 的美国国内股票型主动基金跑输了各自基准。仅 2025 一年，就有 79% 的大盘主动基金跑输标普 500。</li>
+    <li><strong>亚洲（不含日本，截至 2025 年末）</strong>：报告覆盖的 13 个基金类别里，1 年期有 10 个类别是「多数基金跑输基准」，拉到 5 年期扩大到 12 个类别；其中国际股票类基金的 5 年期跑输比例高达 93%–100%。</li>
+    <li><strong>A 股的例外，以及例外的寿命</strong>：A 股散户占比高、定价效率低，主动基金确实更容易做出阶段性超额。2025 年前两个月，主动权益基金平均净值增长率 3.28%，跑赢同期沪深 300 达 4.42 个百分点。但 SPIVA 的一贯结论是：跑输比例随考察期限单调上升——时间越长，主动越难。</li>
+  </ul>
+
+  <p>更扎心的是「持续性」（persistence）这一项：过去五年排在前 25% 的基金，未来五年继续留在前 25% 的概率，接近于纯随机。也就是说，即便主动超额真的存在，你也很难<em>提前</em>把它挑出来。你能挑出来的只有历史排名，而历史排名对未来的预测力接近于零——这正是第 4 章讲过的过拟合，只不过换到了「选基金」这个场景。</p>
+
+  <p>为什么必然如此？这里有一个不依赖任何数据的证明，来自 William Sharpe 1991 年的《主动管理的算术》：市场上所有投资者的持仓加总起来，就等于市场组合本身。被动投资者按定义拿到市场收益（扣费前）。那么剩下的所有主动投资者<strong>作为一个整体</strong>，扣费前的收益也必然等于市场收益——不多一分不少一分。既然扣费前打平，扣费后主动整体就必然落后，落后的幅度正好等于费率之差。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    这不是统计规律，是恒等式，跟「所有人工资的平均数等于总工资除以人数」一个性质，不会因为市场风格切换而失效。它也解释了为什么会有少数常年跑赢的基金经理：主动是零和的，有人赢就有人输，赢家的超额来自其他主动投资者的口袋，而不是凭空产生。<strong>问题在于，坐在牌桌上的另一边，很可能就是你自己在第 9 章会看到的那类散户。</strong>
+  </div>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    被动投资跑赢主动，本质上是「别自己造轮子」在金融里的版本。市场定价是几千万人参与、每天迭代的开源项目，代码审查密度高得惊人。你私下写一个实现，指望它比这个项目更好——理论上可能，实际上你连你的实现是好是坏都要十年才能统计显著。
+  </div>
+
+  <h2><span class="h-num">7.3</span> 费率：唯一你能确定拿到的那部分收益</h2>
+
+  <p>收益是不确定的，费率是确定的。这是投资里极少数你能百分之百控制的变量，所以值得花时间。</p>
+
+  <p>2026 年国内的费率现状（公募基金费率改革之后）：</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>类型</th><th>管理费/年</th><th>托管费/年</th><th>合计</th></tr></thead>
+    <tbody>
+      <tr><td>主动权益基金（主流）</td><td>1.20%</td><td>0.20%</td><td class="num">1.40%</td></tr>
+      <tr><td>宽基指数 ETF（主流）</td><td>0.15%</td><td>0.05%</td><td class="num">0.20%</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>差 1.2 个百分点。听上去像噪声，但它每年都从你的本金里扣一次，而且是在复利的指数上做减法。假设两边的毛收益都是年化 8%，扣费后一边净 7.8%，一边净 6.6%，投入 10 万元放 30 年：</p>
+
+  <figure>
+    <p class="fig-title">图 7-1 · 1.2 个百分点的费率差，30 年吃掉多少</p>
+    <svg viewBox="0 0 720 320" role="img" aria-label="两条 30 年资产增长曲线对比：净年化 7.8% 的低费方案 30 年后约 95.2 万元，净年化 6.6% 的高费方案约 68.0 万元，两条曲线之间的差额区域随时间迅速扩大">
+      <!-- 图例 -->
+      <rect x="70" y="14" width="12" height="12" rx="2" fill="#2a78d6"/>
+      <text x="88" y="24" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">低费指数基金（净 7.8%/年）</text>
+      <rect x="300" y="14" width="12" height="12" rx="2" fill="#eb6834"/>
+      <text x="318" y="24" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">高费主动基金（净 6.6%/年）</text>
+
+      <!-- 网格 -->
+      <line x1="70" y1="270" x2="640" y2="270" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="212.5" x2="640" y2="212.5" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="155" x2="640" y2="155" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="97.5" x2="640" y2="97.5" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="40" x2="640" y2="40" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="40" x2="70" y2="270" stroke="#c3c2b7" stroke-width="1"/>
+
+      <!-- Y 轴标签 -->
+      <text x="62" y="274" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <text x="62" y="216.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">25</text>
+      <text x="62" y="159" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">50</text>
+      <text x="62" y="101.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">75</text>
+      <text x="62" y="44" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">100</text>
+      <text x="70" y="304" font-family="system-ui, sans-serif" font-size="13" fill="#898781">资产（万元）｜本金 10 万一次性投入</text>
+
+      <!-- X 轴标签 -->
+      <text x="70" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <text x="165" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">5</text>
+      <text x="260" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">10</text>
+      <text x="355" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">15</text>
+      <text x="450" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">20</text>
+      <text x="545" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">25</text>
+      <text x="640" y="288" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">30 年</text>
+
+      <!-- 差额面积 -->
+      <path d="M70,247 L117.5,242.2 L165,236.5 L212.5,229.6 L260,221.2 L307.5,211.2 L355,199 L402.5,184.4 L450,166.7 L497.5,145.3 L545,119.5 L592.5,88.6 L640,50.9 L640,113.5 L592.5,136.6 L545,156.3 L497.5,173.1 L450,187.4 L402.5,199.6 L355,210 L307.5,218.9 L260,226.4 L212.5,232.9 L165,238.3 L117.5,243 L70,247 Z" fill="#eb6834" fill-opacity="0.13"/>
+
+      <!-- 高费曲线 -->
+      <polyline points="70,247 117.5,243 165,238.3 212.5,232.9 260,226.4 307.5,218.9 355,210 402.5,199.6 450,187.4 497.5,173.1 545,156.3 592.5,136.6 640,113.5" fill="none" stroke="#eb6834" stroke-width="2"/>
+      <!-- 低费曲线 -->
+      <polyline points="70,247 117.5,242.2 165,236.5 212.5,229.6 260,221.2 307.5,211.2 355,199 402.5,184.4 450,166.7 497.5,145.3 545,119.5 592.5,88.6 640,50.9" fill="none" stroke="#2a78d6" stroke-width="2"/>
+
+      <circle cx="640" cy="50.9" r="3.5" fill="#2a78d6"/>
+      <circle cx="640" cy="113.5" r="3.5" fill="#eb6834"/>
+      <text x="650" y="47" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">95.2 万</text>
+      <text x="650" y="118" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">68.0 万</text>
+    </svg>
+    <figcaption>橙色区域就是费率差在 30 年里拿走的部分：27.2 万元，接近本金的 2.7 倍。它在前十年几乎看不见，之后开始加速张开。</figcaption>
+  </figure>
+
+  <p>注意这个对比还偏袒了主动基金——它假设主动基金的毛收益和指数一样。而 7.2 节的数据说，多数主动基金连毛收益都跑不平。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+    管理费和托管费只是「持有成本」，还有「交易成本」要单独看：场外基金的申购费（打折后常见 0.1%）或 C 类份额的销售服务费（常见 0.2%–0.4%/年）、赎回费；场内 ETF 的券商佣金。买之前一定翻到基金详情页的费率表，把这几项加起来看总账。同一只指数下的不同基金，费率能差出好几倍，而它们持有的股票几乎一模一样。
+  </div>
+
+  <h2><span class="h-num">7.4</span> 场内 ETF 还是场外指数基金：按性格选</h2>
+
+  <p>同一个指数，有两种买法。区别不在收益，在<strong>交互方式</strong>——而交互方式会反过来改变你的行为。</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>场内 ETF</th><th>场外指数基金 / ETF 联接</th></tr></thead>
+    <tbody>
+      <tr><td>在哪买</td><td>券商 App，和买股票同一个界面</td><td>基金公司 / 银行 / 第三方平台 App</td></tr>
+      <tr><td>成交价</td><td>盘中实时价，可能偏离净值（折溢价）</td><td>当日收盘后的基金净值，所见即所得</td></tr>
+      <tr><td>费用</td><td>券商佣金（可谈到万一左右），无印花税</td><td>申购费（A 类打折后常见 0.1%）或销售服务费（C 类）</td></tr>
+      <tr><td>最小金额</td><td>1 手 = 100 份，几百元起</td><td>10 元甚至 1 元起</td></tr>
+      <tr><td>自动定投</td><td>部分券商支持，多数要手动下单</td><td>绑卡后每月自动扣款，无需登录</td></tr>
+      <tr><td>手痒风险</td><td><strong>高</strong>——盘口就在眼前，一天能看八次</td><td><strong>低</strong>——盘中看不到价格，想操作也来不及</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>ETF 联接基金是个折中：它是一只场外基金，但它把绝大部分钱投到对应的场内 ETF 上，等于给你开了一条从场外自动扣款买 ETF 的通道，费率也贴近 ETF。想省心又想要低费率，联接基金通常是最优解。</p>
+
+  <p>A 类还是 C 类？算一笔账就清楚：A 类交一次性申购费（打折后约 0.1%），C 类按年计提销售服务费（约 0.2%–0.4%）。临界点大约在持有半年——超过半年，A 类就开始占优，持有越久优势越大。定投是奔着好几年去的，<strong>默认选 A 类</strong>。但要留意 A 类的赎回费阶梯：持有不满 7 天通常收 1.5%（这是惩罚性的，别去碰），满一定年限后免收，具体以基金合同为准。</p>
+
+  <h2><span class="h-num">7.5</span> 选基金：一个可以写成函数的筛选流程</h2>
+
+  <p>关键顺序：<strong>先选指数，再选基金。</strong>指数决定了你的收益长什么样（这是 90% 的决策），基金只决定你为此付多少钱、跟得准不准（剩下 10%）。同一指数下的不同基金是高度同质的商品，挑法接近于挑一根 USB 线——只看参数。</p>
+
+<pre><code>def pick_fund(candidates, index_name):
+    fs = [f for f in candidates if f.tracks == index_name]
+
+    fs = [f for f in fs
+          if f.aum &gt; 2e8                 # 规模 &gt; 2 亿，远离清盘线
+          and f.age_years &gt;= 1            # 成立满一年，有跟踪记录可看
+          and f.tracking_error &lt; 0.005]   # 年化跟踪误差 &lt; 0.5%
+
+    if f.on_exchange:                     # 场内还要看这两项
+        fs = [f for f in fs
+              if f.avg_daily_turnover &gt; 5e6   # 日均成交额，流动性
+              and abs(f.premium) &lt; 0.01]      # 折溢价率在 ±1% 内
+
+    return min(fs, key=lambda f: f.total_fee)   # 剩下的，谁最便宜要谁</code></pre>
+
+  <p>逐条解释这几个阈值：</p>
+
+  <ul>
+    <li><strong>规模 &gt; 2 亿</strong>：基金合同里普遍有清盘条款——连续 60 个工作日基金资产净值低于 5000 万元，或持有人数量不足 200 人，就可能触发清算。清盘不会让你血本无归（按净值退钱），但会强制你在一个不由你选的时点变现，打断定投节奏。留 2 亿的安全垫。</li>
+    <li><strong>跟踪误差 &lt; 0.5%</strong>：这是衡量「基金和指数贴不贴」的指标。误差大说明基金经理在偷偷做主动动作，或者复制能力差——你付的是被动的钱，就该拿到被动的结果。</li>
+    <li><strong>成立满一年</strong>：不满一年的基金没有足够的跟踪误差数据可看，规模也不稳定。</li>
+    <li><strong>场内看成交额和折溢价</strong>：成交冷清的 ETF，你的买单会像第 2 章说的那样把价格打穿好几档。折溢价率则告诉你现在的市价比净值贵多少——溢价 3% 买进去，等于开盘就亏 3%。</li>
+    <li><strong>最后按总费率排序</strong>：前面的条件都是及格线，过了线之后，费率是唯一还有区分度的变量。</li>
+  </ul>
+
+  <div class="callout"><span class="tag">避坑</span>
+    「指数增强基金」不是指数基金。它以指数为底仓，再叠加一层量化主动策略去博超额，因此管理费明显更高（常见 1% 上下），超额收益也不稳定——好的年份跑赢一两个点，差的年份跑输。它本质上是一只披着指数外衣的主动基金，要按 7.2 节的标准去审视它，而不是按本节的标准。
+  </div>
+
+  <h2><span class="h-num">7.6</span> 定投的数学本质：一个不等式，加一个 cron job</h2>
+
+  <p>定投（定期定额）的规则简单到一行：每隔固定时间，投入固定金额。买到的份额 = 金额 ÷ 当期净值。净值低的时候，同样的钱自动买到更多份额。</p>
+
+  <p>它的数学性质是确定的，不是玄学。设每期投入 <code>A</code> 元，第 <code>i</code> 期净值为 <code>p_i</code>，一共 <code>n</code> 期：</p>
+
+<pre><code>总投入   = n · A
+总份额   = Σ (A / p_i)
+平均成本 = 总投入 / 总份额 = n / Σ(1/p_i)     ← 这就是 p 的调和平均数</code></pre>
+
+  <p>而由算术—调和平均不等式，<strong>调和平均恒小于等于算术平均</strong>，只有当所有 <code>p_i</code> 完全相等时取等号。翻译成人话：<em>只要净值在波动，你的定投成本就必定低于同期净值的简单平均价</em>。这是一个恒等式级别的结论，不需要任何关于市场走势的假设。</p>
+
+  <figure>
+    <p class="fig-title">图 7-2 · 一年 12 期定投：净值先跌后涨，成本落在均价之下</p>
+    <svg viewBox="0 0 720 440" role="img" aria-label="上半部分为 12 个月的基金净值折线，从 1.00 跌到 0.70 再涨回 1.00，标出定投平均成本 0.929 低于净值算术平均 0.954；下半部分为每月买到的份额柱状图，净值最低的第 4 个月买到 1429 份，最高的第 9 个月只买到 833 份">
+      <text x="70" y="20" font-family="system-ui, sans-serif" font-size="14" fill="#52514e">基金净值（元）</text>
+
+      <!-- 上 panel 网格 -->
+      <line x1="80" y1="220" x2="600" y2="220" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="80" y1="194.3" x2="600" y2="194.3" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="80" y1="142.9" x2="600" y2="142.9" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="80" y1="91.4" x2="600" y2="91.4" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="80" y1="40" x2="600" y2="40" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="80" y1="40" x2="80" y2="220" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="72" y="198" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0.70</text>
+      <text x="72" y="146.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0.90</text>
+      <text x="72" y="95" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1.10</text>
+      <text x="72" y="43.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1.30</text>
+
+      <!-- 参考线 -->
+      <line x1="80" y1="129" x2="600" y2="129" stroke="#898781" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <line x1="80" y1="135.4" x2="600" y2="135.4" stroke="#1baf7a" stroke-width="2"/>
+      <text x="608" y="125" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">均价 0.954</text>
+      <text x="608" y="145" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">成本 0.929</text>
+
+      <!-- 净值折线 -->
+      <polyline points="80,117.1 127.3,142.9 174.5,168.6 221.8,194.3 269.1,181.4 316.4,155.7 363.6,130 410.9,91.4 458.2,65.7 505.5,78.6 552.7,104.3 600,117.1" fill="none" stroke="#2a78d6" stroke-width="2"/>
+      <circle cx="80" cy="117.1" r="3" fill="#2a78d6"/>
+      <circle cx="127.3" cy="142.9" r="3" fill="#2a78d6"/>
+      <circle cx="174.5" cy="168.6" r="3" fill="#2a78d6"/>
+      <circle cx="221.8" cy="194.3" r="3" fill="#2a78d6"/>
+      <circle cx="269.1" cy="181.4" r="3" fill="#2a78d6"/>
+      <circle cx="316.4" cy="155.7" r="3" fill="#2a78d6"/>
+      <circle cx="363.6" cy="130" r="3" fill="#2a78d6"/>
+      <circle cx="410.9" cy="91.4" r="3" fill="#2a78d6"/>
+      <circle cx="458.2" cy="65.7" r="3" fill="#2a78d6"/>
+      <circle cx="505.5" cy="78.6" r="3" fill="#2a78d6"/>
+      <circle cx="552.7" cy="104.3" r="3" fill="#2a78d6"/>
+      <circle cx="600" cy="117.1" r="3" fill="#2a78d6"/>
+
+      <!-- 下 panel -->
+      <text x="70" y="252" font-family="system-ui, sans-serif" font-size="14" fill="#52514e">当月买到的份额（份）｜每月固定投入 1000 元</text>
+      <line x1="60" y1="380" x2="630" y2="380" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="60" y1="343.3" x2="630" y2="343.3" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="60" y1="306.7" x2="630" y2="306.7" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="60" y1="270" x2="630" y2="270" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="60" y1="270" x2="60" y2="380" stroke="#c3c2b7" stroke-width="1"/>
+      <text x="54" y="384" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">0</text>
+      <text x="54" y="347.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">500</text>
+      <text x="54" y="311" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1000</text>
+      <text x="54" y="274.5" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1500</text>
+
+      <rect x="64" y="306.7" width="32" height="73.3" rx="3" fill="#eb6834"/>
+      <rect x="111.3" y="298.5" width="32" height="81.5" rx="3" fill="#eb6834"/>
+      <rect x="158.5" y="288.3" width="32" height="91.7" rx="3" fill="#eb6834"/>
+      <rect x="205.8" y="275.2" width="32" height="104.8" rx="3" fill="#eb6834"/>
+      <rect x="253.1" y="282.2" width="32" height="97.8" rx="3" fill="#eb6834"/>
+      <rect x="300.4" y="293.7" width="32" height="86.3" rx="3" fill="#eb6834"/>
+      <rect x="347.6" y="302.8" width="32" height="77.2" rx="3" fill="#eb6834"/>
+      <rect x="394.9" y="313.3" width="32" height="66.7" rx="3" fill="#eb6834"/>
+      <rect x="442.2" y="318.9" width="32" height="61.1" rx="3" fill="#eb6834"/>
+      <rect x="489.5" y="316.2" width="32" height="63.8" rx="3" fill="#eb6834"/>
+      <rect x="536.7" y="310.2" width="32" height="69.8" rx="3" fill="#eb6834"/>
+      <rect x="584" y="306.7" width="32" height="73.3" rx="3" fill="#eb6834"/>
+
+      <text x="221.8" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">1429 份</text>
+      <text x="458.2" y="313" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">833 份</text>
+
+      <text x="80" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">1</text>
+      <text x="127.3" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2</text>
+      <text x="174.5" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">3</text>
+      <text x="221.8" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">4</text>
+      <text x="269.1" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">5</text>
+      <text x="316.4" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">6</text>
+      <text x="363.6" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">7</text>
+      <text x="410.9" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">8</text>
+      <text x="458.2" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">9</text>
+      <text x="505.5" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">10</text>
+      <text x="552.7" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">11</text>
+      <text x="600" y="400" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">12</text>
+      <text x="80" y="422" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 N 月</text>
+    </svg>
+    <figcaption>净值从 1.00 跌到 0.70 又回到 1.00，一次性买入一年后收益为零；每月投 1000 元共 12000 元，累计 12916 份，平均成本 0.929，期末市值 12916 元——多出来的 916 元，全部来自「跌的时候自动多买」。</figcaption>
+  </figure>
+
+  <p>但必须说清楚边界，否则这就变成了鸡汤：</p>
+
+  <ul>
+    <li><strong>定投不保证赚钱。</strong>它保证的只是成本低于均价。如果卖出时净值低于 0.929，照样亏。</li>
+    <li><strong>在单边上涨的市场里，一次性买入更优。</strong>由于股市长期趋势向上，用一大笔闲钱做十二个月分批建仓，历史上多数时候不如第一天全买。定投真正适配的场景是「你本来就是每月有工资流入」——那不是把一笔钱拆开，那是资金天然按月到账。</li>
+    <li><strong>定投的核心价值不是数学，是工程。</strong>调和平均那点优势只有百分之几；而把「今天要不要买」这个每天都要重做一次的决策彻底删掉，价值远大于此。</li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    定投就是给投资加一个 <code>cron job</code>：规则一次写死，之后无人值守执行，不受当天情绪、热搜、群里消息的影响。你在头脑清醒的时候（现在）替头脑发热的时候（下一次暴跌或暴涨）做好决策，然后把执行权交给系统。第 10 章会把这个思路推广到整个投资流程——所有能自动化的决策，都不该留给人。
+  </div>
+
+  <h2><span class="h-num">7.7</span> 定投的参数设计</h2>
+
+  <p>规则定下来之后，剩下的是调参。好消息是，多数参数没那么敏感。</p>
+
+  <h3>频率：周投还是月投</h3>
+  <p>长期看差异很小，小到不值得为它做任何研究。选一个跟你现金流对齐的：工资月发就月投，想让扣款金额小一点、心理压力低一点就周投。<strong>不要去搜「哪一天定投收益最高」</strong>——那类结论是在几十个交易日里挖出来的噪声模式，样本外必然失效，正是第 4 章说的过拟合。</p>
+
+  <h3>金额：按收入的固定比例</h3>
+  <p>不要拍一个绝对数字，要定一个比例，比如税后收入的 10%–20%，收入涨了自动跟着涨。扣款日设在发薪日的次日：<strong>先投资，后消费</strong>，剩下的才是可花的钱。这个顺序比金额本身更重要。</p>
+  <p>比例上限由第 8 章的规则决定：所有投入必须是五年内用不到的钱，且在此之前已经备好 3–6 个月的应急现金。定投不该逼你在熊市底部因为要交房租而赎回。</p>
+
+  <h3>止盈：三种流派</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>方式</th><th>规则</th><th>问题</th></tr></thead>
+    <tbody>
+      <tr><td>目标收益止盈</td><td>累计收益达 20%（或年化 15%）就全部卖出，重新开始</td><td>牛市早早下车；卖出后「什么时候重新投」变成新的择时难题</td></tr>
+      <tr><td>估值分位止盈</td><td>指数 PE 处于历史 80% 分位以上时分批减仓（见第 6 章）</td><td>比目标收益合理，但分位的基准区间怎么取，本身带主观性</td></tr>
+      <tr><td>不止盈</td><td>只在真的需要用钱时卖；仓位偏离靠再平衡纠正（第 8 章）</td><td>要忍受完整的回撤，对心态要求最高</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>止盈本质上是择时的温和版本，只是把「预测顶部」换成了「设定一个我愿意接受的退出条件」。对宽基长期定投，我的建议是<strong>估值分位止盈或不止盈</strong>，配合年度再平衡——它把「卖」这个动作也变成了规则驱动，而不是情绪驱动。目标收益止盈最大的隐患是它没有回答「卖完之后呢」，很多人卖在 20% 然后眼睁睁看着涨到 80%，接着在高位追回去。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+    定投最常见的失败模式不是选错指数，是<strong>熊市中途停扣</strong>。账户绿了三个月，人本能地想「先停一停，等企稳了再投」——而这恰恰是份额最便宜、图 7-2 里柱子最高的那几个月。停在那里，等于精准地跳过了定投唯一起作用的区间。所以定投的第一条纪律不是「投什么」，是<strong>一旦开始，除非需要用钱，否则不停</strong>。<br><br>
+    也别把「微笑曲线」当成承诺。定投的最终收益取决于你卖出那一刻的价格，前期跌得多只有在「后来会涨回来」的前提下才是好事。这个前提对全球分散的宽基组合相对可信，对单一市场的某个十年却未必——日经 225 在 1989 年底见顶后，用了三十多年才重新回到那个点位。这正是下一节要做全球配置的原因。
+  </div>
+
+  <h2><span class="h-num">7.8</span> 全球配置入门：三块积木和一个坑</h2>
+
+  <p>一个够用的起步组合，只需要三块：</p>
+
+  <ul>
+    <li><strong>A 股宽基</strong>（沪深 300 或中证 A500）——你的收入、房贷、日常开销都以人民币计价，本币资产占大头是合理的；</li>
+    <li><strong>港股</strong>（恒生指数或恒生科技）——和 A 股相关但不完全同步，覆盖了大量在境外上市的中国互联网公司；</li>
+    <li><strong>美股</strong>（标普 500 或纳斯达克 100，通过 QDII 基金）——分散的是「押注单一国家」这个风险本身。</li>
+  </ul>
+
+  <p>比例不必精算，海外部分占 20%–40% 都在合理区间，选一个你能坚持的数字写下来，之后靠再平衡维持。真正需要小心的是最后一块的<strong>通道风险</strong>。</p>
+
+  <p>QDII（合格境内机构投资者）是国内投资美股的主渠道，它有外汇额度上限。当海外市场行情好、国内申购需求集中时，额度会被迅速用完：截至 2026 年 5 月末，证券类 QDII 累计批准额度约 972.80 亿美元，3 月那次新增很快就被消化掉了。额度用完的后果是——<strong>场外申购被限额甚至暂停，资金全部涌向场内，把 ETF 价格推得远高于净值。</strong></p>
+
+  <p>2026 年这个现象非常突出：6 月 3 日收盘时，有 27 只 QDII ETF 和 11 只 LOF 的溢价率超过 3%，其中 2 只超过 20%；同月 12 只纳指 ETF 集体停牌警示；8 月 3 日，嘉实纳斯达克 100 ETF（159501）因 7 月 31 日收盘价 1.983 元对应参考净值仅 1.7874 元（溢价近 11%）而开盘停牌，10 点半才复牌。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+    <strong>溢价买入 = 买入瞬间就亏掉溢价那部分。</strong>你花 1.983 元买到的，是价值 1.7874 元的资产，这 11% 迟早会被抹平——不是靠净值涨上去，是靠市价跌下来。<br><br>
+    实操上的三条对策：一，场内下单前先看行情软件里的 <code>IOPV</code>（实时参考净值）和溢价率，超过 1% 就别买；二，做长期定投优先走场外通道，哪怕被限额到每天只能申购 100 元，也照投不误，反正你本来就是分批买；三，看到某只 QDII ETF 一天涨了 5% 而对应的美股指数没动，那不是行情，那是溢价在扩大，此时买进去的人是在给先来的人接盘。
+  </div>
+
+  <h2><span class="h-num">7.9</span> 把这一章合成一张决策图</h2>
+
+  <p>上面所有的讨论，最终收敛成一条很短的路径。</p>
+
+  <figure>
+    <p class="fig-title">图 7-3 · 从「想开始定投」到「今晚就能设好」的决策路径</p>
+    <svg viewBox="0 0 720 400" role="img" aria-label="定投方式决策流程图：确定每月投宽基指数后，先判断是否已有券商账户，再判断是否需要盘中实时买卖，最后判断能否管住手不追涨杀跌，分别导向场外自动扣款或场内 ETF 两种方案">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#898781"/>
+        </marker>
+      </defs>
+
+      <!-- N1 -->
+      <rect x="180" y="16" width="200" height="40" rx="10" fill="#f4f3f0" stroke="#c3c2b7"/>
+      <text x="280" y="41" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">每月固定金额买宽基指数</text>
+      <line x1="280" y1="56" x2="280" y2="78" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- N2 -->
+      <rect x="150" y="80" width="260" height="44" rx="10" fill="#eef4fc" stroke="#2a78d6"/>
+      <text x="280" y="108" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">已经有券商账户了吗？</text>
+      <line x1="410" y1="102" x2="446" y2="102" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="428" y="95" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">否</text>
+      <rect x="450" y="80" width="250" height="44" rx="10" fill="#fdf3ea" stroke="#eb6834"/>
+      <text x="575" y="108" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">先开户，见第 3 章</text>
+      <line x1="280" y1="124" x2="280" y2="158" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="292" y="146" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">是</text>
+
+      <!-- N3 -->
+      <rect x="150" y="160" width="260" height="44" rx="10" fill="#eef4fc" stroke="#2a78d6"/>
+      <text x="280" y="188" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">需要盘中实时买卖吗？</text>
+      <path d="M150,182 L110,182 L110,326" fill="none" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="128" y="175" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">否</text>
+      <line x1="280" y1="204" x2="280" y2="238" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="292" y="226" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">是</text>
+
+      <!-- N4 -->
+      <rect x="150" y="240" width="260" height="44" rx="10" fill="#eef4fc" stroke="#2a78d6"/>
+      <text x="280" y="268" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">能忍住不追涨杀跌吗？</text>
+      <path d="M410,262 L455,262 L455,326" fill="none" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="432" y="255" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">是</text>
+      <path d="M280,284 L280,306 L205,306 L205,326" fill="none" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+      <text x="250" y="300" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">否</text>
+
+      <!-- 结果 -->
+      <rect x="40" y="330" width="270" height="56" rx="10" fill="#eafaf3" stroke="#1baf7a"/>
+      <text x="175" y="353" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">场外指数基金 / ETF 联接（A 类）</text>
+      <text x="175" y="373" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">绑卡自动扣款，设好之后不用登录</text>
+
+      <rect x="330" y="330" width="270" height="56" rx="10" fill="#eafaf3" stroke="#1baf7a"/>
+      <text x="465" y="353" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">场内 ETF（券商 App）</text>
+      <text x="465" y="373" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">佣金更低，但每次都要看折溢价</text>
+    </svg>
+    <figcaption>三个判断节点里，真正难的是最后一个——它问的不是能力，是自知之明。答不准的时候，选左边那条路，成本更低。</figcaption>
+  </figure>
+
+  <p>把这一章压缩成一句可执行的话：<strong>选一只宽基指数，挑规模够大、跟踪误差够小、费率最低的那只基金，设一个每月自动扣款，然后去忙别的事。</strong>剩下的两章，是给这个方案配上安全带（第 8 章的仓位与风险）和防误操作机制（第 9、10 章的陷阱识别与纪律固化）。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="valuation-thinking.html"><span class="dir">← 上一章</span>第6章 · 估值思维</a>
+  <a class="next" href="risk-and-position-sizing.html"><span class="dir">下一章 →</span>第8章 · 风险与仓位</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>

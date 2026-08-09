@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第6章 · 估值思维 — 程序员炒股指南</title>
+<meta name="description" content="「好公司」不等于「好价格」：用 PE/PB/股息率给资产标价，建立贵与便宜的量化直觉。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 6 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 06</span>
+    <h1>估值思维</h1>
+    <p class="lede">「好公司」不等于「好价格」：用 PE/PB/股息率给资产标价，建立贵与便宜的量化直觉。</p>
+  </div>
+
+  <h2><span class="h-num">6.1</span> 估值只回答一个问题：这个价格贵不贵</h2>
+
+  <p>上一章教你判断一家公司好不好。这一章解决另一半问题——好不好和值不值，是两件互相独立的事。</p>
+
+  <p>一家净利润连续十年增长的公司，如果市场已经把未来二十年的增长全部计入了股价，你今天买进去，未来十年可能一分钱不赚。2000 年的微软是这个剧本，2021 年初的白酒也是。公司经营得很好，股东回报是零。</p>
+
+  <p>估值就是给「值不值」找一把尺子。最常用的那把叫市盈率（PE）：</p>
+
+  <pre><code>PE = 总市值 ÷ 年净利润 = 股价 ÷ 每股收益 EPS</code></pre>
+
+  <p>它的直觉是回本年限：按公司当前的赚钱速度，你付出的这笔钱几年能从利润里赚回来。PE 20 倍，就是 20 年回本。</p>
+
+  <p>把它倒过来更有用：<code>1 / PE</code> 叫盈利收益率（earnings yield），PE 20 倍等于 5%。这个数可以直接和国债收益率放在一起比。2026 年 8 月 7 日沪深 300 的 PE-TTM 是 14.4 倍，盈利收益率约 6.9%；同期 10 年期国债收益率在 1.7%–1.9% 区间。两者之差约 5 个百分点，就是市场此刻给股权风险开出的补偿价格。</p>
+
+  <p>PE 有三种口径，看数字前先看清是哪一种：</p>
+  <ul>
+    <li><strong>静态 PE</strong>：分母用上一个完整会计年度的净利润。滞后最多 15 个月，参考价值最低。</li>
+    <li><strong>PE-TTM（滚动市盈率）</strong>：分母用最近四个季度的净利润之和。最常用，默认就看它。</li>
+    <li><strong>动态 PE</strong>：分母用分析师预测的今年或明年净利润。</li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+  PE 就是用当前 QPS 估算清空队列要多久：队列长度是市值，QPS 是每年净利润。这个估算只在吞吐稳定时成立——一旦 QPS 会大幅变化，估出来的时间就毫无意义。后面 6.2 讲的两种失效，本质都是「QPS 不稳定」。
+  </div>
+
+  <div class="callout"><span class="tag">避坑</span>
+  别拿动态 PE 当锚。研报里「2027 年动态 PE 只有 15 倍」这句话，翻译过来是「假设我的预测兑现的话」。卖方分析师的盈利预测系统性偏乐观是被反复验证过的现象。看到动态 PE，先问一句：这个分母是谁给的？
+  </div>
+
+  <h2><span class="h-num">6.2</span> PE 在什么时候会骗你</h2>
+
+  <p>PE 有两种失效方式，都出在分母上。</p>
+
+  <p><strong>第一种：分母为负。</strong>亏损公司的 PE 是负数，行情软件通常直接显示为「—」。大量创新药公司、早期科技公司都处在这个状态。这不代表公司没价值，只代表这把尺子量不了它——换 PS（市销率）、看现金流、看用户和订单，都比硬算 PE 强。</p>
+
+  <p><strong>第二种：分母会剧烈波动，也就是周期股陷阱。</strong>这是整章里最反直觉的一条：对钢铁、煤炭、化工、航运、养猪这类强周期行业，<strong>低 PE 往往出现在顶部，高 PE 往往出现在底部</strong>。</p>
+
+  <p>机制很简单。周期顶部，产品涨价，利润暴增，分母被撑得极大，PE 显得极低——可那个利润是不可持续的峰值。周期底部，产品跌破成本线，利润塌到接近零甚至为负，分母极小，PE 飙到几十上百倍——而那往往才是布局的位置。你用一个「假设当前 QPS 永远维持」的模型，去量一个吞吐每年上下三倍的系统，得到的结论必然是反的。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+  判断周期股，看 PB 和历史盈利中枢，不要看当期 PE。一个粗糙但好用的替代：把分母换成「近 7–10 年的平均净利润」，用穿越了完整周期的盈利中枢做基准——这就是席勒 CAPE（周期调整市盈率）的思路，目的只有一个：把周期熨平。
+  </div>
+
+  <h2><span class="h-num">6.3</span> PB：当利润不可信时，用家底标价</h2>
+
+  <p>市净率把分母从利润换成净资产：</p>
+
+  <pre><code>PB = 总市值 ÷ 净资产（股东权益）= 股价 ÷ 每股净资产</code></pre>
+
+  <p>PB 等于 1，意味着市场恰好按账面净资产给公司标价。PB 等于 0.6，意味着市场认为公司账上那 1 块钱资产只值 6 毛。</p>
+
+  <p><strong>适合用 PB 的</strong>是银行、保险、券商、地产、钢铁这类重资产行业：资产以金融资产或实物为主，账面值相对可信，而利润受周期和拨备政策影响太大。<strong>不适合用 PB 的</strong>是软件、互联网、创新药、消费品牌——它们最值钱的东西（代码、专利、配方、品牌、用户关系）根本不在资产负债表上，PB 40 倍不说明贵，只说明这把尺子没量到关键的东西。</p>
+
+  <p>2026 年 8 月 7 日的实际数据：申万银行行业 PB 约 0.65 倍，42 家 A 股上市银行几乎全部破净（PB &lt; 1），近半数低于 0.5 倍。市场不是集体犯傻，它在为两件事定价：净资产里的坏账还没充分暴露，以及净息差收窄让 ROE 长期往下走。</p>
+
+  <p>这里有一个把三个指标咬合在一起的恒等式，值得背下来：</p>
+
+  <pre><code>PB = PE × ROE
+（市值/净资产 = 市值/净利润 × 净利润/净资产）</code></pre>
+
+  <p>代入银行的数字验证一下：PE 6.84 × ROE 约 9.5% ≈ PB 0.65。完全对得上。它的含义是：<strong>市场愿意给多少倍 PB，取决于 ROE 有多高、以及这个 ROE 能维持多久。</strong>一家 ROE 常年 25% 的公司拿到 5 倍 PB 是合理的，一家 ROE 只有 5% 的公司 PB 给到 1 倍都算贵。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+  PE、PB、ROE 是同一组数据的三个视图，像 QPS、单请求耗时、CPU 使用率——知道其中两个，第三个就被约束死了。如果你在某个网站上看到某只股票的三个数对不上，先怀疑口径（是否合并报表、是否扣非、净资产是否含少数股东权益），而不是先怀疑发现了金矿。
+  </div>
+
+  <h2><span class="h-num">6.4</span> 股息率：唯一真金白银落袋的那个数</h2>
+
+  <pre><code>股息率 = 过去 12 个月每股分红 ÷ 当前股价</code></pre>
+
+  <p>PE 和 PB 衡量的都是账面上的东西，只有股息率衡量真正打进你银行账户的现金。所以它可以最直接地和无风险利率对比——这也是「红利策略」的全部立论基础。</p>
+
+  <p>2026 年的实际数字很有说服力：10 年期国债收益率在 1.7%–1.9% 区间，中证红利指数股息率约 5%，19 家 A 股上市银行的动态股息率超过 5%。两者之差（股息率减国债收益率）叫股债利差，2026 年年中处在近十余年的极高分位。翻译成大白话：如果分红能维持，你拿到的现金回报是国债的两三倍，代价是股价会剧烈波动，而国债不会。</p>
+
+  <p>用股息率时必须盯住三件事：</p>
+  <ul>
+    <li><strong>分子是历史，不是承诺。</strong>要看这笔分红是否来自可持续的经营现金流，以及分红率（分红 ÷ 净利润）是否落在 30%–70% 的健康区间——超过 100% 就是在掏家底。</li>
+    <li><strong>高股息率可能是分母塌出来的假象。</strong>分红没变、股价腰斩，股息率照样翻倍。这种「高股息」是价值陷阱的入口，不是机会。</li>
+    <li><strong>税是真实成本。</strong>现行差别化个人所得税政策下，持股超过 1 年免征股息红利税，1 个月到 1 年按 10%，1 个月以内按 20%（以当期税务规定为准）。红利策略天生要求长期持有，频繁换手会把股息率直接砍掉两成。</li>
+  </ul>
+
+  <h2><span class="h-num">6.5</span> PEG：给增长定价</h2>
+
+  <p>为什么半导体能有 100 倍 PE，而银行只有 7 倍？因为 PE 定价的从来不是当前利润，是未来利润。PEG 就是把增长显式地写进公式里：</p>
+
+  <pre><code>PEG = PE ÷ 未来几年净利润复合增速（取百分数的数值）</code></pre>
+
+  <p>一家 PE 30 倍、未来三年利润增速 30% 的公司，PEG = 1；一家 PE 10 倍、增速 5% 的公司，PEG = 2。前者数字上「更贵」，但可能反而更合理。彼得·林奇给的拇指规则是：PEG 小于 1 偏便宜，大于 2 就需要非常强的理由。注意这是拇指规则，不是公式。</p>
+
+  <p>PEG 有三个坑：</p>
+  <ul>
+    <li><strong>分母是预测，误差极大</strong>，而且预测增速越高兑现概率越低。40% 增速维持五年意味着净利润变成 5.4 倍——先问这个行业的天花板够不够高。</li>
+    <li><strong>戴维斯双杀。</strong>增速一旦从 40% 掉到 15%，市场给的 PE 下修、EPS 增长放缓，股价被杀两次。这就是高 PE 成长股跌起来能跌掉七八成的原因。</li>
+    <li><strong>周期股和金融股不适用</strong>，它们的「增速」本身就是周期位置的函数。</li>
+  </ul>
+
+  <p>把四把尺子放在一起：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>指标</th><th>公式</th><th>直觉</th><th>最适合</th><th>会失效于</th></tr>
+    <tr><td>PE</td><td>市值 ÷ 净利润</td><td>按当前盈利几年回本</td><td>盈利稳定的成熟行业</td><td>亏损公司、强周期行业</td></tr>
+    <tr><td>PB</td><td>市值 ÷ 净资产</td><td>账面家底打几折</td><td>银行、保险、地产、钢铁</td><td>软件、品牌等轻资产公司</td></tr>
+    <tr><td>股息率</td><td>每股分红 ÷ 股价</td><td>到手的现金回报率</td><td>高分红成熟公司、红利指数</td><td>不分红的成长股；分红不可持续时</td></tr>
+    <tr><td>PEG</td><td>PE ÷ 利润增速</td><td>为增长付的溢价合不合理</td><td>增长可预测的成长股</td><td>周期股、金融股、预测不可靠时</td></tr>
+  </table>
+  </div>
+
+  <h2><span class="h-num">6.6</span> 估值百分位：把绝对值换成相对读数</h2>
+
+  <p>PE 14 倍算贵还是便宜？孤立地问，没有答案。有意义的问法是：这个读数在它自己的历史分布里排在什么位置。</p>
+
+  <p>做法很机械：取这个指数（或个股）过去 5 年、10 年每个交易日的 PE，排序，看今天的值落在第几百分位。低于 20% 分位算低估区，20%–80% 是合理区，高于 80% 是高估区。各家行情软件里的「估值温度计」就是这个东西。</p>
+
+  <figure>
+    <p class="fig-title">图 6-1 · 指数估值温度计：沪深 300 近十年 PE-TTM 与分位带</p>
+    <svg viewBox="0 0 720 312" role="img" aria-label="沪深300近十年PE-TTM走势图，画出20%、50%、80%分位带，当前值14.4倍处于87%分位的高估区">
+      <rect x="70" y="30" width="620" height="90" fill="#fdf1e8"/>
+      <rect x="70" y="120" width="620" height="90" fill="#fcfcfb"/>
+      <rect x="70" y="210" width="620" height="60" fill="#e9f6f1"/>
+      <line x1="70" y1="240" x2="690" y2="240" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="180" x2="690" y2="180" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="60" x2="690" y2="60" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="70" y1="210" x2="690" y2="210" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="5 4"/>
+      <line x1="70" y1="171" x2="690" y2="171" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="5 4"/>
+      <line x1="70" y1="120" x2="690" y2="120" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="5 4"/>
+      <line x1="70" y1="30" x2="70" y2="270" stroke="#c3c2b7" stroke-width="1"/>
+      <line x1="70" y1="270" x2="690" y2="270" stroke="#c3c2b7" stroke-width="1"/>
+      <polyline fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"
+        points="70,180 98,195 126,165 176,102 187,75 215,180 237,240 254,165 293,180 320,135 354,45 398,135 448,222 481,189 520,225 559,165 592,156 629,141 660,107"/>
+      <circle cx="660" cy="107" r="5" fill="#2a78d6"/>
+      <text x="70" y="20" font-family="system-ui, sans-serif" font-size="13" fill="#898781">PE-TTM（倍）</text>
+      <text x="62" y="244" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">10</text>
+      <text x="62" y="184" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">12</text>
+      <text x="62" y="124" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">14</text>
+      <text x="62" y="64" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#898781">16</text>
+      <text x="80" y="49" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">高估区（80% 分位以上）</text>
+      <text x="80" y="135" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">合理区</text>
+      <text x="80" y="229" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">低估区（20% 分位以下）</text>
+      <text x="648" y="93" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">2026-08 · 14.4 倍 · 87% 分位</text>
+      <text x="70" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2016</text>
+      <text x="181" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2018</text>
+      <text x="293" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2020</text>
+      <text x="404" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2022</text>
+      <text x="515" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2024</text>
+      <text x="627" y="290" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">2026</text>
+    </svg>
+    <figcaption>温度计的用法不是预测，是定位：读数落在低估区就该多买，落在高估区就该停止加仓。走势曲线为示意，末端的当前值 14.4 倍与 87% 分位取自 2026-08-07 市值加权口径实际数据。</figcaption>
+  </figure>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+  这就是监控告警的思路。你不会给一个服务写死「响应时间超过 200 毫秒就报警」，你会看 p50/p95 相对基线漂移了多少。估值百分位就是给市场设的 p20/p80 告警线——它不预测未来，只告诉你现在偏离常态多远。而且和告警一样：读数进了红区不意味着立刻宕机，它意味着你该停止扩容、准备预案。
+  </div>
+
+  <p>这套读数的实操含义非常直接：低分位区加大定投或分批加仓，高分位区停止加仓、甚至分批止盈。第 7 章的定投止盈策略，整个建在这一个指标上。</p>
+
+  <div class="callout"><span class="tag">避坑</span>
+  <strong>口径陷阱。</strong>同一个指数、同一天，不同算法给出的分位可以完全相反。2026 年 8 月初的沪深 300：市值加权 PE-TTM 是 14.4 倍、近十年 87% 分位（偏高）；成分股 PE 中位数口径是 23.4 倍、44% 分位（中性偏低）。差异来自市值加权被少数超大权重股（银行、白酒）主导。<strong>固定一个数据源、一个口径，不同网站的数字绝不能混用。</strong><br>
+  <strong>回望窗口陷阱。</strong>用 5 年还是 10 年窗口，结论可能相反。更根本的是，历史分位隐含「市场结构没变」这个假设——当指数的行业构成发生大迁移，十年前的 PE 和今天的 PE 已经不是同一把尺子在量同一个东西了。
+  </div>
+
+  <h2><span class="h-num">6.7</span> 所有估值指标底下的同一个公式</h2>
+
+  <p>PE、PB、PEG、股息率都是拇指规则。它们底下站着同一个东西：现金流折现（DCF）。</p>
+
+  <p>一项资产的价值，等于它未来能产生的全部自由现金流，各自按一个折现率折回今天，再加总：</p>
+
+  <pre><code>V = Σ  CF_t / (1 + r)^t</code></pre>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+  折现就是给未来的钱乘一个随时间衰减的权重因子 <code>(1+r)^-t</code>。这个数学形状你见过很多次：缓存 TTL 的衰减、指数退避的重试间隔、滑动平均里的指数加权——都是几何衰减，<code>r</code> 就是衰减速率。DCF 不神秘，它只是一个带衰减权重的求和。
+  </div>
+
+  <p>你不需要真的手算 DCF。它的参数敏感度太高——改一个永续增长率假设，估值能翻倍，实务中大量 DCF 模型是先有结论再倒推参数。但你必须懂它的两个推论，因为它们解释了市场上最大的一类涨跌。</p>
+
+  <p><strong>推论一：利率是所有资产的引力。</strong>折现率 <code>r</code> 里装着无风险利率。<code>r</code> 上升，所有未来的现金流都被压得更矮，所有资产的现值一起下降——和公司经营好不好毫无关系。这就是为什么央行加息的消息一出，好公司坏公司一起跌。</p>
+
+  <figure>
+    <p class="fig-title">图 6-2 · 折现率变化如何压扁所有未来现金流</p>
+    <svg viewBox="0 0 720 292" role="img" aria-label="两组柱状图对比：每年100元连续十年的现金流，在5%折现率下现值合计772元，在10%折现率下现值合计614元">
+      <line x1="55" y1="120" x2="690" y2="120" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 4"/>
+      <line x1="55" y1="250" x2="690" y2="250" stroke="#c3c2b7" stroke-width="1"/>
+      <rect x="60" y="126.2" width="22" height="123.8" rx="3" fill="#2a78d6"/>
+      <rect x="86" y="132.1" width="22" height="117.9" rx="3" fill="#2a78d6"/>
+      <rect x="112" y="137.7" width="22" height="112.3" rx="3" fill="#2a78d6"/>
+      <rect x="138" y="143.0" width="22" height="107.0" rx="3" fill="#2a78d6"/>
+      <rect x="164" y="148.1" width="22" height="101.9" rx="3" fill="#2a78d6"/>
+      <rect x="190" y="153.0" width="22" height="97.0" rx="3" fill="#2a78d6"/>
+      <rect x="216" y="157.6" width="22" height="92.4" rx="3" fill="#2a78d6"/>
+      <rect x="242" y="162.0" width="22" height="88.0" rx="3" fill="#2a78d6"/>
+      <rect x="268" y="166.1" width="22" height="83.9" rx="3" fill="#2a78d6"/>
+      <rect x="294" y="170.2" width="22" height="79.8" rx="3" fill="#2a78d6"/>
+      <rect x="415" y="131.8" width="22" height="118.2" rx="3" fill="#eb6834"/>
+      <rect x="441" y="142.6" width="22" height="107.4" rx="3" fill="#eb6834"/>
+      <rect x="467" y="152.4" width="22" height="97.6" rx="3" fill="#eb6834"/>
+      <rect x="493" y="161.2" width="22" height="88.8" rx="3" fill="#eb6834"/>
+      <rect x="519" y="169.3" width="22" height="80.7" rx="3" fill="#eb6834"/>
+      <rect x="545" y="176.7" width="22" height="73.3" rx="3" fill="#eb6834"/>
+      <rect x="571" y="183.3" width="22" height="66.7" rx="3" fill="#eb6834"/>
+      <rect x="597" y="189.3" width="22" height="60.7" rx="3" fill="#eb6834"/>
+      <rect x="623" y="194.9" width="22" height="55.1" rx="3" fill="#eb6834"/>
+      <rect x="649" y="199.8" width="22" height="50.2" rx="3" fill="#eb6834"/>
+      <text x="188" y="36" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="650" fill="#0b0b0b">折现率 5%</text>
+      <text x="188" y="58" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">现值合计 772 元</text>
+      <text x="543" y="36" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="650" fill="#0b0b0b">折现率 10%</text>
+      <text x="543" y="58" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">现值合计 614 元</text>
+      <text x="55" y="112" font-family="system-ui, sans-serif" font-size="13" fill="#898781">名义现金流 100 元 / 年</text>
+      <text x="374" y="182" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">折现率 ↑</text>
+      <path d="M352 200 L392 200 M384 195 L392 200 L384 205" fill="none" stroke="#52514e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="71" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 1 年</text>
+      <text x="175" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 5 年</text>
+      <text x="305" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 10 年</text>
+      <text x="426" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 1 年</text>
+      <text x="530" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 5 年</text>
+      <text x="660" y="270" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">第 10 年</text>
+    </svg>
+    <figcaption>同样是每年 100 元、连续十年，折现率从 5% 升到 10%，现值合计从 772 元降到 614 元，缩水两成——而这十年的现金流一分钱没少。越靠后的柱子被压得越狠，这就是「久期」。</figcaption>
+  </figure>
+
+  <p><strong>推论二：越是「远期兑现」的资产，对利率越敏感。</strong>看图 6-2 的第 10 根柱子：折现率从 5% 到 10%，它从 61 元掉到 39 元，缩水 37%；第 1 根柱子却只从 95 元掉到 91 元。所以利润集中在遥远未来的成长股，比现在就在稳定分红的公用事业股对利率敏感得多。债券里管这个叫久期，股票里是同一个道理——2022 年那轮全球加息中成长股跌得远比价值股惨，根源就在这。</p>
+
+  <p>反过来看也成立：2026 年 10 年期国债只有 1.7% 左右这件事本身，就在为 A 股的估值提供底部支撑——折现率的地板降下来了，同样的现金流就值更多的钱。</p>
+
+  <h2><span class="h-num">6.8</span> 跨行业比 PE 是伪命题</h2>
+
+  <p>最后一条，也是新手最容易犯的错：拿两个不同行业的 PE 直接比大小。</p>
+
+  <figure>
+    <p class="fig-title">图 6-3 · 各行业 PE-TTM 当前值与常见区间（申万一级行业，2026-08-07）</p>
+    <svg viewBox="0 0 720 386" role="img" aria-label="九个行业的PE-TTM横向对比：银行6.8倍、煤炭18倍、钢铁16.4倍、公用事业19.4倍、食品饮料19.9倍、医药生物30倍、计算机47.5倍、电子76.1倍、半导体121倍，横条表示近十年常见区间">
+      <rect x="132" y="15" width="40" height="9" rx="3" fill="#cfe0f5"/>
+      <text x="180" y="24" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">近十年常见区间</text>
+      <circle cx="298" cy="20" r="5" fill="#2a78d6"/>
+      <text x="310" y="24" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">当前 PE-TTM</text>
+      <line x1="163" y1="52" x2="163" y2="348" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="258" y1="52" x2="258" y2="348" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="354" y1="52" x2="354" y2="348" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="480" y1="52" x2="480" y2="348" stroke="#e1e0d9" stroke-width="1"/>
+      <line x1="576" y1="52" x2="576" y2="348" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="163" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">5</text>
+      <text x="258" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">10</text>
+      <text x="354" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">20</text>
+      <text x="480" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">50</text>
+      <text x="576" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">100</text>
+      <line x1="132" y1="348" x2="640" y2="348" stroke="#c3c2b7" stroke-width="1"/>
+
+      <rect x="132" y="66" width="95" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="206" cy="72" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="77" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">银行</text>
+      <text x="650" y="77" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">6.8</text>
+
+      <rect x="192" y="98" width="192" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="339" cy="104" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="109" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">煤炭</text>
+      <text x="650" y="109" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">18.0</text>
+
+      <rect x="227" y="130" width="222" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="326" cy="136" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="141" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">钢铁</text>
+      <text x="650" y="141" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">16.4</text>
+
+      <rect x="305" y="162" width="79" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="349" cy="168" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="173" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">公用事业</text>
+      <text x="650" y="173" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">19.4</text>
+
+      <rect x="339" y="194" width="126" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="353" cy="200" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="205" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">食品饮料</text>
+      <text x="650" y="205" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">19.9</text>
+
+      <rect x="384" y="226" width="109" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="409" cy="232" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="237" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">医药生物</text>
+      <text x="650" y="237" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">30.0</text>
+
+      <rect x="449" y="258" width="112" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="473" cy="264" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="269" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">计算机</text>
+      <text x="650" y="269" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">47.5</text>
+
+      <rect x="384" y="290" width="161" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="538" cy="296" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="301" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">电子</text>
+      <text x="650" y="301" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">76.1</text>
+
+      <rect x="480" y="322" width="151" height="12" rx="3" fill="#cfe0f5"/>
+      <circle cx="602" cy="328" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="1.5"/>
+      <text x="124" y="333" text-anchor="end" font-family="system-ui, sans-serif" font-size="13.5" fill="#0b0b0b">半导体（二级）</text>
+      <text x="650" y="333" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">121</text>
+
+      <text x="386" y="372" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#898781">PE-TTM（对数刻度）</text>
+    </svg>
+    <figcaption>横轴是对数刻度，否则银行那一端会被压成一个点。圆点是 2026-08-07 的实际读数；横条是各行业近十年常见的波动区间，用来示意「每个行业有自己的合理带」——注意钢铁、煤炭这类周期行业的带子宽得离谱，这正是 6.2 说的周期陷阱在图上的样子。</figcaption>
+  </figure>
+
+  <p>银行 6.8 倍和电子 76 倍，差了 11 倍。这不叫「银行便宜、电子贵」。这三个属性不同，才是差距的来源：</p>
+
+  <ul>
+    <li><strong>增长速度不同。</strong>电子行业在扩张期净利润能翻倍，银行的利润增速常年个位数。PE 本来就是对未来增长的预付款。</li>
+    <li><strong>盈利质量与可持续性不同。</strong>公用事业的现金流像收租，稳定可预测；半导体的利润随周期上下三倍。同样一块钱利润，稳定的那块钱更值钱。</li>
+    <li><strong>杠杆与尾部风险不同。</strong>银行是高杠杆生意，资产端一旦出大问题，净资产会被直接击穿。低 PE 里有一部分是对这个尾部风险的补偿，不是白送的折扣。</li>
+  </ul>
+
+  <p>所以估值指标只有两种正确用法：<strong>同行业横向比</strong>（招行对兴业，宁德对比亚迪），以及<strong>和它自己的历史纵向比</strong>（也就是 6.6 的分位）。跨行业直接比 PE，等于拿一个批处理任务的 P99 耗时和一个实时接口的 P99 耗时比大小——单位一样，含义完全不同。</p>
+
+  <p>把这一章压成三句话：<strong>估值不是预测工具，是定价工具</strong>——它不告诉你明天涨不涨，只告诉你此刻付的价钱对应着什么样的隐含假设。<strong>没有一个指标能单独用</strong>——PE、PB、ROE、股息率互相咬合，孤立看任何一个都会被骗。<strong>最有操作价值的读数是分位，不是绝对值</strong>——你要做的不是算出「内在价值」，而是判断现在是该多买还是该少买。</p>
+
+  <p>下一章把这个判断落地：对绝大多数人来说，最好的执行方式不是精挑个股，而是用低成本指数基金加定投，把估值分位变成一条可以自动执行的规则。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="reading-financial-statements.html"><span class="dir">← 上一章</span>第5章 · 财报三张表</a>
+  <a class="next" href="index-funds-and-dca.html"><span class="dir">下一章 →</span>第7章 · 指数基金与定投</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>

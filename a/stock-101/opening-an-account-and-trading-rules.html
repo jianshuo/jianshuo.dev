@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第3章 · 开户与交易规则 — 程序员炒股指南</title>
+<meta name="description" content="从开户到下第一笔单的完整实操，以及 A 股独有的 T+1、涨跌停、税费这些「协议规范」。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 3 / 10 章</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">CHAPTER 03</span>
+    <h1>开户与交易规则</h1>
+    <p class="lede">从开户到下第一笔单的完整实操，以及 A 股独有的 T+1、涨跌停、税费这些「协议规范」。</p>
+  </div>
+
+  <p>上一章讲的是交易所内部那台撮合引擎。这一章讲的是你怎么接进去，以及接进去之后必须遵守的协议。</p>
+
+  <p>把 A 股当成一个开放平台：开户是注册账号并拿 API key，券商是你唯一能选的 SDK 供应商，佣金是每次调用的计费单价，而 T+1、涨跌停、印花税是平台侧写死的限流、熔断和交易税。这些规则没有商量余地，但费率有——而且大部分新手在这一步就默默多付了三倍的钱。</p>
+
+  <h2><span class="h-num">3.1</span> 开户：15 分钟，全程线上</h2>
+
+  <p>2026 年开股票账户不需要去营业部。券商 App 上传证件、做风险测评、录一段人脸识别，全程 15 分钟左右。交易日白天提交的申请，多数当天审核通过；晚上或周末提交的，顺延到下一个交易日。</p>
+
+  <p>需要准备的东西只有两样：<strong>本人二代身份证</strong>，和一张<strong>一类银行储蓄卡</strong>。注意一个高频翻车点——开户填的手机号，要和银行卡的预留手机号一致，否则三方存管那一步绑不上。</p>
+
+  <figure>
+    <p class="fig-title">图 3-1 · 从零到第一笔委托的五步流水线</p>
+    <svg viewBox="0 0 720 225" role="img" aria-label="开户五步流程图：先谈佣金、线上开户、三方存管、银证转账、首笔委托，每步标注耗时，并高亮佣金必须在开户前谈定这一避坑点">
+      <!-- boxes -->
+      <rect x="19" y="44" width="118" height="78" rx="10" fill="#eef4fc" stroke="#2a78d6" stroke-width="1.5"/>
+      <text x="31" y="66" font-family="system-ui, sans-serif" font-size="13" fill="#898781">STEP 1</text>
+      <text x="31" y="90" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">谈佣金</text>
+      <text x="31" y="110" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">拿专属链接</text>
+
+      <rect x="160" y="44" width="118" height="78" rx="10" fill="#ffffff" stroke="#dcdbd3" stroke-width="1.5"/>
+      <text x="172" y="66" font-family="system-ui, sans-serif" font-size="13" fill="#898781">STEP 2</text>
+      <text x="172" y="90" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">线上开户</text>
+      <text x="172" y="110" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">证件+人脸</text>
+
+      <rect x="301" y="44" width="118" height="78" rx="10" fill="#ffffff" stroke="#dcdbd3" stroke-width="1.5"/>
+      <text x="313" y="66" font-family="system-ui, sans-serif" font-size="13" fill="#898781">STEP 3</text>
+      <text x="313" y="90" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">三方存管</text>
+      <text x="313" y="110" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">绑一类卡</text>
+
+      <rect x="442" y="44" width="118" height="78" rx="10" fill="#ffffff" stroke="#dcdbd3" stroke-width="1.5"/>
+      <text x="454" y="66" font-family="system-ui, sans-serif" font-size="13" fill="#898781">STEP 4</text>
+      <text x="454" y="90" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">银证转账</text>
+      <text x="454" y="110" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">钱进账户</text>
+
+      <rect x="583" y="44" width="118" height="78" rx="10" fill="#ffffff" stroke="#dcdbd3" stroke-width="1.5"/>
+      <text x="595" y="66" font-family="system-ui, sans-serif" font-size="13" fill="#898781">STEP 5</text>
+      <text x="595" y="90" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">首笔委托</text>
+      <text x="595" y="110" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">100 股起</text>
+
+      <!-- arrows -->
+      <path d="M141 83 H151" stroke="#c3c2b7" stroke-width="2"/><path d="M151 79 L158 83 L151 87 Z" fill="#c3c2b7"/>
+      <path d="M282 83 H292" stroke="#c3c2b7" stroke-width="2"/><path d="M292 79 L299 83 L292 87 Z" fill="#c3c2b7"/>
+      <path d="M423 83 H433" stroke="#c3c2b7" stroke-width="2"/><path d="M433 79 L440 83 L433 87 Z" fill="#c3c2b7"/>
+      <path d="M564 83 H574" stroke="#c3c2b7" stroke-width="2"/><path d="M574 79 L581 83 L574 87 Z" fill="#c3c2b7"/>
+
+      <!-- durations -->
+      <text x="78" y="146" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">10 分钟</text>
+      <text x="219" y="146" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">约 15 分钟</text>
+      <text x="360" y="146" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">随开户完成</text>
+      <text x="501" y="146" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">交易日即时</text>
+      <text x="642" y="146" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">下一交易日</text>
+
+      <!-- warning -->
+      <rect x="19" y="164" width="560" height="46" rx="10" fill="#fdf3ea" stroke="#f5dfc9"/>
+      <text x="33" y="184" font-family="system-ui, sans-serif" font-size="13" fill="#b25419">避坑：佣金只在开户前可谈，用客户经理给的专属链接或二维码开户；</text>
+      <text x="33" y="202" font-family="system-ui, sans-serif" font-size="13" fill="#b25419">开完户再想调低，多数券商要重新走申请，周期以周计。</text>
+    </svg>
+    <figcaption>整条流水线里唯一有议价空间的是第一步，而它恰恰发生在你打开 App 之前。</figcaption>
+  </figure>
+
+  <p>开完户你拿到的默认权限只有主板。创业板、科创板、北交所、港股通都要单独开通，各有资金和经验门槛：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>板块 / 业务</th><th>开通门槛（2026 现行，以券商实际审核为准）</th></tr>
+    <tr><td>沪深主板</td><td>开户即可交易</td></tr>
+    <tr><td>创业板</td><td>24 个月交易经验 + 申请前 20 个交易日日均资产 ≥ 10 万元 + 知识测评</td></tr>
+    <tr><td>科创板</td><td>24 个月交易经验 + 前 20 个交易日日均资产 ≥ 50 万元 + 知识测评</td></tr>
+    <tr><td>北交所</td><td>24 个月交易经验 + 前 20 个交易日日均资产 ≥ 50 万元 + 知识测评</td></tr>
+    <tr><td>港股通</td><td>前 20 个交易日日均资产 ≥ 50 万元 + 知识测评（标的只有港股，不含美股）</td></tr>
+    <tr><td>融资融券</td><td>24 个月 + 50 万元。本书的建议是：别开。理由见第 8 章</td></tr>
+  </table>
+  </div>
+
+  <p>账户数量也有上限：一个自然人在沪市、深市各最多开 3 个 A 股账户，全国统一挂在你唯一的一码通下面。别被地推的开户礼品带着开一堆，账户多了对账麻烦，还容易在某个低费率户之外留下高费率的僵尸户。</p>
+
+  <h2><span class="h-num">3.2</span> 佣金：整个流程里唯一由你定价的参数</h2>
+
+  <p>A 股的交易成本由三块组成，其中只有一块可以谈：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>项目</th><th>费率</th><th>方向</th><th>能否商量</th></tr>
+    <tr><td>印花税</td><td>成交金额的万分之 5</td><td>卖出单边</td><td>不能，国家收</td></tr>
+    <tr><td>过户费</td><td>成交金额的万分之 0.1</td><td>买卖双边</td><td>不能，中登收</td></tr>
+    <tr><td>券商佣金</td><td>默认约万 2.5～万 3，每笔最低 5 元</td><td>买卖双边</td><td><strong>能谈</strong></td></tr>
+  </table>
+  </div>
+
+  <p>默认费率是券商给「自己走进来的人」的标价。找券商的线上客户经理谈，拿一个专属开户链接，普遍能谈到万 1 附近；资金量大或愿意承诺交易量的，还能再低一点。这不是灰产，是行业公开的价格歧视：券商的综合成本线大约在万 0.5～万 0.8（佣金里已经包含了要上交的规费，也就是交易所经手费和证监会证管费，合计约万 0.5），万 1 对券商仍有毛利，所以他们愿意给。</p>
+
+  <p>另一个被低估的条款是「免五」，即取消每笔最低 5 元的收费下限。费率再低，只要有 5 元地板，小单子的实际费率就会被地板顶穿：</p>
+
+  <ul>
+    <li>按万 1 计费，一笔 2000 元的定投，理论佣金 0.2 元，按 5 元地板收 → 实际费率 <strong>万 25</strong>，是名义费率的 25 倍。</li>
+    <li>同样万 1，要让佣金自然超过 5 元，单笔金额需达到 5 万元。也就是说，5 万元以下的每一笔单子，你付的都是那个地板价。</li>
+  </ul>
+
+  <p>如果你打算每月定投两三千块，长期下来「免五」比费率本身更值钱。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    券商是你接入交易所的 SDK 兼 API gateway：它不决定撮合逻辑，只负责把你的委托转发进去，然后按调用次数收费。所以选券商本质上是在选一个低单价、稳定不宕机的服务商——行情延迟、下单成功率、极端行情下 App 会不会崩，和费率一样重要。功能花哨的 App 不加分，你真正会用的接口只有三个：查行情、下委托、查持仓。
+  </div>
+
+  <div class="callout"><span class="tag">避坑</span>
+    警惕「万 0.5 保本价」「零佣金」这类宣传。低于成本线的报价要么附带你达不到的资金/交易量条件，要么后续悄悄调回。同样，任何要你把钱转到「非银行三方存管账户」的所谓低佣渠道，一律不碰——正规券商的入金路径只有一条，就是下一节讲的银证转账。
+  </div>
+
+  <h2><span class="h-num">3.3</span> 三方存管：为什么券商倒了你的资产还在</h2>
+
+  <p>开户时那一步「绑定三方存管」不是走形式，它是整个 A 股账户体系的安全基石。绑完之后，你的资产被拆成三份，由三个互不隶属的机构分别持有：</p>
+
+  <ul>
+    <li><strong>钱在银行。</strong>你的资金存放在存管银行的客户资金账户里，券商只能发起划转指令，无法直接动用。</li>
+    <li><strong>股票在中登。</strong>持仓记录登记在中国结算的中央账本上（第 1 章讲过），券商 App 里显示的持仓只是这份账本的一个视图。</li>
+    <li><strong>券商只做通道。</strong>它负责报单、清算对接、收佣金，两头的资产它都不持有。</li>
+  </ul>
+
+  <p>所以券商破产清算时，你的股票和资金不属于券商的破产财产。历史上券商被接管、被合并的案例中，客户资产都完成了平移。这也是为什么 A 股不存在「券商跑路」这种事——能跑的那类平台，从来就不在这个体系里。</p>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    三方存管就是最经典的权限分离（separation of duties）：资金的持有方、资产的记账方、指令的发起方是三个独立主体，任何单点被攻破或宕机，都拿不走完整的资产。券商拥有「写委托」的权限，但没有「转出资金」的权限——转出必须由你本人发起，经存管银行确认。设计安全系统的人看到这个结构会觉得很熟悉。
+  </div>
+
+  <p>日常操作上你只需要知道：入金叫「银证转账」，从绑定的那张银行卡转进证券账户；出金反向操作，只能转回同一张卡。转账在交易日的规定时段内实时到账（通常 8:30–16:00 前后，各家略有差异），非交易时间发起会排到下一个交易日。</p>
+
+  <h2><span class="h-num">3.4</span> 交易时段与委托单位</h2>
+
+  <p>A 股一天的完整时间表如下（北京时间，周一至周五，法定节假日休市）：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>时段</th><th>名称</th><th>要点</th></tr>
+    <tr><td>9:15–9:25</td><td>开盘集合竞价</td><td>9:15–9:20 可撤单，9:20–9:25 <strong>不可撤单</strong>；9:25 一次性撮合出开盘价</td></tr>
+    <tr><td>9:25–9:30</td><td>过渡</td><td>接受申报但不撮合，订单排队等开盘</td></tr>
+    <tr><td>9:30–11:30</td><td>上午连续竞价</td><td>逐笔实时撮合</td></tr>
+    <tr><td>13:00–14:57</td><td>下午连续竞价</td><td>逐笔实时撮合</td></tr>
+    <tr><td>14:57–15:00</td><td>收盘集合竞价</td><td>撮合出收盘价，只接受限价申报</td></tr>
+    <tr><td>15:05–15:30</td><td>盘后固定价格交易</td><td>按当日收盘价成交，不能自己报价。2026 年 7 月 6 日起从双创板扩容到全市场 A 股及沪深 ETF、LOF、REITs</td></tr>
+  </table>
+  </div>
+
+  <p>委托数量的规则是：买入以 <strong>100 股起、1 股递增</strong>，可以报 101 股、156 股，但不能报 99 股；卖出同样 100 股起 1 股递增，唯一的例外是持仓不足 100 股的零股（比如送股后剩的 37 股），必须一次性全部卖出。</p>
+
+  <p>委托类型上，新手只需要用限价单。市价单在 A 股有多种变体（对手方最优、本方最优、最优五档即时成交剩余撤销等），本质都是「不指定价格立刻成交」，在流动性差的票上滑点可能很难看。第 2 章讲过原因，这里只给结论：<strong>永远带上 price 参数</strong>。</p>
+
+  <h2><span class="h-num">3.5</span> T+1：交易所给你加的限流</h2>
+
+  <p>A 股实行 T+1 交割：<strong>今天买入的股票，明天开盘后才能卖出。</strong>这条规则有两个容易搞混的细节：</p>
+
+  <ul>
+    <li><strong>股票是 T+1，资金是 T+0 可用、T+1 可取。</strong>今天卖出股票拿到的钱，当天就能拿去买别的股票，但要转回银行卡得等到下一个交易日。</li>
+    <li><strong>T+1 锁的是「今天买进来的那部分」。</strong>如果你昨天就持有 1000 股，今天可以正常卖掉这 1000 股；今天新买的 500 股，要明天才解锁。</li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    T+1 是交易所在协议层做的 rate limiting：它不禁止你下单，只是给「买入 → 卖出」这条路径强加了一个最小冷却时间。写自动化策略的人必须把它写进约束条件——回测框架如果默认允许当日买入当日卖出，跑出来的收益曲线全是假的，因为策略在偷偷使用一条现实中不存在的通路。这是 A 股量化最常见的回测泄漏之一，和在训练集里混进了未来数据是同一类错误。
+  </div>
+
+  <p>T+1 对普通投资者的真实含义是：<strong>你没有日内纠错的机会。</strong>买错了，就得扛一晚上的隔夜风险，第二天开盘价由 9:25 的集合竞价决定，可能直接跳空低开。有人用「底仓做 T」绕过这个限制——手里先有 1000 股，当天先卖 1000 股、低位再买回 1000 股，仓位不变但赚了一次差价。机制上成立，但它要求你在同一天里两次判断对短期方向，扣掉双边成本后是一个胜率不足、成本确定的游戏。知道有这回事就行，不必去练。</p>
+
+  <h2><span class="h-num">3.6</span> 涨跌停：价格的上下界，不是暂停键</h2>
+
+  <p>每个交易日开盘前，交易所会以昨日收盘价为基准算出当天的价格区间，所有委托价格必须落在区间内，超出的直接被系统拒绝。不同板块的宽度不同：</p>
+
+  <ul>
+    <li><strong>沪深主板 ±10%。</strong>其中风险警示股票（ST、*ST）自 <strong>2026 年 7 月 6 日</strong>起由原来的 ±5% 放宽到 ±10%，与主板普通股票拉平——这意味着 ST 股的单日波动空间直接翻了一倍。</li>
+    <li><strong>创业板、科创板 ±20%</strong>（这两个板块的 ST 股仍维持 ±20%）。</li>
+    <li><strong>北交所 ±30%。</strong></li>
+    <li><strong>新股上市前 5 个交易日不设涨跌幅限制</strong>，但盘中较开盘价首次涨跌达 30%、60% 时分别临时停牌 10 分钟。第 6 个交易日起恢复所在板块的常规限制。</li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+    涨跌停是对成交价做 <code>clamp(price, prev × 0.9, prev × 1.1)</code>，不是熔断——撮合引擎照常运行，只是价格不能越界。关键在于：<strong>限幅限住的是价格，限不住订单堆积。</strong>跌停时买盘为零、卖单堆成山，队列还在按时间优先排，只是没有对手方。这时候你的止损逻辑恰好失效了——你写的降级策略，在系统真正过载的那一刻正好不可用。这是任何依赖「跌到某价就卖出」的方案都必须先想清楚的失败模式。
+  </div>
+
+  <p>所以涨跌停的实际体验是不对称的两种「卡住」：</p>
+
+  <ul>
+    <li><strong>一字涨停买不到。</strong>开盘就封在涨停价，买一档挂着几十万手封单，时间优先意味着你 9:25 之前没排进去就基本没戏。追涨停本质上是在抢一个几乎不可能抢到的队列位置。</li>
+    <li><strong>连续跌停卖不掉。</strong>这才是真正的风险。爆雷股连续跌停期间流动性归零，账面上每天 −10%，但你一股也出不去。仓位管理必须在买入之前做，不能指望事后止损——这一点第 8 章会展开。</li>
+  </ul>
+
+  <figure>
+    <p class="fig-title">图 3-2 · A 股与美股的两处协议差异</p>
+    <svg viewBox="0 0 720 362" role="img" aria-label="上半部分为时间轴，对比 A 股 T+1 持仓当日锁定与美股 T+0 当日可卖；下半部分为价格带对比，A 股主板正负 10%、创业板科创板正负 20%、北交所正负 30%，美股无涨跌幅限制">
+      <text x="8" y="18" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">① T+1 vs T+0：买入之后多久能卖</text>
+
+      <text x="8" y="53" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">A 股</text>
+      <rect x="160" y="36" width="270" height="22" rx="4" fill="#f0efec" stroke="#c3c2b7" stroke-dasharray="4 3"/>
+      <text x="295" y="52" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">持仓锁定，当日不可卖出</text>
+      <rect x="432" y="36" width="258" height="22" rx="4" fill="#e6f4e6" stroke="#0ca30c"/>
+      <text x="561" y="52" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">次日开盘起可卖出</text>
+
+      <text x="8" y="85" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">美股</text>
+      <rect x="160" y="68" width="530" height="22" rx="4" fill="#e6f4e6" stroke="#0ca30c"/>
+      <text x="425" y="84" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">买入后当日即可卖出，日内可反复交易</text>
+
+      <path d="M100 100 H700" stroke="#c3c2b7" stroke-width="1.5"/>
+      <path d="M160 100 V108 M330 100 V108 M430 100 V108" stroke="#c3c2b7" stroke-width="1.5"/>
+      <text x="160" y="124" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">D 日 9:30 买入</text>
+      <text x="330" y="124" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">D 日收盘</text>
+      <text x="437" y="124" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">D+1 日开盘</text>
+
+      <path d="M8 145 H712" stroke="#e1e0d9" stroke-width="1"/>
+      <text x="8" y="172" font-family="system-ui, sans-serif" font-size="15" fill="#0b0b0b">② 价格挡板：涨跌停 vs 无涨跌幅</text>
+
+      <path d="M372 190 V320" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="372" y="186" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">昨收</text>
+
+      <text x="8" y="214" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">主板（含 ST）</text>
+      <rect x="295" y="198" width="77" height="22" fill="#e6f4e6" stroke="#0ca30c"/>
+      <rect x="372" y="198" width="77" height="22" fill="#fae9e9" stroke="#d03b3b"/>
+      <text x="289" y="214" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">跌停 −10%</text>
+      <text x="455" y="214" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">涨停 +10%</text>
+
+      <text x="8" y="246" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">创业板 / 科创板</text>
+      <rect x="219" y="230" width="153" height="22" fill="#e6f4e6" stroke="#0ca30c"/>
+      <rect x="372" y="230" width="153" height="22" fill="#fae9e9" stroke="#d03b3b"/>
+      <text x="213" y="246" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">−20%</text>
+      <text x="531" y="246" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">+20%</text>
+
+      <text x="8" y="278" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">北交所</text>
+      <rect x="142" y="262" width="230" height="22" fill="#e6f4e6" stroke="#0ca30c"/>
+      <rect x="372" y="262" width="230" height="22" fill="#fae9e9" stroke="#d03b3b"/>
+      <text x="136" y="278" text-anchor="end" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">−30%</text>
+      <text x="608" y="278" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">+30%</text>
+
+      <text x="8" y="310" font-family="system-ui, sans-serif" font-size="13" fill="#0b0b0b">美股</text>
+      <text x="372" y="302" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">无个股涨跌幅限制（触发 LULD 时暂停 5 分钟）</text>
+      <path d="M136 314 H608" stroke="#898781" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <path d="M136 314 L144 310 L144 318 Z" fill="#898781"/>
+      <path d="M608 314 L600 310 L600 318 Z" fill="#898781"/>
+
+      <text x="8" y="338" font-family="system-ui, sans-serif" font-size="13" fill="#898781">左侧绿色为跌停方向、右侧红色为涨停方向（A 股配色习惯）。</text>
+      <text x="8" y="354" font-family="system-ui, sans-serif" font-size="13" fill="#898781">主板 ST 股自 2026-07-06 起由 ±5% 调整为 ±10%。</text>
+    </svg>
+    <figcaption>同一个动作在两个市场里受到的约束完全不同，写策略或做对比研究前先把这两条协议差异记牢。</figcaption>
+  </figure>
+
+  <p>完整的规则对照如下：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>维度</th><th>A 股</th><th>美股</th></tr>
+    <tr><td>交割制度</td><td>T+1，当日买入次日方可卖出</td><td>T+0 交易（结算为 T+1），日内可反复买卖</td></tr>
+    <tr><td>涨跌幅</td><td>主板 ±10%、创业板/科创板 ±20%、北交所 ±30%</td><td>无个股涨跌幅；LULD 触发暂停 5 分钟，全市场熔断为 −7%/−13%/−20%</td></tr>
+    <tr><td>交易时段</td><td>9:30–11:30、13:00–15:00，另有集合竞价与盘后固定价格交易</td><td>美东 9:30–16:00，另有盘前与盘后延长时段</td></tr>
+    <tr><td>最小委托单位</td><td>买入 100 股起、1 股递增</td><td>1 股，多数券商支持碎股</td></tr>
+    <tr><td>卖出税</td><td>印花税万 5（单边）</td><td>无印花税，仅极小额的监管规费</td></tr>
+    <tr><td>涨跌配色</td><td>红涨绿跌</td><td>绿涨红跌</td></tr>
+  </table>
+  </div>
+
+  <h2><span class="h-num">3.7</span> 成本精算：一买一卖大约千分之一</h2>
+
+  <p>把三项费用加起来算一遍。假设按默认万 2.5 的佣金买入 10 万元、再原价卖出：买入付佣金 25 元、过户费 1 元；卖出付佣金 25 元、过户费 1 元、印花税 50 元。合计 102 元，也就是本金的 0.102%。<strong>股价要涨 0.10% 你才刚刚回本。</strong></p>
+
+  <figure>
+    <p class="fig-title">图 3-3 · 10 万元一买一卖的成本瀑布</p>
+    <svg viewBox="0 0 720 250" role="img" aria-label="三种情形下 10 万元一买一卖的成本堆叠条形图：个股万2.5共102元、个股万1共72元、场内ETF万1共20元">
+      <rect x="8" y="8" width="12" height="12" rx="2" fill="#2a78d6"/>
+      <text x="26" y="19" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">买入成本</text>
+      <rect x="110" y="8" width="12" height="12" rx="2" fill="#eb6834"/>
+      <text x="128" y="19" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">卖出佣金与过户费</text>
+      <rect x="272" y="8" width="12" height="12" rx="2" fill="#eda100"/>
+      <text x="290" y="19" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">印花税（卖出单边万 5）</text>
+
+      <text x="14" y="50" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">个股 · 佣金万 2.5 · 合计 102 元 · 需涨 0.10% 才回本</text>
+      <rect x="14" y="58" width="142.7" height="28" rx="3" fill="#2a78d6"/>
+      <rect x="158.7" y="58" width="142.7" height="28" rx="3" fill="#eb6834"/>
+      <rect x="303.4" y="58" width="274.6" height="28" rx="3" fill="#eda100"/>
+      <text x="85" y="77" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">26 元</text>
+      <text x="230" y="77" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">26 元</text>
+      <text x="440" y="77" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">50 元</text>
+
+      <text x="14" y="120" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">个股 · 佣金万 1 · 合计 72 元 · 需涨 0.07% 才回本</text>
+      <rect x="14" y="128" width="60.4" height="28" rx="3" fill="#2a78d6"/>
+      <rect x="76.4" y="128" width="60.4" height="28" rx="3" fill="#eb6834"/>
+      <rect x="138.8" y="128" width="274.6" height="28" rx="3" fill="#eda100"/>
+      <text x="44" y="147" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">11 元</text>
+      <text x="106" y="147" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">11 元</text>
+      <text x="276" y="147" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">50 元</text>
+
+      <text x="14" y="190" font-family="system-ui, sans-serif" font-size="14" fill="#0b0b0b">场内 ETF · 佣金万 1 · 合计 20 元 · 需涨 0.02% 才回本</text>
+      <rect x="14" y="198" width="54.9" height="28" rx="3" fill="#2a78d6"/>
+      <rect x="70.9" y="198" width="54.9" height="28" rx="3" fill="#eb6834"/>
+      <text x="41" y="217" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">10 元</text>
+      <text x="98" y="217" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#ffffff">10 元</text>
+      <text x="140" y="217" font-family="system-ui, sans-serif" font-size="13" fill="#52514e">场内 ETF 免征印花税，也不收过户费</text>
+
+      <text x="14" y="243" font-family="system-ui, sans-serif" font-size="13" fill="#898781">按 10 万元买入、原价卖出测算。券商报的佣金一般已含规费（经手费与证管费，合计约万 0.5）。</text>
+    </svg>
+    <figcaption>印花税占了个股交易成本的一半；换成场内 ETF，同样的一买一卖成本降到五分之一。</figcaption>
+  </figure>
+
+  <p>0.1% 听起来微不足道，但它是<strong>按次收取</strong>的。把换手频率乘上去，量级立刻变了：</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>一年完整买卖的次数</th><th>佣金万 2.5</th><th>佣金万 1</th><th>体感</th></tr>
+    <tr><td>1 次（长期持有）</td><td>0.10%</td><td>0.07%</td><td>可以忽略</td></tr>
+    <tr><td>12 次（每月换一次）</td><td>1.2%</td><td>0.9%</td><td>吃掉一年股息</td></tr>
+    <tr><td>50 次（每周换一次）</td><td>5.1%</td><td>3.6%</td><td>吃掉半个牛市涨幅</td></tr>
+    <tr><td>250 次（每天换一次）</td><td>25%</td><td>18%</td><td>只有券商和税务局赚钱</td></tr>
+  </table>
+  </div>
+
+  <p>这张表是本书后面很多结论的数学基础。它说明一件事：<strong>在扣费之前，交易频率就已经决定了你的一大部分收益</strong>。你不需要预测市场，就能确定性地把这几个点省下来。第 9 章会用真实的散户数据再验证一次这个结论。</p>
+
+  <h2><span class="h-num">3.8</span> 投资美股：2026 年的合规途径只有三条</h2>
+
+  <p>2026 年 5 月 22 日，证监会等八部门联合印发《综合整治非法跨境证券期货基金经营活动实施方案》，明确取缔非法跨境证券期货经营活动，同时引导投资者通过港股通、QDII、跨境理财通三条正规路径参与境外投资。这直接改变了内地投资者配置美股的现实选择。</p>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>渠道</th><th>能买什么</th><th>门槛与限制</th></tr>
+    <tr><td>QDII 基金</td><td>标普 500、纳斯达克 100 等海外指数，以及主动型海外基金</td><td>无资金门槛，1 元起投。<strong>额度受外汇管理约束</strong>，紧张时会限制单日申购金额甚至暂停申购</td></tr>
+    <tr><td>港股通</td><td>只有港股，<strong>不含任何美股</strong></td><td>前 20 个交易日日均资产 ≥ 50 万元</td></tr>
+    <tr><td>跨境理财通</td><td>香港销售的合资格投资产品</td><td>需符合粤港澳大湾区户籍或社保等条件</td></tr>
+  </table>
+  </div>
+
+  <p>对绝大多数人来说，实际可用的只有 QDII 一条。用它有两个必须知道的技术细节：</p>
+
+  <ul>
+    <li><strong>场内 QDII ETF 会出现高溢价。</strong>额度耗尽时基金无法申购新份额，场内价格会脱离净值（IOPV）向上跑，溢价 10% 以上并不少见。以溢价 10% 买入，等于开仓就先亏 10%，而额度恢复后溢价会回归。买之前一定要看溢价率，不要因为它涨停就追。</li>
+    <li><strong>场外申购按净值成交，天然没有溢价问题</strong>，代价是确认慢（通常 T+2 确认份额）、赎回更慢。做长期定投的人应该优先用场外。</li>
+  </ul>
+
+  <div class="callout"><span class="tag">避坑</span>
+    那些能直接开美股账户、支持人民币出入金、宣传「零佣金买英伟达」的无牌跨境平台，正处在监管清退期。它们在境内的展业、开户、入金链路都不受法律保护，实践中已出现只出不进、通道关闭、资金难以取回的情况。这类平台不属于「风险偏好问题」，属于合规问题——本书的立场是完全不碰。想配置美股，就用 QDII。
+  </div>
+
+  <hr>
+
+  <p>这一章的内容全部是协议层的规范：能谈的只有佣金，其余都是给定条件。把它们读一遍并记住，你就已经领先于绝大多数一上来就问「买什么」的新手。下一章开始看盘面——从那些红红绿绿的蜡烛图讲起。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="how-the-market-works.html"><span class="dir">← 上一章</span>第2章 · 市场如何撮合</a>
+  <a class="next" href="reading-candlestick-charts.html"><span class="dir">下一章 →</span>第4章 · 看懂 K 线</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>
