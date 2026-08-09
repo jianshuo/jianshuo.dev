@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录 · 盯盘技巧图鉴 — 程序员炒股指南</title>
+<meta name="description" content="中文互联网流传的八大盯盘流派：它们让你在几点盯什么、声称的规则、隐含的假设、以及背后的商业模式。图鉴性质，认识攻击模式用。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>附录 · 第 9 章配套</span>
+</header>
+<main>
+  <div class="chapter-head">
+    <span class="kicker">APPENDIX</span>
+    <h1>盯盘技巧图鉴</h1>
+    <p class="lede">中文互联网流传的八大盯盘流派：它们让你在几点盯什么、声称的规则是什么、隐含了什么假设、谁在教、靠什么赚钱。这是一份图鉴，不是一份教程——就像安全工程师读恶意软件样本：目的是识别，不是运行。</p>
+  </div>
+
+  <p>第 4 章讲过信噪比随 √t 增长，第 9 章讲过散户换手率与收益负相关。但「不需要盯盘」这个结论，最好还是亲眼看看「需要盯盘」的世界长什么样再下。我们调研了知乎专栏、股民论坛、门户财经、券商问答和行情软件投教频道，把主流盯盘技巧归成八类。先看它们在一个交易日里各自的岗位：</p>
+
+  <figure>
+    <p class="fig-title">图 A-1 · 八大流派的一日值班表</p>
+    <svg viewBox="0 0 720 260" role="img" aria-label="一个交易日的时间轴，标出八类盯盘技巧各自要求值守的时间段">
+      <line x1="40" y1="130" x2="690" y2="130" stroke="#cec5b1" stroke-width="2"/>
+      <rect x="40" y="124" width="60" height="12" fill="#eda100" rx="3"/>
+      <rect x="110" y="124" width="240" height="12" fill="#48709e" rx="3" opacity="0.35"/>
+      <rect x="370" y="124" width="240" height="12" fill="#48709e" rx="3" opacity="0.35"/>
+      <rect x="560" y="124" width="50" height="12" fill="#d03b3b" rx="3" opacity="0.7"/>
+      <rect x="622" y="124" width="68" height="12" fill="#97907f" rx="3" opacity="0.5"/>
+      <text x="40" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">9:15</text>
+      <text x="100" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">9:30</text>
+      <text x="330" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">11:30</text>
+      <text x="370" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">13:00</text>
+      <text x="592" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">15:00</text>
+      <text x="628" y="152" font-size="12" fill="#898781" font-family="system-ui, sans-serif">盘后</text>
+
+      <text x="42" y="60" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">③ 集合竞价抢筹</text>
+      <line x1="70" y1="66" x2="70" y2="122" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <text x="112" y="88" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">⑦ 早盘半小时量比扫描</text>
+      <line x1="140" y1="94" x2="140" y2="122" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <text x="255" y="60" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">①② 盘口语言 · 分时战法（全程）</text>
+      <line x1="330" y1="66" x2="330" y2="122" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <text x="388" y="88" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">⑤⑧ 打板 · 做T（全程盯手速）</text>
+      <line x1="450" y1="94" x2="450" y2="122" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <text x="500" y="190" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">④ 尾盘买入法（14:30 后）</text>
+      <line x1="580" y1="184" x2="580" y2="138" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <text x="560" y="222" font-size="13" fill="#3b352b" font-family="system-ui, sans-serif">⑥ 龙虎榜复盘（收盘后）</text>
+      <line x1="650" y1="216" x2="650" y2="138" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+    </svg>
+    <figcaption>把八类技巧的「值班时间」画在一条交易日时间轴上：从 9:15 竞价到收盘后复盘，全套修完等于一份全职工作——这正是第 3 章说的「时间成本」的具象化。</figcaption>
+  </figure>
+
+  <h2><span class="h-num">A.1</span> 八大流派速览</h2>
+
+  <p>每类按同一结构拆解：<strong>盯什么 → 声称的规则 → 隐含的假设</strong>。假设那一栏请重点读——一个方法值不值得信，取决于它的前提是否成立。</p>
+
+  <h3>① 盘口语言 / 五档解读</h3>
+  <p><strong>盯什么</strong>：五档挂单形态——大量委卖压在上方叫「上压板」，大额委买托在下方叫「下托板」，上下同时夹住叫「夹板」，还有快速挂撤单、未显示就成交的「空中成交」。<strong>规则</strong>：压盘但股价不跌反涨 = 主力「压盘吸货」，大涨先兆；大托单但持续阴跌 = 诱多，回避。<strong>隐含假设</strong>：每只股票背后有一个统一意志的「主力」，其意图会通过挂单泄露，且散户能实时反向破译。第 2 章讲过：Level-1 盘口是约 3 秒一张的快照，且挂单在 9:20 前和盘中都可以随时撤——你读的「语言」，说话的人随时可以收回。</p>
+
+  <h3>② 分时图战法</h3>
+  <p><strong>盯什么</strong>：白色现价线与黄色均价线的关系。<strong>规则</strong>：放量上穿均线买入，跌破均线卖出，「贴着均线横盘越久、拉涨停概率越大」。<strong>隐含假设</strong>：日内均价线代表市场平均成本，主力拉升前必守成本线，日内形态有可重复的统计规律。这与第 4 章的信噪比结论正面冲突：分时图是全书信噪比最低的图。</p>
+
+  <h3>③ 集合竞价抢筹</h3>
+  <p><strong>盯什么</strong>：9:15–9:25 的虚拟开盘价走势与匹配量，重点看 9:20 之后（不可撤单段）是否持续有资金抬价。<strong>规则</strong>：竞价持续放量抬价的热点股，9:25 前后挂单抢入，博当日涨停。教程原文自己承认「容易失败，要等完美图形」。<strong>隐含假设</strong>：竞价强 = 全天强，且你的手速能和量化、游资在同一秒抢到货。你在模拟市场里见过大户老张 9:19 撤单的表演——竞价盘口本身就是可以布景的舞台。</p>
+
+  <h3>④ 尾盘买入法</h3>
+  <p><strong>盯什么</strong>：14:30 后放量拉升、走势平稳的个股，常配一串筛选参数（振幅 5% 以内、换手 3% 以上、量比 1.2 以上等）。<strong>规则</strong>：收盘前轻仓买入，赌次日高开，早盘冲高即卖。<strong>隐含假设</strong>：尾盘拉升是主力为次日行情做准备（而不是收盘前做图形给你看），且日内动量会延续过夜。</p>
+
+  <h3>⑤ 打板 / 一进二</h3>
+  <p><strong>盯什么</strong>：涨停时间早晚、封单量变化、换手板还是一字板、题材热度。<strong>规则</strong>：从当日首板股里选次日可能连板的，交易软件设好「涨停价买、跌停价卖」抢成交速度。<strong>隐含假设</strong>：T+1 和涨停板制度会制造连板惯性，而你——在游资主导、以毫秒计的博弈里——接到的不是最后一棒。这是八类中资金损耗最快的一类。</p>
+
+  <h3>⑥ 龙虎榜跟庄</h3>
+  <p><strong>盯什么</strong>：每日收盘后交易所公布的龙虎榜前五买卖席位，把营业部映射成游资绰号、贴上风格标签，还要认「毒席位」和「独食榜」。<strong>规则</strong>：跟随「游资 + 机构共同买入」的股票次日进场。<strong>隐含假设</strong>：席位 = 人、历史风格会重复、T 日收盘公布的榜单对 T+1 还有可交易的信息含量——以及最关键的：榜上的游资愿意带你赚钱，而不是利用榜单知名度反向收割跟风盘。</p>
+
+  <h3>⑦ 量比 + 换手率扫描</h3>
+  <p><strong>盯什么</strong>：早盘前半小时的量比排行榜（当前成交力度 ÷ 近 5 日均值）与换手率。<strong>规则</strong>：量比高 + 换手适中 = 真启动可追；量比高 + 换手畸高 = 出货陷阱。<strong>隐含假设</strong>：即时放量是主力动向的可靠泄露，且这两个人人可见的公开指标组合，能过滤掉主力刻意做出来的假量——注意这两个假设互相打架：如果指标人人可见，做假量的成本恰恰最低。</p>
+
+  <h3>⑧ 做 T（日内高抛低吸）</h3>
+  <p><strong>盯什么</strong>：自己持仓股的日内分时波动。<strong>规则</strong>：留 50%–70% 底仓，日内先卖后买（或先买后卖）同数量股票，绕开 T+1，「摊低持仓成本」。<strong>隐含假设</strong>：日内高低点可被普通人稳定预判，且来回价差能覆盖佣金、印花税和滑点。值得注意的是，论坛里这类帖子的定位常常是「解套方法」——它的目标用户是已经亏损的人。「降低成本价」是记账口径上的安慰，账户总资产并不因此多一分钱。</p>
+
+  <h2><span class="h-num">A.2</span> 三个横向观察</h2>
+
+  <ul>
+    <li><strong>同一个世界观的八个投影。</strong>八类技巧共享一个前提：每只股票背后有个单一意志的「主力」，散户的任务是破译它。竞价、早盘、分时、尾盘、榜单——只是同一个叙事在不同时间切片上的投影。而第 2 章你已经看过撮合引擎的真实内部：那里只有两个优先队列和两条排序规则，没有为任何人预留「意图」字段。</li>
+    <li><strong>不可证伪的免责结构。</strong>教程普遍自带话术：「等完美图形出现再出手」「注意控制仓位」「盘感需要修炼」。赚了归功于方法，亏了归咎于你执行不到位——任何结果都能自圆其说的方法，在工程上等于没有方法。</li>
+    <li><strong>话术越激进，商业链条越下游。</strong>变现光谱大致是：免费干货文（攒粉）→ 卖指标公式 → 卖课、训练营 → 荐股群收服务费 → 引流黑平台。标题写「稳赚 10 个点」「小白也能赚钱」的，几乎都处在光谱下游。中新网调查过，直播间荐股博主约七成没有任何证券从业资质。券商系投教内容最收敛，但选题同样围着盯盘焦虑转——焦虑本身就是流量。</li>
+  </ul>
+
+  <div class="callout"><span class="tag">避坑</span>
+  判断一份「盯盘教程」的可信度，不用看它的图形战法，看三点就够：作者赚谁的钱（交易的钱还是你的钱）、方法能不能被证伪（有没有明确的失败判据）、隐含假设需不需要「主力配合你」。三条里挂掉任何一条，按第 9 章的钓鱼邮件原则处理。</div>
+
+  <h2><span class="h-num">A.3</span> 反方证据</h2>
+
+  <p>盯盘文化的对面，是几组不太热闹但样本巨大的数据：</p>
+  <ul>
+    <li>对哥伦比亚证交所 4.2 万余名个人投资者、538 万笔交易（2006–2016）的研究：散户扣除成本前年化异常收益约 <strong>−4%</strong>，交易最活跃的一组表现最差。</li>
+    <li>上交所基于账户数据的研究（媒体广泛转载为《散户亏钱实锤》）：从 10 万以下的「小散」到千万级的「大散」，各资金档位的个人投资者<strong>全部</strong>平均亏损，唯一稳定盈利的是机构和公司户。</li>
+    <li>这两组数据与第 9 章那张「换手率-收益散点图」是同一个结论的三次独立测量：<strong>在扣费之前，交易频率就已经决定了你的大部分收益。</strong></li>
+  </ul>
+
+  <div class="analogy"><span class="tag">程序员视角</span>
+  把这份图鉴当成威胁情报库（threat intelligence）来用：每一类技巧是一个攻击模式（pattern），「隐含假设」栏是它的漏洞利用条件（precondition）。你的防御不是逐条学会反杀，而是关闭整个攻击面——不盯盘的人，对以上八类内容的易感性是零。这也是第 10 章「用系统代替意志力」的具体应用：卸载行情 App 一次，胜过每天抵抗诱惑八次。</div>
+
+  <hr>
+  <p style="font-size:13.5px;color:var(--muted)">资料来源（调研于 2026-08，链接指向原文，不代表本书认可其内容）：盘口语言（<a href="https://zhuanlan.zhihu.com/p/61214734" rel="nofollow">知乎</a>、<a href="https://blog.eastmoney.com/jingzhongyue_21/blog_218546340.html" rel="nofollow">东方财富博客</a>）、分时战法（<a href="https://finance.sina.com.cn/roll/2024-12-18/doc-inczvssv4158916.shtml" rel="nofollow">新浪转载</a>）、竞价抢筹（<a href="https://zhuanlan.zhihu.com/p/392695397" rel="nofollow">知乎</a>、<a href="https://quant.csdn.net/691d663b5511483559ebf221.html" rel="nofollow">CSDN量化社区</a>）、尾盘法（<a href="https://stock.hexun.com/2023-11-18/211177209.html" rel="nofollow">和讯</a>）、打板（<a href="http://www.10huang.cn/zhangting/51506.html" rel="nofollow">拾荒网</a>、<a href="https://zhuanlan.zhihu.com/p/656523787" rel="nofollow">知乎</a>）、龙虎榜（<a href="https://www.cls.cn/detail/251144" rel="nofollow">财联社</a>、<a href="https://zhuanlan.zhihu.com/p/337131490" rel="nofollow">知乎席位大全</a>）、量比换手（<a href="https://www.iwencai.com/school/article-detail/id/4369" rel="nofollow">同花顺投教</a>）、做T（<a href="https://www.xiarj.com/19003.html" rel="nofollow">闽发论坛</a>）；反方证据与监管（<a href="https://fund.eastmoney.com/a/1590,202008021578042713.html" rel="nofollow">上交所研究转载</a>、<a href="https://ag.yueniuzq.com/stock/overcome-overtrading-cure-retail-habit/" rel="nofollow">哥伦比亚研究转述</a>、<a href="https://www.chinanews.com/cj/2024/10-25/10307858.shtml" rel="nofollow">中新网直播间荐股调查</a>、<a href="http://www.csrc.gov.cn/csrc/c100210/c2263090/content.shtml" rel="nofollow">证监会投保教育</a>）。</p>
+
+</main>
+<nav class="chapter-nav">
+  <a class="prev" href="retail-traps.html"><span class="dir">← 正文</span>第9章 · 韭菜陷阱图鉴</a>
+  <a class="next" href="./"><span class="dir">返回 →</span>目录</a>
+</nav>
+<footer class="site-footer">
+  本教材为科普内容，不构成任何投资建议。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+</body>
+</html>
