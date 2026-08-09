@@ -154,17 +154,25 @@ def on_order(o):
       <polyline points="90,64.7 181.7,94 273.3,130.7 365,167.3 456.7,204 548.3,233.3 640,252.4" fill="none" stroke="#2a78d6" stroke-width="2"/>
       <polyline points="90,248 181.7,223.1 273.3,182 365,138 456.7,101.3 548.3,72 640,50" fill="none" stroke="#eb6834" stroke-width="2"/>
 
-      <line x1="365" y1="270" x2="365" y2="167.3" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
-      <circle cx="365" cy="167.3" r="4.5" fill="#0b0b0b"/>
-      <text x="105" y="130" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">成交量最大的价格档</text>
-      <text x="105" y="152" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif">＝ 开盘价 10.05 元，成交 700 手</text>
+      <line x1="365" y1="270" x2="365" y2="138" stroke="#3b352b" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
+      <circle cx="331.7" cy="154" r="4" fill="none" stroke="#97907f" stroke-width="1.5"/>
+      <text x="331" y="94" text-anchor="middle" font-size="12.5" fill="#97907f" font-family="system-ui, sans-serif">两线交点 ≈ 10.03</text>
+      <text x="331" y="110" text-anchor="middle" font-size="12.5" fill="#97907f" font-family="system-ui, sans-serif">不在价格档上，不能直接用</text>
+      <line x1="331.7" y1="117" x2="331.7" y2="146" stroke="#97907f" stroke-width="1" opacity="0.6"/>
+      <circle cx="365" cy="138" r="3.5" fill="none" stroke="#eb6834" stroke-width="1.5"/>
+      <text x="376" y="134" font-size="12.5" fill="#52514e" font-family="system-ui, sans-serif">卖盘 900 手</text>
+      <circle cx="365" cy="167.3" r="4.5" fill="#3b352b"/>
+      <text x="376" y="176" font-size="12.5" fill="#52514e" font-family="system-ui, sans-serif">买盘 700 手（短边）</text>
+      <text x="98" y="216" font-size="12.5" fill="#3b352b" font-family="system-ui, sans-serif">在离散档里比 min(买, 卖)：</text>
+      <text x="98" y="233" font-size="12.5" fill="#3b352b" font-family="system-ui, sans-serif">10.00 档 min(950, 600) = 600 手</text>
+      <text x="98" y="250" font-size="12.5" fill="#3b352b" font-family="system-ui, sans-serif">10.05 档 min(700, 900) = 700 手 → 开盘价</text>
 
       <line x1="132" y1="316" x2="168" y2="316" stroke="#2a78d6" stroke-width="2"/>
       <text x="176" y="321" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">累计买盘（愿以该价或更高买入）</text>
       <line x1="404" y1="316" x2="440" y2="316" stroke="#eb6834" stroke-width="2"/>
       <text x="448" y="321" font-size="13" fill="#52514e" font-family="system-ui, sans-serif">累计卖盘（愿以该价或更低卖出）</text>
     </svg>
-    <figcaption>价格越高，愿意买的人越少、愿意卖的人越多，两条累计曲线必然相交。交易所在离散价格档里挑出让 min(买量, 卖量) 最大的那一档，这一档就是开盘价，所有落在成交区间内的委托都按这一个价格成交。</figcaption>
+    <figcaption>价格越高，愿意买的人越少、愿意卖的人越多，两条累计曲线必然相交。但交点（≈10.03）通常不落在可申报的价格档上：交易所在离散档位里挑让 min(买量, 卖量) 最大的那一档——10.05 档能成交 700 手，多于 10.00 档的 600 手，所以开盘价是 10.05，成交量取短边 700 手，所有落在成交区间内的委托都按这一个价格成交。</figcaption>
   </figure>
 
   <h2><span class="h-num">2.5</span> 连续竞价：来一条处理一条</h2>
@@ -376,6 +384,9 @@ def on_order(o):
     <li><strong>五档盘口是 3 秒一张的快照</strong>。任何建立在「逐笔观察主力挂单」上的方法论，在数据精度上就站不住。</li>
     <li><strong>撮合层不会暗算你</strong>。规则完全公开、对所有人一致。真正的成本发生在你按了多少次买入按钮上——那是第 3 章和第 9 章的主题。</li>
   </ul>
+
+  <div class="analogy"><span class="tag">动手玩</span>
+  这一章讲的撮合引擎有一个可以玩的版本：<a href="market-sim.html"><strong>模拟撮合市场</strong></a>——和 5 个 NPC 同场交易，亲手挂单、撤单、被大户打穿盘口，把本章 13 个概念一个个解锁。强烈建议现在就去打一局再读第 3 章。</div>
 
 </main>
 <nav class="chapter-nav">

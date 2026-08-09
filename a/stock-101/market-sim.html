@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模拟撮合市场 · 陪 NPC 打一局 — 程序员炒股指南</title>
+<meta name="description" content="一个可以玩的订单簿：和 5 个 NPC 一起交易，亲手体验集合竞价、价格优先、时间优先、滑点、涨跌停和 T+1。">
+<link rel="stylesheet" href="style.css">
+<style>
+.sim-wrap { max-width: 1080px; margin: 0 auto; padding: 8px 20px 40px; }
+.sim-grid { display: grid; grid-template-columns: 250px 1fr 280px; gap: 14px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.panel h3 { margin: 0 0 10px; font-size: 15px; color: var(--ink-2); }
+.phasebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; }
+.phasebar .pill { background: var(--surface); border: 1px solid var(--border); border-radius: 99px; padding: 5px 16px; font-size: 14px; }
+.phasebar .pill b { color: var(--accent-deep); }
+.phasebar button { border: 1px solid var(--accent); background: var(--accent); color: #fdfaf1; border-radius: 99px; padding: 6px 20px; font-size: 15px; font-weight: 650; cursor: pointer; font-family: inherit; }
+.phasebar button:hover { background: var(--accent-deep); }
+.phasebar button.ghost { background: var(--surface); color: var(--accent-deep); }
+.phasebar button:disabled { opacity: .4; cursor: default; }
+/* order book */
+.book { font-variant-numeric: tabular-nums; font-size: 13.5px; }
+.book .row { display: grid; grid-template-columns: 44px 56px 1fr; gap: 6px; padding: 2px 4px; align-items: center; border-radius: 6px; position: relative; }
+.book .row .lvl { color: var(--muted); }
+.book .row .p { font-weight: 650; text-align: right; }
+.book .row.ask .p { color: #0a7a43; }
+.book .row.bid .p { color: #b03030; }
+.book .row .q { text-align: right; color: var(--ink-2); }
+.book .depth { position: absolute; right: 0; top: 1px; bottom: 1px; border-radius: 4px; opacity: .16; }
+.book .row.ask .depth { background: #1baf7a; }
+.book .row.bid .depth { background: #e34948; }
+.book .row.mine { outline: 2px solid var(--accent); outline-offset: -2px; }
+.book .last { text-align: center; padding: 8px 0; margin: 4px 0; border-top: 1px dashed var(--grid); border-bottom: 1px dashed var(--grid); }
+.book .last .lp { font-size: 22px; font-weight: 700; }
+.book .last .chg { font-size: 13px; margin-left: 6px; }
+.up { color: #b03030; } .down { color: #0a7a43; } .flat { color: var(--muted); }
+.book .note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 6px; }
+.book .vopen { font-size: 12.5px; color: var(--accent-deep); margin-top: 4px; }
+/* chart */
+.chart-box svg { display: block; width: 100%; height: auto; }
+/* tape & chat */
+.feed { list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 210px; overflow-y: auto; }
+.feed li { padding: 4px 6px; border-radius: 6px; margin: 2px 0; line-height: 1.55; }
+.feed li.npc { background: #f0ead9; }
+.feed li.sys { background: #e9eef1; color: var(--ink-2); }
+.feed li.trade { color: var(--ink-2); }
+.feed li b.who { color: var(--accent-deep); }
+.feed li .t-buy { color: #b03030; font-weight: 650; }
+.feed li .t-sell { color: #0a7a43; font-weight: 650; }
+/* user panel */
+.acct { font-size: 14px; line-height: 1.9; font-variant-numeric: tabular-nums; }
+.acct b { font-weight: 700; }
+.acct .frozen { font-size: 12.5px; color: var(--muted); }
+.orderform { display: grid; gap: 8px; margin-top: 8px; }
+.orderform .seg { display: flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.orderform .seg button { flex: 1; border: 0; background: var(--surface); padding: 7px 0; font-size: 14px; cursor: pointer; font-family: inherit; color: var(--ink-2); }
+.orderform .seg button.on-buy { background: #b03030; color: #fdfaf1; font-weight: 700; }
+.orderform .seg button.on-sell { background: #0a7a43; color: #fdfaf1; font-weight: 700; }
+.orderform .seg button.on { background: var(--accent); color: #fdfaf1; font-weight: 700; }
+.orderform label { font-size: 13px; color: var(--ink-2); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.orderform input { width: 110px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; font-family: inherit; background: #fdfaf1; color: var(--ink); text-align: right; }
+.orderform .go { border: 0; border-radius: 9px; padding: 9px 0; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; background: var(--accent); color: #fdfaf1; }
+.orderform .go:hover { background: var(--accent-deep); }
+.myorders { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+.myorders li { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--grid); }
+.myorders button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 12px; font-family: inherit; }
+.myorders button:hover { color: #b03030; }
+/* concepts */
+.concepts { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.concepts li { padding: 4px 0 4px 26px; position: relative; color: var(--muted); }
+.concepts li::before { content: "○"; position: absolute; left: 4px; }
+.concepts li.got { color: var(--ink); }
+.concepts li.got::before { content: "✓"; color: #0a7a43; font-weight: 700; }
+/* toast */
+.lesson { position: fixed; right: 18px; bottom: 18px; max-width: 340px; background: #3b352b; color: #f6f1e4; border-radius: 14px; padding: 14px 18px; font-size: 14px; line-height: 1.7; box-shadow: 0 10px 30px rgba(59,53,43,.35); opacity: 0; transform: translateY(10px); transition: all .3s; pointer-events: none; z-index: 50; }
+.lesson.show { opacity: 1; transform: none; }
+.lesson b { color: #f2c14e; }
+.npc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 14px 0 6px; }
+.npc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.6; }
+.npc-card b { font-size: 14px; }
+.npc-card .role { color: var(--accent-deep); font-size: 12px; }
+@media (max-width: 900px) { .sim-grid { grid-template-columns: 1fr 1fr; } .col-mid { grid-column: 1 / -1; order: -1; } }
+@media (max-width: 620px) { .sim-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="site-header">
+  <a href="./">← 程序员炒股指南</a>
+  <span>第 2 章配套 · 模拟撮合市场</span>
+</header>
+<div class="sim-wrap">
+  <div class="chapter-head">
+    <span class="kicker">PLAYGROUND</span>
+    <h1>模拟撮合市场：陪 NPC 打一局</h1>
+    <p class="lede">这是第 2 章的可玩版本。你有 ¥100,000 和 2,000 股「韭菜科技」（代码 888888），和 5 个 NPC 同场交易。规则和 A 股一致：集合竞价开盘（9:20 后不可撤单）、连续竞价撮合、价格优先时间优先、市价单最优五档保护、收盘集合竞价、±10% 涨跌停、T+1。右下角会随事件弹出讲解，集齐右侧全部概念算通关。</p>
+  </div>
+
+  <div class="npc-cards" id="npcCards"></div>
+
+  <div class="phasebar">
+    <span class="pill">阶段 <b id="phaseName">未开盘</b></span>
+    <span class="pill">第 <b id="dayNum">1</b> 天</span>
+    <span class="pill">时间 <b id="clock">09:15</b></span>
+    <button id="btnStart">开始集合竞价</button>
+    <button id="btnSpeed" class="ghost">速度 ×1</button>
+    <button id="btnNextDay" class="ghost" disabled>收盘 → 下一天</button>
+  </div>
+
+  <div class="sim-grid">
+    <div class="panel">
+      <h3>盘口（买卖五档）</h3>
+      <div class="book" id="book"></div>
+    </div>
+    <div class="col-mid">
+      <div class="panel chart-box">
+        <h3>分时走势</h3>
+        <svg id="chart" viewBox="0 0 520 170" role="img" aria-label="价格走势图"></svg>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h3>市场动态（成交回报 + NPC 广播）</h3>
+        <ul class="feed" id="feed"></ul>
+      </div>
+    </div>
+    <div>
+      <div class="panel">
+        <h3>我的账户</h3>
+        <div class="acct" id="acct"></div>
+        <div class="orderform">
+          <div class="seg" id="segSide">
+            <button data-v="buy" class="on-buy">买入</button>
+            <button data-v="sell">卖出</button>
+          </div>
+          <div class="seg" id="segType">
+            <button data-v="limit" class="on">限价单</button>
+            <button data-v="market">市价单</button>
+          </div>
+          <label id="rowPrice">价格 <input id="inPrice" type="number" step="0.01" value="10.00"></label>
+          <label>数量（股）<input id="inQty" type="number" step="100" value="500"></label>
+          <button class="go" id="btnOrder">下单</button>
+        </div>
+        <ul class="myorders" id="myOrders"></ul>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h3>概念解锁 <span id="gotCount" style="color:var(--muted);font-weight:400"></span></h3>
+        <ul class="concepts" id="concepts"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="analogy" style="margin-top:22px"><span class="tag">程序员视角</span>
+  这一页跑的就是第 2 章讲的那台撮合引擎：买盘是一个按价格降序的 max-heap，卖盘是按价格升序的 min-heap，每个 tick 检查堆顶能否成交。开盘和收盘的集合竞价是攒一批订单求最大成交量的批处理 job，盘中连续竞价是来一条处理一条的流式计算。你可以打开 DevTools 看 <code>window.MARKET</code>，订单簿就在里面。</div>
+  <p style="font-size:13.5px;color:var(--muted)">教学简化：NPC 资金与持仓无限、股票池只有一只、没有手续费；盘口在这里是实时刷新的，真实行情软件的 Level-1 盘口是约 3 秒一次的快照（见第 2 章 2.6）。真实市场的交易成本见<a href="opening-an-account-and-trading-rules.html">第 3 章</a>。</p>
+</div>
+<div class="lesson" id="lesson"></div>
+<footer class="site-footer">
+  本页为教学模拟，与任何真实证券无关。市场有风险，投资需谨慎。<br>
+  © 2026 王建硕 · <a href="https://jianshuo.dev">jianshuo.dev</a>
+</footer>
+
+<script>
+"use strict";
+/* ===== 市场核心：订单簿 + 撮合 ===== */
+const LOT = 100, MAX_MKT_LEVELS = 5;
+const S = {
+  day: 1, prevClose: 10.00, last: 10.00, open: null,
+  phase: "idle",            // idle | call | cont | closeCall | closed
+  clockMin: 9 * 60 + 15,
+  bids: [], asks: [],       // {id, side, price, qty, owner, ts, frozenAt}
+  seq: 0, ts: 0,
+  prices: [],
+  speed: 1, timer: null,
+  user: { cash: 100000, sellable: 2000, boughtToday: 0, hadBuyToday: false },
+  callBuys: [], callSells: [], callKind: "open",
+  whaleShow: 0,             // 竞价操纵表演状态机
+};
+window.MARKET = S;
+const limitUp = () => Math.round(S.prevClose * 1.1 * 100) / 100;
+const limitDown = () => Math.round(S.prevClose * 0.9 * 100) / 100;
+const fmt = n => n.toFixed(2);
+const clampPx = p => Math.min(limitUp(), Math.max(limitDown(), Math.round(p * 100) / 100));
+const inCall = () => S.phase === "call" || S.phase === "closeCall";
+
+function insertOrder(o) {   // 买降序、卖升序，同价按 ts（时间优先）
+  const arr = o.side === "buy" ? S.bids : S.asks;
+  const better = o.side === "buy" ? (a, b) => a > b : (a, b) => a < b;
+  let i = 0;
+  while (i < arr.length && (better(arr[i].price, o.price) || arr[i].price === o.price)) i++;
+  arr.splice(i, 0, o);
+}
+function newOrder(side, price, qty, owner, frozenAt) {
+  return { id: ++S.seq, side, price, qty, owner, ts: ++S.ts, frozenAt: frozenAt ?? null };
+}
+/* 用户资金/持仓：下单即冻结，成交按实际价结算，撤单/失效退回 */
+function fillUser(side, price, qty, frozenAt) {
+  if (side === "buy") {
+    S.user.boughtToday += qty; S.user.hadBuyToday = true;
+    if (frozenAt != null) S.user.cash += (frozenAt - price) * qty;  // 冻结价高于成交价的部分退回
+    else S.user.cash -= price * qty;                                 // 市价单未预冻结
+  } else {
+    S.user.cash += price * qty;  // 持仓已在下单时从 sellable 划出
+  }
+}
+function refundUserOrder(o) {
+  if (o.owner !== "你") return;
+  if (o.side === "buy" && o.frozenAt != null) S.user.cash += o.frozenAt * o.qty;
+  if (o.side === "sell") S.user.sellable += o.qty;
+}
+/* 连续竞价撮合：先吃对手盘（价格优先→时间优先），剩余挂簿。
+   市价单最优五档保护：最多吃 5 个价位，剩余撤销（与 A 股「最优五档即时成交剩余撤销」一致） */
+function submit(side, type, price, qty, owner, frozenAt) {
+  const book = side === "buy" ? S.asks : S.bids;
+  let remain = qty, levels = 0, lastLvlPx = null, filled = 0, cost = 0, cashOut = false;
+  while (remain > 0 && book.length) {
+    const top = book[0];
+    const cross = type === "market" || (side === "buy" ? top.price <= price : top.price >= price);
+    if (!cross) break;
+    if (top.price !== lastLvlPx) {
+      if (type === "market" && levels >= MAX_MKT_LEVELS) break;
+      levels++; lastLvlPx = top.price;
+    }
+    let q = Math.min(remain, top.qty), cashCapped = false;
+    if (owner === "你" && side === "buy" && frozenAt == null) {   // 市价买：按可用现金截断
+      const afford = Math.floor(S.user.cash / top.price);
+      if (afford < q) { q = afford; cashCapped = true; }
+      if (q <= 0) { cashOut = true; break; }
+    }
+    trade(top.price, q,
+      side === "buy" ? { name: owner, frozenAt } : { name: top.owner, frozenAt: top.frozenAt },
+      side === "buy" ? { name: top.owner, frozenAt: top.frozenAt } : { name: owner, frozenAt });
+    filled += q; cost += q * top.price;
+    top.qty -= q; remain -= q;
+    if (!top.qty) book.shift();
+    if (cashCapped) { cashOut = true; break; }
+  }
+  if (remain > 0) {
+    if (type === "market") {
+      if (owner === "你" && cashOut) {
+        say("sys", filled > 0 ? `市价买单成交 ${filled} 股后现金用完，余量 ${remain} 股已撤销。` : "现金不足以按当前盘口买入任何一股，委托已撤销。");
+        lesson("现金不足", "市价买单按盘口实价逐档扣钱，现金花完即止——这是你的钱包问题，不是市场流动性问题。");
+      }
+      else if (owner === "你" && filled > 0 && levels >= MAX_MKT_LEVELS)
+        say("sys", `市价单已吃满最优五档，余量 ${remain} 股按规则自动撤销——A 股市价单带「五档保护」，不会一路穿到涨跌停。`);
+      else if (owner === "你" && filled === 0)
+        lesson("对手盘为空", "市价单必须有对手挂单才能成交。冷门股票盘口薄，这种事经常发生。");
+      else if (owner === "你")
+        say("sys", `市价单余量 ${remain} 股已撤销——对手盘被吃光了，这就是流动性的边界。`);
+    } else {
+      insertOrder(newOrder(side, price, remain, owner, owner === "你" ? frozenAt : null));
+      if (owner === "你") checkTimePriority(side, price);
+    }
+  } else if (owner === "你" && type === "limit" && frozenAt != null && side === "buy" && filled > 0 && cost < frozenAt * filled) {
+    lesson("成交价取先挂单一方的价格", `你愿意出 ${fmt(frozenAt)}，但实际按对手挂单价成交，平均 ${fmt(cost / filled)}，差价已退回。<b>后到的单子按先到的价格成交</b>——这是撮合规则送你的小便宜。`);
+    unlock("maker-price");
+  }
+  if (owner === "你" && filled > 0) {
+    if (levels >= 2) { unlock("slippage"); lesson("滑点", `你的单子吃穿了 ${levels} 个价位，平均成交价 ${fmt(cost / filled)}，比最优一档差。挂单量小的股票，大单一定会把价格打穿——这就是<b>滑点</b>。`); }
+    if (type === "market") unlock("market-order");
+  }
+  return { filled, remain, levels };
+}
+function trade(price, qty, buyer, seller) {
+  S.last = price;
+  if (buyer.name === "你") fillUser("buy", price, qty, buyer.frozenAt);
+  if (seller.name === "你") fillUser("sell", price, qty, seller.frozenAt);
+  const cls = price > S.prevClose ? "t-buy" : "t-sell";
+  say("trade", `成交 <span class="${cls}">${fmt(price)}</span> × ${qty} 股（${buyer.name} ← ${seller.name}）`);
+  checkBand(price);
+}
+function checkBand(price) {
+  if (price >= limitUp() || price <= limitDown()) {
+    if (!got.has("limit-band")) lesson("涨跌停", `价格触及 ${price >= limitUp() ? "涨停 +10%" : "跌停 -10%"}（相对昨收 ${fmt(S.prevClose)}）。超出区间的委托交易所直接拒收——这是写在撮合引擎外层的熔断参数。`);
+    unlock("limit-band");
+  }
+}
+/* 集合竞价：最大成交量原则（撮合前可实时算「虚拟开盘价」） */
+function computeCross() {
+  const buys = S.callBuys, sells = S.callSells;
+  const px = new Set([...buys, ...sells].map(o => o.price));
+  let best = null;
+  px.forEach(p => {
+    const bv = buys.filter(o => o.price >= p).reduce((s, o) => s + o.qty, 0);
+    const sv = sells.filter(o => o.price <= p).reduce((s, o) => s + o.qty, 0);
+    const v = Math.min(bv, sv);
+    if (v > 0 && (!best || v > best.v || (v === best.v && Math.abs(p - S.prevClose) < Math.abs(best.p - S.prevClose)))) best = { p, v };
+  });
+  return best;
+}
+function callAuctionMatch(kind) {
+  const best = computeCross();
+  const label = kind === "open" ? "开盘价" : "收盘价";
+  if (!best) {
+    if (kind === "open") { S.open = S.prevClose; }
+    say("sys", `${kind === "open" ? "开盘" : "收盘"}集合竞价无有效匹配，${label}沿用${kind === "open" ? "昨收" : "最后成交价"} ${fmt(kind === "open" ? S.prevClose : S.last)}。`);
+  } else {
+    if (kind === "open") S.open = best.p;
+    S.last = best.p;
+    const buys = S.callBuys.slice().sort((a, b) => b.price - a.price || a.ts - b.ts);
+    const sells = S.callSells.slice().sort((a, b) => a.price - b.price || a.ts - b.ts);
+    let bv = best.v, sv = best.v, userQ = 0;
+    for (const o of buys) if (o.price >= best.p && bv > 0) { const q = Math.min(o.qty, bv); bv -= q; o.qty -= q; if (o.owner === "你") { fillUser("buy", best.p, q, o.frozenAt); userQ += q; } }
+    for (const o of sells) if (o.price <= best.p && sv > 0) { const q = Math.min(o.qty, sv); sv -= q; o.qty -= q; if (o.owner === "你") { fillUser("sell", best.p, q, o.frozenAt); userQ += q; } }
+    say("sys", `<b>${kind === "open" ? "开盘" : "收盘"}集合竞价撮合完成</b>：${fmt(best.p)} 是能让成交量最大的价格（${best.v} 股），定为${label}。`);
+    if (userQ > 0) say("trade", `你在竞价中成交 <span class="${best.p > S.prevClose ? "t-buy" : "t-sell"}">${fmt(best.p)}</span> × ${userQ} 股。`);
+    checkBand(best.p);
+  }
+  S.bids = []; S.asks = [];
+  if (kind === "open") {
+    [...S.callBuys, ...S.callSells].filter(o => o.qty > 0).forEach(o => insertOrder(o));
+  } else {
+    const resid = [...S.callBuys, ...S.callSells].filter(o => o.qty > 0 && o.owner === "你");
+    resid.forEach(refundUserOrder);
+    if (resid.length) say("sys", "你未成交的挂单随收盘失效（A 股委托当日有效），冻结的资金/持仓已退回。");
+  }
+  S.callBuys = []; S.callSells = [];
+  if (kind === "open") {
+    unlock("call-auction");
+    lesson("集合竞价 = 批处理", `攒一批订单不立刻撮合，到点求一个全局最优解：<b>哪个价格能让成交量最大，哪个价格就是开盘价</b>（${fmt(S.open)}）。一维最优化问题，第 2 章图 2-2 画的就是它。`);
+  } else {
+    unlock("close-auction");
+    lesson("收盘价也是批处理", "14:57–15:00 停止连续竞价，再做一次集合竞价定收盘价，且这三分钟<b>不可撤单</b>。这样尾盘想用一笔小单把收盘价拉上去就难得多——收盘价是很多合约和基金净值的锚，必须防操纵。");
+  }
+}
+function checkTimePriority(side, price) {
+  const arr = side === "buy" ? S.bids : S.asks;
+  const ahead = arr.filter(o => o.price === price && o.owner !== "你").reduce((s, o) => s + o.qty, 0);
+  if (ahead > 0) { unlock("time-priority"); lesson("时间优先", `${fmt(price)} 这个价位上你前面已经排了 ${ahead} 股，同价先到先得。想插队只有一个办法：报个更好的价格（<b>价格优先</b>）。`); }
+}
+
+/* ===== NPC ===== */
+const NPCS = [
+  { name: "慢慢", role: "做市商", desc: "同时挂买卖两边，赚差价，给市场提供流动性。", act: mmAct },
+  { name: "老王", role: "价值派", desc: "心里有个估值，低于它就买，高于它就卖。", fair: 10.0, act: valueAct },
+  { name: "阿蒙", role: "追涨杀跌", desc: "连涨就追，连跌就割，全用市价单。", act: momoAct },
+  { name: "韭菜盒子", role: "散户", desc: "随缘下单，理由五花八门。", act: noiseAct },
+  { name: "大户老张", role: "大资金", desc: "偶尔甩巨量市价单，还爱在竞价时表演「幽灵挂单」。", act: whaleAct },
+];
+function npcSay(n, msg) { say("npc", `<b class="who">${n}</b>：${msg}`); }
+function mmAct(n) {
+  S.bids = S.bids.filter(o => o.owner !== n.name); S.asks = S.asks.filter(o => o.owner !== n.name);
+  const mid = S.last, sp = 0.02 + Math.random() * 0.02;
+  const b = clampPx(mid - sp), a = clampPx(mid + sp);
+  if (a > b) {
+    insertOrder(newOrder("buy", b, LOT * (5 + (Math.random() * 8 | 0)), n.name));
+    insertOrder(newOrder("sell", a, LOT * (5 + (Math.random() * 8 | 0)), n.name));
+  }
+  if (Math.random() < 0.06) npcSay(n.name, `两边挂单赚差价，买 ${fmt(b)} 卖 ${fmt(a)}。方向我不赌，价差就是我的利润。`);
+}
+function valueAct(n) {
+  n.fair += (Math.random() - 0.5) * 0.01;
+  const q = LOT * (2 + (Math.random() * 6 | 0));
+  if (S.asks.length && S.asks[0].price < n.fair - 0.04) { submit("buy", "limit", S.asks[0].price, q, n.name); if (Math.random() < 0.4) npcSay(n.name, `${fmt(S.asks[0].price)}？低于我心里的估值 ${fmt(n.fair)}，捡了。`); }
+  else if (S.bids.length && S.bids[0].price > n.fair + 0.04) { submit("sell", "limit", S.bids[0].price, q, n.name); if (Math.random() < 0.4) npcSay(n.name, `涨过头了，${fmt(S.bids[0].price)} 卖给愿意接的人。`); }
+  else if (Math.random() < 0.3) submit(Math.random() < 0.5 ? "buy" : "sell", "limit", clampPx(n.fair + (Math.random() - 0.5) * 0.06), q, n.name);
+}
+function momoAct(n) {
+  const h = S.prices; if (h.length < 6) return;
+  const r = S.last - h[h.length - 6];
+  const q = LOT * (3 + (Math.random() * 6 | 0));
+  if (r > 0.03 && Math.random() < 0.7) { npcSay(n.name, "连着涨！不能踏空，市价梭了！"); submit("buy", "market", 0, q, n.name); }
+  else if (r < -0.03 && Math.random() < 0.7) { npcSay(n.name, "崩了崩了，市价先跑！"); submit("sell", "market", 0, q, n.name); }
+}
+function noiseAct(n) {
+  if (Math.random() < 0.55) return;
+  const side = Math.random() < 0.5 ? "buy" : "sell";
+  const px = clampPx(S.last + (Math.random() - 0.5) * 0.08);
+  submit(side, "limit", px, LOT * (1 + (Math.random() * 4 | 0)), n.name);
+  if (Math.random() < 0.12) npcSay(n.name, ["昨晚梦到这股要涨。", "群里说有利好。", "跌这么多，抄个底试试。", "涨了！加仓！"][Math.random() * 4 | 0]);
+}
+function whaleAct(n) {
+  if (Math.random() > 0.025) return;
+  const side = Math.random() < 0.5 ? "buy" : "sell";
+  npcSay(n.name, side === "buy" ? "这点量不够我塞牙缝的，全吃了。" : "我要出货，别挡路。");
+  const r = submit(side, "market", 0, LOT * (30 + (Math.random() * 50 | 0)), n.name);
+  if (r.filled > 0 && r.levels >= 3) {
+    unlock("liquidity");
+    lesson("流动性冲击", `大户老张的巨量市价单一口吃掉 ${r.levels} 个价位，价格瞬间跳了——盘口挂单的厚度（<b>深度</b>）决定大单进出的代价。成交量小的股票，这种冲击更剧烈。`);
+  }
+}
+/* 竞价阶段的「幽灵挂单」表演：9:17 天量买单顶高虚拟开盘价，9:19 撤单跑路 */
+function whaleCallShow() {
+  if (S.whaleShow === 0 && S.clockMin === 9 * 60 + 17) {
+    const px = clampPx(S.prevClose * 1.07);
+    S.whaleGhost = newOrder("buy", px, LOT * 200, "大户老张");
+    S.callBuys.push(S.whaleGhost); insertOrder(S.whaleGhost);
+    npcSay("大户老张", `${fmt(px)} 挂两万股买单。看好今天大涨哦，各位。`);
+    S.whaleShow = 1;
+  } else if (S.whaleShow === 1 && S.clockMin >= 9 * 60 + 19) {
+    S.callBuys = S.callBuys.filter(o => o !== S.whaleGhost);
+    S.bids = S.bids.filter(o => o !== S.whaleGhost);
+    npcSay("大户老张", "撤了。刚才那单？逗你们玩的。");
+    if (!got.has("fake-open")) lesson("虚拟开盘价可以被表演", "9:15–9:20 撤单是免费的：大户老张用两万股买单把「虚拟开盘价」顶上去、引人跟风，然后 9:19 全撤。所以 <b>9:20 前的竞价盘口不可信</b>，9:20 之后不可撤单，那 5 分钟的价格才算数。");
+    unlock("fake-open");
+    S.whaleShow = 2;
+  }
+}
+
+/* ===== 概念清单 ===== */
+const CONCEPTS = [
+  ["order-book", "订单簿：买卖双方的两个优先队列"],
+  ["spread", "价差 spread：买一与卖一的缝隙"],
+  ["call-auction", "集合竞价：最大成交量定开盘价"],
+  ["fake-open", "避坑：9:20 前的竞价盘口可被表演"],
+  ["price-priority", "价格优先：报价更好的先成交"],
+  ["time-priority", "时间优先：同价先到先得"],
+  ["maker-price", "成交价取先挂单一方的价格"],
+  ["market-order", "限价单 vs 市价单"],
+  ["slippage", "滑点：单子吃穿多个价位"],
+  ["liquidity", "流动性与盘口深度"],
+  ["limit-band", "涨跌停 ±10%"],
+  ["close-auction", "收盘集合竞价（尾盘 3 分钟不可撤）"],
+  ["t-plus-1", "T+1：今买明卖"],
+];
+const got = new Set();
+function unlock(k) {
+  if (got.has(k)) return; got.add(k);
+  renderConcepts();
+  if (got.size === CONCEPTS.length) setTimeout(() => lesson("通关 🎉", `${CONCEPTS.length} 个概念全部集齐。你已经亲手体验了第 2 章的整台撮合引擎——回去重读一遍，每一段都会对上号。`), 1200);
+}
+function renderConcepts() {
+  document.getElementById("concepts").innerHTML = CONCEPTS.map(([k, t]) => `<li class="${got.has(k) ? "got" : ""}">${t}</li>`).join("");
+  document.getElementById("gotCount").textContent = `${got.size}/${CONCEPTS.length}`;
+}
+
+/* ===== UI ===== */
+function say(cls, html) {
+  const ul = document.getElementById("feed");
+  const li = document.createElement("li"); li.className = cls; li.innerHTML = html;
+  ul.prepend(li);
+  while (ul.children.length > 60) ul.removeChild(ul.lastChild);
+}
+let lessonTimer = null;
+function lesson(title, html) {
+  const el = document.getElementById("lesson");
+  el.innerHTML = `<b>💡 ${title}</b><br>${html}`;
+  el.classList.add("show");
+  clearTimeout(lessonTimer);
+  lessonTimer = setTimeout(() => el.classList.remove("show"), 9000);
+}
+function aggBook(arr) {
+  const m = new Map();
+  arr.forEach(o => m.set(o.price, (m.get(o.price) || 0) + o.qty));
+  return [...m.entries()].map(([p, q]) => ({ p, q, mine: arr.some(o => o.price === p && o.owner === "你") }));
+}
+function renderBook() {
+  const asks = aggBook(S.asks).slice(0, 5).reverse();
+  const bids = aggBook(S.bids).slice(0, 5);
+  const maxQ = Math.max(1, ...asks.map(l => l.q), ...bids.map(l => l.q));
+  const row = (l, i, side) => `<div class="row ${side} ${l.mine ? "mine" : ""}"><span class="lvl">${side === "ask" ? "卖" : "买"}${i}</span><span class="p">${fmt(l.p)}</span><span class="q">${l.q}</span><div class="depth" style="width:${(l.q / maxQ * 100).toFixed(0)}%"></div></div>`;
+  const chg = S.last - S.prevClose;
+  const cls = chg > 0 ? "up" : chg < 0 ? "down" : "flat";
+  let mid = `<div class="last"><span class="lp ${cls}">${fmt(S.last)}</span><span class="chg ${cls}">${chg >= 0 ? "+" : ""}${(chg / S.prevClose * 100).toFixed(2)}%</span>`;
+  if (inCall()) {
+    const cx = computeCross();
+    mid += `<div class="vopen">虚拟${S.callKind === "open" ? "开盘" : "收盘"}价 ${cx ? `${fmt(cx.p)} · 可成交 ${cx.v} 股` : "——（买卖尚无交集）"}</div>`;
+  }
+  mid += `<div style="font-size:12px;color:var(--muted)">昨收 ${fmt(S.prevClose)} · 跌停 ${fmt(limitDown())} / 涨停 ${fmt(limitUp())}</div></div>`;
+  document.getElementById("book").innerHTML =
+    asks.map((l, i) => row(l, asks.length - i, "ask")).join("") + mid +
+    bids.map((l, i) => row(l, i + 1, "bid")).join("") +
+    `<div class="note">蓝框 = 有你的挂单在这一档 · A 股红涨绿跌</div>`;
+}
+function renderChart() {
+  const svg = document.getElementById("chart");
+  const h = S.prices; if (h.length < 2) { svg.innerHTML = ""; return; }
+  const w = 520, ht = 170, pad = 6;
+  const lo = Math.min(...h, S.prevClose) - 0.02, hi = Math.max(...h, S.prevClose) + 0.02;
+  const x = i => pad + i / (Math.max(h.length - 1, 59)) * (w - 2 * pad);
+  const y = v => ht - pad - (v - lo) / (hi - lo) * (ht - 2 * pad);
+  const pts = h.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const yc = y(S.prevClose).toFixed(1);
+  svg.innerHTML = `<line x1="0" y1="${yc}" x2="${w}" y2="${yc}" stroke="#cec5b1" stroke-dasharray="4 4"/><text x="4" y="${yc - 4}" font-size="11" fill="#97907f">昨收 ${fmt(S.prevClose)}</text><polyline points="${pts}" fill="none" stroke="#48709e" stroke-width="2"/>`;
+}
+function userOrders() {
+  return [...S.bids, ...S.asks].filter(o => o.owner === "你");
+}
+function renderAcct() {
+  const uniq = new Map();   // 竞价期间同一张单同时在簿和竞价数组里，按 id 去重
+  [...S.bids, ...S.asks, ...S.callBuys, ...S.callSells].forEach(o => { if (o.owner === "你") uniq.set(o.id, o); });
+  const mineAll = [...uniq.values()];
+  const pos = S.user.sellable + S.user.boughtToday + mineAll.filter(o => o.side === "sell").reduce((s, o) => s + o.qty, 0);
+  const frozenCash = mineAll.filter(o => o.side === "buy" && o.frozenAt != null).reduce((s, o) => s + o.frozenAt * o.qty, 0);
+  const mv = pos * S.last;
+  document.getElementById("acct").innerHTML =
+    `现金 <b>¥${S.user.cash.toFixed(0)}</b>${frozenCash ? ` <span class="frozen">（另有 ¥${frozenCash.toFixed(0)} 冻结在挂单里）</span>` : ""}<br>` +
+    `持仓 <b>${pos}</b> 股（可卖 ${S.user.sellable}${S.user.boughtToday ? ` · 今买 ${S.user.boughtToday} 明天才能卖` : ""}）<br>` +
+    `市值 <b>¥${mv.toFixed(0)}</b> · 总资产 <b>¥${(S.user.cash + frozenCash + mv).toFixed(0)}</b>`;
+  const mine = userOrders();
+  document.getElementById("myOrders").innerHTML = mine.map(o =>
+    `<li><span>${o.side === "buy" ? "买" : "卖"} ${fmt(o.price)} × ${o.qty}</span><button data-id="${o.id}">撤单</button></li>`).join("");
+}
+function renderAll() { renderBook(); renderChart(); renderAcct(); }
+
+/* ===== 主循环 ===== */
+function minuteStr(m) { return `${String(m / 60 | 0).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; }
+function npcCallOrders() {
+  NPCS.forEach(n => {
+    if (Math.random() < 0.6) {
+      const side = Math.random() < 0.5 ? "buy" : "sell";
+      const px = clampPx(S.last + (Math.random() - 0.48) * 0.12);
+      const o = newOrder(side, px, LOT * (2 + (Math.random() * 8 | 0)), n.name);
+      (side === "buy" ? S.callBuys : S.callSells).push(o);
+      insertOrder(o); // 竞价期间只展示、不撮合
+    }
+  });
+}
+function tick() {
+  if (S.phase === "call") {
+    S.clockMin++;
+    npcCallOrders();
+    whaleCallShow();
+    if (S.clockMin === 9 * 60 + 20) say("sys", "<b>9:20</b>：从现在起集合竞价<b>不可撤单</b>，盘口上的每一笔申报都要负责任了。");
+    if (S.clockMin >= 9 * 60 + 25) {
+      callAuctionMatch("open");
+      S.phase = "cont"; S.clockMin = 9 * 60 + 30; S.contTicks = 0;
+      document.getElementById("phaseName").textContent = "连续竞价";
+      say("sys", "<b>连续竞价开始</b>：来一单撮一单（流式处理）。价格优先、时间优先。");
+    }
+  } else if (S.phase === "cont") {
+    S.clockMin += 1; S.contTicks = (S.contTicks || 0) + 1;
+    if (S.clockMin === 11 * 60 + 30) S.clockMin = 13 * 60;
+    NPCS.forEach(n => { if (Math.random() < 0.75) n.act(n); });
+    S.prices.push(S.last);
+    if (S.prices.length > 60) S.prices.shift();
+    if (S.contTicks >= 3 && !got.has("spread") && S.bids.length && S.asks.length) {
+      unlock("spread");
+      lesson("价差 spread", `此刻买一 ${fmt(S.bids[0].price)}、卖一 ${fmt(S.asks[0].price)}，中间的缝隙就是 <b>spread</b>。想立刻成交就要跨过它——这是市价单的隐性成本，也是做市商慢慢的利润来源。`);
+    }
+    if (S.clockMin >= 14 * 60 + 57) {
+      S.phase = "closeCall"; S.callKind = "close";
+      // 存量挂单并入收盘竞价
+      [...S.bids, ...S.asks].forEach(o => (o.side === "buy" ? S.callBuys : S.callSells).push(o));
+      document.getElementById("phaseName").textContent = "收盘集合竞价";
+      say("sys", "<b>14:57</b>：连续竞价结束，进入收盘集合竞价（3 分钟，不可撤单），再做一次批处理定收盘价。");
+    }
+  } else if (S.phase === "closeCall") {
+    S.clockMin++;
+    npcCallOrders();
+    if (S.clockMin >= 15 * 60) {
+      callAuctionMatch("close");
+      S.phase = "closed";
+      document.getElementById("phaseName").textContent = "已收盘";
+      document.getElementById("btnNextDay").disabled = false;
+      say("sys", `<b>收盘</b>，收盘价 ${fmt(S.last)}。${S.user.boughtToday ? `今天买入的 ${S.user.boughtToday} 股要到明天才能卖（T+1）。` : ""}`);
+      clearInterval(S.timer); S.timer = null;
+    }
+  }
+  document.getElementById("clock").textContent = minuteStr(Math.min(S.clockMin, 15 * 60));
+  renderAll();
+}
+function startDay() {
+  S.phase = "call"; S.callKind = "open"; S.clockMin = 9 * 60 + 15; S.whaleShow = 0;
+  document.getElementById("phaseName").textContent = "集合竞价";
+  document.getElementById("btnStart").disabled = true;
+  say("sys", "<b>集合竞价开始</b>（9:15–9:25）：订单先攒着，只展示不成交，9:20 前可以撤单。你也可以挂限价单参与开盘价的形成。");
+  unlock("order-book");
+  lesson("订单簿", "左侧就是订单簿：上半是卖盘（价格升序的 min-heap），下半是买盘（价格降序的 max-heap）。每一档显示「价格 + 挂单量」，这就是第 2 章说的买卖五档。");
+  S.timer = setInterval(tick, 800 / S.speed);
+}
+
+/* ===== 交互 ===== */
+let side = "buy", type = "limit";
+document.getElementById("segSide").addEventListener("click", e => {
+  if (!e.target.dataset.v) return; side = e.target.dataset.v;
+  [...e.currentTarget.children].forEach(b => b.className = b.dataset.v === side ? (side === "buy" ? "on-buy" : "on-sell") : "");
+});
+document.getElementById("segType").addEventListener("click", e => {
+  if (!e.target.dataset.v) return; type = e.target.dataset.v;
+  [...e.currentTarget.children].forEach(b => b.className = b.dataset.v === type ? "on" : "");
+  document.getElementById("rowPrice").style.opacity = type === "market" ? .35 : 1;
+});
+document.getElementById("btnOrder").addEventListener("click", () => {
+  if (S.phase === "idle" || S.phase === "closed") { lesson("还没开盘", "先点「开始集合竞价」。"); return; }
+  const qty = Math.max(LOT, Math.round((+document.getElementById("inQty").value || 0) / LOT) * LOT);
+  const price = Math.round((+document.getElementById("inPrice").value || 0) * 100) / 100;
+  if (type === "limit" && (price > limitUp() || price < limitDown())) {
+    lesson("超出涨跌停", `限价必须在 ${fmt(limitDown())} ~ ${fmt(limitUp())} 之间（昨收 ±10%），交易所直接拒单。`);
+    unlock("limit-band"); return;
+  }
+  if (side === "buy") {
+    if (type === "market" && inCall()) { lesson("集合竞价不收市价单", "竞价阶段请用限价单申报（真实 A 股竞价段有「本方最优」等类型，这里简化为限价）。"); return; }
+    if (type === "limit" && price * qty > S.user.cash) { lesson("现金不足", `这张单需要 ¥${(price * qty).toFixed(0)}，你的可用现金只有 ¥${S.user.cash.toFixed(0)}（挂单中的钱是冻结的）。`); return; }
+  }
+  if (side === "sell") {
+    if (qty > S.user.sellable) {
+      if (S.user.boughtToday > 0) { unlock("t-plus-1"); lesson("T+1", `你今天买入的 ${S.user.boughtToday} 股今天不能卖，明天才行。可卖数量只有 ${S.user.sellable} 股（挂单中的持仓也已冻结）。A 股是 T+1，这是写进交易规则的 rate limit。`); }
+      else lesson("持仓不足", `你的可卖持仓只有 ${S.user.sellable} 股（挂单中的部分已冻结）。本模拟不允许卖空。`);
+      return;
+    }
+  }
+  if (inCall()) {
+    if (type === "market") { lesson("竞价阶段不收市价单", "集合竞价请用限价单申报。"); return; }
+    if (S.phase === "closeCall" && Math.abs(price - S.last) > S.last * 0.02 + 1e-9) {
+      lesson("收盘竞价的价格笼子", `收盘集合竞价申报限基准价 ${fmt(S.last)} 的 ±2%（${fmt(S.last * 0.98)} ~ ${fmt(S.last * 1.02)}），超出直接拒单——比盘中 ±10% 严得多，进一步压缩尾盘操纵空间。`);
+      return;
+    }
+    const frozenAt = side === "buy" ? price : null;
+    if (side === "buy") S.user.cash -= price * qty;
+    else S.user.sellable -= qty;
+    const o = newOrder(side, price, qty, "你", frozenAt);
+    (side === "buy" ? S.callBuys : S.callSells).push(o);
+    insertOrder(o);
+    say("sys", `你的限价单已申报：${side === "buy" ? "买" : "卖"} ${fmt(price)} × ${qty}，等待${S.callKind === "open" ? " 9:25 " : " 15:00 "}统一撮合。${S.phase === "closeCall" || S.clockMin >= 9 * 60 + 20 ? "现在已不可撤单。" : ""}`);
+  } else {
+    const frozenAt = side === "buy" && type === "limit" ? price : null;
+    const bestOpp = side === "buy" ? (S.asks[0] ? S.asks[0].price : null) : (S.bids[0] ? S.bids[0].price : null);
+    if (side === "buy" && type === "limit") S.user.cash -= price * qty;
+    if (side === "sell") S.user.sellable -= qty;
+    const r = submit(side, type, price, qty, "你", frozenAt);
+    if (side === "sell" && type === "market" && r.remain > 0) S.user.sellable += r.remain; // 市价卖未成部分退回
+    if (r.filled) say("sys", `你的${type === "market" ? "市价" : "限价"}单成交 ${r.filled} 股${r.remain ? `，剩余 ${r.remain} 股${type === "limit" ? "已挂入订单簿" : "已撤销"}` : ""}。`);
+    else if (type === "limit") say("sys", `你的限价单已挂入订单簿：${side === "buy" ? "买" : "卖"} ${fmt(price)} × ${qty}。`);
+    if (r.filled && type === "limit" && bestOpp != null && (side === "buy" ? price >= bestOpp : price <= bestOpp) && !got.has("price-priority")) {
+      unlock("price-priority");
+      lesson("价格优先", `你的${side === "buy" ? "买" : "卖"}价跨过了${side === "buy" ? "卖一" : "买一"}（${fmt(bestOpp)}），撮合引擎立刻先满足你——<b>报价更好的先成交</b>。对比一下：挂在队伍里等（时间优先）和报个好价插队（价格优先），是仅有的两种排序规则。`);
+    }
+  }
+  renderAll();
+});
+document.getElementById("myOrders").addEventListener("click", e => {
+  const id = +e.target.dataset.id; if (!id) return;
+  if (S.phase === "closeCall" || (S.phase === "call" && S.clockMin >= 9 * 60 + 20)) {
+    lesson("现在不可撤单", S.phase === "closeCall" ? "收盘集合竞价的 3 分钟不可撤单——防止有人表演完就跑。" : "9:20–9:25 不可撤单——你在 9:20 前看到的盘口才可能是表演，现在的申报都要负责任。");
+    return;
+  }
+  const all = [...S.bids, ...S.asks];
+  const o = all.find(x => x.id === id);
+  if (o) refundUserOrder(o);
+  S.bids = S.bids.filter(x => x.id !== id); S.asks = S.asks.filter(x => x.id !== id);
+  S.callBuys = S.callBuys.filter(x => x.id !== id); S.callSells = S.callSells.filter(x => x.id !== id);
+  say("sys", "已撤单，冻结的资金/持仓已退回。挂单没成交前随时可撤（集合竞价 9:20 后除外）。");
+  renderAll();
+});
+document.getElementById("btnStart").addEventListener("click", startDay);
+document.getElementById("btnSpeed").addEventListener("click", e => {
+  S.speed = S.speed === 1 ? 3 : 1;
+  e.target.textContent = `速度 ×${S.speed}`;
+  if (S.timer) { clearInterval(S.timer); S.timer = setInterval(tick, 800 / S.speed); }
+});
+document.getElementById("btnNextDay").addEventListener("click", () => {
+  S.day++; S.prevClose = S.last;
+  const unlockT1 = S.user.hadBuyToday;
+  S.user.sellable += S.user.boughtToday; S.user.boughtToday = 0; S.user.hadBuyToday = false;
+  S.bids = []; S.asks = []; S.prices = []; S.open = null;
+  S.callBuys = []; S.callSells = [];
+  S.phase = "idle";
+  document.getElementById("dayNum").textContent = S.day;
+  document.getElementById("phaseName").textContent = "未开盘";
+  document.getElementById("btnStart").disabled = false;
+  document.getElementById("btnNextDay").disabled = true;
+  if (unlockT1) unlock("t-plus-1");
+  say("sys", `<b>第 ${S.day} 天</b>。昨收 ${fmt(S.prevClose)}，涨跌停区间更新为 ${fmt(limitDown())} ~ ${fmt(limitUp())}。${unlockT1 ? "昨天买的股票今天可以卖了（T+1 解冻）。" : ""}`);
+  renderAll();
+});
+
+/* ===== 初始化 ===== */
+document.getElementById("npcCards").innerHTML = NPCS.map(n =>
+  `<div class="npc-card"><b>${n.name}</b> <span class="role">· ${n.role}</span><br>${n.desc}</div>`).join("");
+renderConcepts();
+renderAll();
+say("sys", "欢迎。点上方「开始集合竞价」开一天的盘。建议第一单：挂一张限价买单参与竞价，盯着「虚拟开盘价」看它怎么变——尤其是 9:17 之后。");
+</script>
+</body>
+</html>
