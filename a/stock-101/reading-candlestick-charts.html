@@ -42,7 +42,7 @@ GROUP BY bar;</code></pre>
     <li><strong>下影线</strong>是实体底端到最低价的细线，长度 = <code>min(open, close) − low</code></li>
   </ul>
 
-  <p>颜色只表示一件事：<code>close − open</code> 的符号。A 股的习惯是<strong>红涨绿跌</strong>，和美股、欧洲市场的绿涨红跌正好相反。这是文化差异不是技术差异，红色在中国是喜庆色。如果你同时看 A 股和美股行情，或者用 TradingView 这类国际软件，第一件事是确认当前配色，否则会把满屏上涨读成暴跌。</p>
+  <p>颜色只表示一件事：<code>close − open</code> 的符号。A 股的习惯是<strong>红涨绿跌</strong>，和美股、欧洲市场的绿涨红跌正好相反。这是文化差异不是技术差异，红色在中国是喜庆色。同时看 A 股和美股，或者用 TradingView 这类国际软件时，第一件事是确认当前配色，否则会把满屏上涨读成暴跌。</p>
 
   <figure>
     <p class="fig-title">图 4-1 · 一根 K 线的解剖：同一组 OHLC，只换开收顺序</p>
@@ -119,7 +119,7 @@ GROUP BY bar;</code></pre>
     <svg viewBox="0 0 720 500" role="img" aria-label="同一只股票的价格序列分别按月、周、日、5 分钟四种粒度聚合成 K 线，粒度越细趋势越难看清">
     <rect width="720" height="500" fill="#fcfcfb"/>
     <text x="24" y="24" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">月线 · 24 根（近两年，每根 = 21 个交易日）</text>
-    <text x="24" y="40" font-size="12.5" fill="#898781" font-family="system-ui, sans-serif">区间 10.00 → 18.25（+82.5%）</text>
+    <text x="24" y="40" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 10.00 → 18.25（+82.5%）</text>
     <rect x="24" y="46" width="300" height="150" fill="none" stroke="#e1e0d9"/>
     <line x1="24" y1="83.5" x2="324" y2="83.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
     <line x1="24" y1="121.0" x2="324" y2="121.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
@@ -175,7 +175,7 @@ GROUP BY bar;</code></pre>
     <text x="330" y="57" font-size="13" fill="#898781" font-family="system-ui, sans-serif">21.7</text>
     <text x="330" y="196" font-size="13" fill="#898781" font-family="system-ui, sans-serif">8.0</text>
     <text x="382" y="24" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">周线 · 26 根（近半年，每根 = 5 个交易日）</text>
-    <text x="382" y="40" font-size="12.5" fill="#898781" font-family="system-ui, sans-serif">区间 20.03 → 18.06（-9.9%）</text>
+    <text x="382" y="40" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 20.03 → 18.06（-9.9%）</text>
     <rect x="382" y="46" width="300" height="150" fill="none" stroke="#e1e0d9"/>
     <line x1="382" y1="83.5" x2="682" y2="83.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
     <line x1="382" y1="121.0" x2="682" y2="121.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
@@ -235,7 +235,7 @@ GROUP BY bar;</code></pre>
     <text x="688" y="57" font-size="13" fill="#898781" font-family="system-ui, sans-serif">21.0</text>
     <text x="688" y="196" font-size="13" fill="#898781" font-family="system-ui, sans-serif">17.2</text>
     <text x="24" y="274" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">日线 · 30 根（近 6 周，每根 = 48 根 5 分钟线）</text>
-    <text x="24" y="290" font-size="12.5" fill="#898781" font-family="system-ui, sans-serif">区间 18.92 → 18.25（-3.6%）</text>
+    <text x="24" y="290" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 18.92 → 18.25（-3.6%）</text>
     <rect x="24" y="296" width="300" height="150" fill="none" stroke="#e1e0d9"/>
     <line x1="24" y1="333.5" x2="324" y2="333.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
     <line x1="24" y1="371.0" x2="324" y2="371.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
@@ -303,7 +303,7 @@ GROUP BY bar;</code></pre>
     <text x="330" y="307" font-size="13" fill="#898781" font-family="system-ui, sans-serif">20.3</text>
     <text x="330" y="446" font-size="13" fill="#898781" font-family="system-ui, sans-serif">17.2</text>
     <text x="382" y="274" font-size="13.5" fill="#0b0b0b" font-family="system-ui, sans-serif" font-weight="600">5 分钟线 · 48 根（最后 1 个交易日）</text>
-    <text x="382" y="290" font-size="12.5" fill="#898781" font-family="system-ui, sans-serif">区间 18.38 → 18.25（-0.7%）</text>
+    <text x="382" y="290" font-size="13" fill="#898781" font-family="system-ui, sans-serif">区间 18.38 → 18.25（-0.7%）</text>
     <rect x="382" y="296" width="300" height="150" fill="none" stroke="#e1e0d9"/>
     <line x1="382" y1="333.5" x2="682" y2="333.5" stroke="#e1e0d9" stroke-dasharray="2 4"/>
     <line x1="382" y1="371.0" x2="682" y2="371.0" stroke="#e1e0d9" stroke-dasharray="2 4"/>
@@ -418,7 +418,7 @@ GROUP BY bar;</code></pre>
   <p>这背后有一个干净的数学理由。把价格近似看成带漂移的随机游走，那么在时间跨度 <code>t</code> 上，趋势带来的价格变化正比于 <code>t</code>，而波动带来的噪声正比于 <code>√t</code>。信噪比因此正比于 <code>t / √t = √t</code>。周期从日线放大到月线，跨度乘以 21，信噪比只提高约 4.6 倍——但换来的好处是，你的决策次数少了 20 倍，而<strong>每次决策都要付出真金白银的成本</strong>（第 3 章算过，一买一卖约千分之一）。</p>
 
   <div class="callout"><span class="tag">避坑</span>
-    盯短周期做「趋势判断」是新手最常见的自我损耗：5 分钟线上你一天能看到七八次「突破」和「破位」，其中绝大多数是噪声，但每一次都在诱导你下单。真按这些信号操作，一年换手几十次，光成本就能吃掉本金好几个点——而这几个点，恰好是长期年化收益里很大的一块。
+    盯短周期做「趋势判断」是新手最常见的自我损耗：5 分钟线上你一天能看到七八次「突破」和「破位」，其中绝大多数是噪声，但每一次都在诱导你下单。真按这些信号操作，一年换手几十次，光成本就能吃掉本金好几个点——而这几个点恰好是长期年化收益里很大的一块。
   </div>
 
   <h2><span class="h-num">4.3</span> 成交量：这次价格变动的置信度</h2>
@@ -465,15 +465,17 @@ GROUP BY bar;</code></pre>
 
   <div class="table-wrap">
   <table>
-    <thead><tr><th>均线</th><th>窗口长度</th><th>俗称</th><th>大致滞后</th></tr></thead>
+    <thead><tr><th>均线</th><th>窗口长度</th><th>覆盖时间</th><th>大致滞后</th></tr></thead>
     <tbody>
-      <tr><td><code>MA5</code></td><td>5 个交易日</td><td>周线（一周）</td><td>约 2 天</td></tr>
-      <tr><td><code>MA20</code></td><td>20 个交易日</td><td>月线（一个月）</td><td>约 10 天</td></tr>
-      <tr><td><code>MA60</code></td><td>60 个交易日</td><td>季线（一个季度）</td><td>约 1 个半月</td></tr>
-      <tr><td><code>MA250</code></td><td>250 个交易日</td><td>年线（A 股一年约 242～244 个交易日，也有人用 MA240）</td><td>约半年</td></tr>
+      <tr><td><code>MA5</code></td><td>5 个收盘价</td><td>约 1 周</td><td>约 2 天</td></tr>
+      <tr><td><code>MA20</code></td><td>20 个收盘价</td><td>约 1 个月</td><td>约 10 天</td></tr>
+      <tr><td><code>MA60</code></td><td>60 个收盘价</td><td>约 1 个季度</td><td>约 1 个半月</td></tr>
+      <tr><td><code>MA250</code></td><td>250 个收盘价</td><td>约 1 年（A 股一年约 242～244 个交易日，也有人用 MA240）</td><td>约半年</td></tr>
     </tbody>
   </table>
   </div>
+
+  <p>口语里这几条均线常被叫成「周线」「月线」「年线」，和 4.2 节讲的周 K 线、月 K 线完全是两回事——前者是画在日线图上的一条平滑曲线，后者是换了聚合周期的另一张图。听别人讲盘时要看上下文，这是个高频的沟通误会。</p>
 
   <p><strong>金叉</strong>是快线上穿慢线，<strong>死叉</strong>是快线下穿慢线。剥掉话术，它的定义就是：最近 5 天的均价刚刚超过最近 20 天的均价。这是一个关于<strong>已经发生的事</strong>的陈述——等到 MA5 穿过 MA20，那波上涨早就走完一段了。</p>
 
@@ -890,7 +892,7 @@ GROUP BY bar;</code></pre>
   </div>
 
   <div class="callout"><span class="tag">避坑</span>
-    判断一套「战法」是不是过拟合，问五个问题：<strong>①</strong> 有没有样本外或前推验证，还是只展示历史标注图；<strong>②</strong> 一共有几个可调参数（自由度越多越可疑）；<strong>③</strong> 回测扣了多少手续费、印花税和滑点；<strong>④</strong> 展示的是全部结果还是精选案例；<strong>⑤</strong> 对方靠什么赚钱——靠这套方法自己交易，还是靠卖课、卖软件、收会员费。第五个问题的答案通常最有信息量。
+    判断一套「战法」是不是过拟合，问五个问题：<strong>1.</strong> 有没有样本外或前推验证，还是只展示历史标注图；<strong>2.</strong> 一共有几个可调参数（自由度越多越可疑）；<strong>3.</strong> 回测扣了多少手续费、印花税和滑点；<strong>4.</strong> 展示的是全部结果还是精选案例；<strong>5.</strong> 对方靠什么赚钱——靠这套方法自己交易，还是靠卖课、卖软件、收会员费。最后一个问题的答案通常最有信息量。
   </div>
 
   <h2><span class="h-num">4.7</span> 复权：不做这一步，你看到的历史是错的</h2>
