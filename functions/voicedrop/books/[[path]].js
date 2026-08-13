@@ -111,8 +111,10 @@ async function collectBooks(env) {
 
   // 书名 = <slug>/index.html 的 <title>；作者 = 同页 <meta name="author">（写书
   // skill 2026-08-11 起按提交者署名输出；没有此 meta 的存量书都是建硕的）。
+  // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
+  // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。
   const books = await Promise.all(slugs.map(async (slug) => {
-    let title = slug, author = '';
+    let title = slug, author = '', createdAt = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
       if (obj) {
@@ -122,12 +124,22 @@ async function collectBooks(env) {
         const a = /<meta\s+name="author"\s+content="([^"]*)"/i.exec(html);
         if (a && a[1].trim()) author = a[1].trim().slice(0, 20);
       }
+      let cursor;
+      do {
+        const listed = await env.FILES.list({ prefix: `${PUBLISHER}${slug}/`, limit: 1000, ...(cursor ? { cursor } : {}) });
+        for (const o of listed.objects || []) {
+          const t = new Date(o.uploaded).getTime();
+          if (t && (!createdAt || t < createdAt)) createdAt = t;
+        }
+        cursor = listed.truncated ? listed.cursor : undefined;
+      } while (cursor);
     } catch {}
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author };
+    return { slug, title, main, sub, c, c2, author, createdAt };
   }));
-  books.sort((a, b) => String(a.title).localeCompare(String(b.title), 'zh'));
+  // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
+  books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
   return books;
 }
 
