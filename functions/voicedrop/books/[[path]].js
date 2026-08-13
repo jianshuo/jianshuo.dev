@@ -11,11 +11,13 @@
 // key 钉死在该 scope 的 books/ 尾段下，桶里其他东西（articles/、WECHAT.json…）
 // 够不着，所以不需要 photo 那样的文件类型白名单。
 //
-// GET /books/        → 书架索引：一本书一个「书封」（竖排题签 + 副题 + 印章，
-//                      封面色按 slug 哈希稳定分配），书名取自 <slug>/index.html
-//                      的 <title>，不平铺夹内文件。
+// GET /books/        → 书架索引：与 iOS「写书」tab（BooksShelfView.swift）**完全同款**
+//                      的实体书书架——两本一排 + 木搁板，第一格是「写书」入口（链到
+//                      voicedrop.cn 落地页），有 cover.jpg 铺封面图，没有的用布面缺省
+//                      封面（封面色按 slug 哈希稳定分配），书脊/页口/投影一比一复刻。
+//                      改这边样式记得同步看 iOS 那份，两边保持一致。
 // GET /books/?format=json → 同一份索引的 JSON 版（iOS「写书」tab 图书馆用）：
-//                      {books:[{slug,title,main,sub,c,c2,cover,chapters}]}。
+//                      {books:[{slug,title,main,sub,c,c2,author,cover,chapters,createdAt}]}。
 //                      cover = 该书文件夹里有没有 cover.jpg；chapters = 顶层
 //                      章节 html 数（排除 index/intro）。
 // GET /books/<name>  → 文件本体，inline 展示；html/md/txt 只缓存 5 分钟（书会
@@ -112,9 +114,10 @@ async function collectBooks(env) {
   // 书名 = <slug>/index.html 的 <title>；作者 = 同页 <meta name="author">（写书
   // skill 2026-08-11 起按提交者署名输出；没有此 meta 的存量书都是建硕的）。
   // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
-  // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。
+  // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
+  // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
   const books = await Promise.all(slugs.map(async (slug) => {
-    let title = slug, author = '', createdAt = 0;
+    let title = slug, author = '', createdAt = 0, cover = false, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
       if (obj) {
@@ -130,35 +133,29 @@ async function collectBooks(env) {
         for (const o of listed.objects || []) {
           const t = new Date(o.uploaded).getTime();
           if (t && (!createdAt || t < createdAt)) createdAt = t;
+          const rel = o.key.slice(PUBLISHER.length + slug.length + 1);
+          if (rel.includes('/')) continue;                     // 只看顶层文件
+          const leaf = rel.toLowerCase();
+          if (leaf === 'cover.jpg') cover = true;
+          else if (/\.html?$/.test(leaf) && leaf !== 'index.html' && leaf !== 'intro.html') chapters++;
         }
         cursor = listed.truncated ? listed.cursor : undefined;
       } while (cursor);
     } catch {}
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author, createdAt };
+    return { slug, title, main, sub, c, c2, author, cover, chapters, createdAt };
   }));
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
   return books;
 }
 
-/// JSON 索引（iOS 图书馆）。在 collectBooks 之上补两样每本书的实体感数据：
-/// cover.jpg 有没有（有就直接铺封面图）、顶层章节 html 数（index/intro 不算章）。
+/// JSON 索引（iOS 图书馆）。cover / chapters / createdAt 已在 collectBooks 里
+/// 随全量列举一并算好，这里直接吐。
 async function indexJSON(env) {
   const books = await collectBooks(env);
-  const enriched = await Promise.all(books.map(async (b) => {
-    const [coverObj, listed] = await Promise.all([
-      env.FILES.head(`${PUBLISHER}${b.slug}/cover.jpg`).catch(() => null),
-      env.FILES.list({ prefix: `${PUBLISHER}${b.slug}/`, delimiter: '/', limit: 1000 }).catch(() => null),
-    ]);
-    const chapters = (listed?.objects || [])
-      .map((o) => o.key.split('/').pop().toLowerCase())
-      .filter((leaf) => /\.html?$/.test(leaf) && leaf !== 'index.html' && leaf !== 'intro.html')
-      .length;
-    return { ...b, cover: !!coverObj, chapters };
-  }));
-  return new Response(JSON.stringify({ books: enriched }), {
+  return new Response(JSON.stringify({ books }), {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'public, max-age=60',
@@ -167,85 +164,85 @@ async function indexJSON(env) {
   });
 }
 
+// 与 iOS BooksShelfView.swift 一比一：色值 / 圆角 / 间距 / 阴影都从那边抄，
+// 改任何一边都要同步另一边。SwiftUI shadow(radius:r) ≈ CSS blur 2r。
 async function index(env) {
   const books = await collectBooks(env);
 
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  // 题签单列不换行，字号按主题长度分级，保证再长也不折列。
-  const sizeClass = (n) => (n <= 5 ? 's5' : n <= 7 ? 's7' : n <= 9 ? 's9' : n <= 12 ? 's12' : 's99');
+  const metaLine = (b) => (b.chapters > 0 ? `${b.chapters} 章` : (b.sub ? esc(b.sub) : '&nbsp;'));
 
-  // 印章 = 作者名的短形（中文 3 字去姓、超长取前 2；存量无 author 的书归建硕）。
-  const sealOf = (author) => {
-    const a = (author || '').trim();
-    if (!a) return '建硕';
-    const chars = [...a];
-    if (/^[㐀-鿿]+$/.test(a)) return chars.length <= 2 ? a : chars.slice(-2).join('');
-    return chars.slice(0, 2).join('').toUpperCase();
+  const bookCell = (b) => {
+    const href = `/books/${encodeURI(b.slug)}/`;
+    const face = b.cover
+      ? `<img src="${href}cover.jpg" alt="" loading="lazy">`
+      : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
+    return `<a class="cell" href="${href}" title="${esc(b.title)}">` +
+      `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i></span>` +
+      `<span class="cap"><b>${esc(b.main)}</b><small>${metaLine(b)}</small></span></a>`;
   };
-  const covers = books.map((b) =>
-    `<a class="book" href="/books/${encodeURI(b.slug)}/" style="--c:${b.c};--c2:${b.c2}" title="${esc(b.title)}">` +
-      `<span class="slip"><span class="t ${sizeClass([...b.main].length)}">${esc(b.main)}</span></span>` +
-      (b.sub ? `<span class="sub">${esc(b.sub)}</span>` : '') +
-      `<span class="seal">${esc(sealOf(b.author))}</span></a>`).join('\n');
+  // 第一格固定是「写书」入口（App 里开 BookWritingSheet，网页上进 VoiceDrop 落地页）。
+  const writeCell = `<a class="cell" href="/">` +
+    `<span class="coverW"><span class="plus">+</span><span class="wz">写书</span></span>` +
+    `<span class="cap"><b>写一本新书</b><small>&nbsp;</small></span></a>`;
+
+  const cells = [writeCell, ...books.map(bookCell)];
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 2) {
+    rows.push(`<div class="row">${cells[i]}${cells[i + 1] || '<span></span>'}</div><div class="shelfbar"></div>`);
+  }
 
   const html = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>书架 · VoiceDrop</title>
 <style>
-  :root{--paper:#F6F1E6;--ink:#26221B;--muted:#8A8072;--slip:#F4EDDD;--slip-ink:#2A2520;--seal:#A63A2B}
+  /* 逐项对应 BooksShelfView.swift：appBG FAF6EF / ink 2A2521 / metaChrome A89E8E /
+     recordRed E5392E / 奶油白 F7F1DF / 搁板 E3D7C2→C9B99E */
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);
-    font:15px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-    background-image:radial-gradient(rgba(38,34,27,.028) 1px,transparent 1px);background-size:22px 22px}
-  main{max-width:960px;margin:0 auto;padding:44px 20px 72px}
-  header{text-align:center;margin-bottom:40px}
-  h1{font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,serif;
-    font-size:34px;font-weight:900;letter-spacing:.55em;text-indent:.55em;margin:0}
-  .count{color:var(--muted);font-size:12.5px;letter-spacing:.18em;margin-top:10px}
-  .count::before,.count::after{content:"·";margin:0 .8em;opacity:.5}
-  .shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:26px 20px}
-  @media (min-width:700px){.shelf{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:34px 26px}}
-  .book{position:relative;display:block;aspect-ratio:105/148;
-    background:linear-gradient(150deg,var(--c) 0%,var(--c2) 100%);
-    border-radius:2px 7px 7px 2px;text-decoration:none;
-    box-shadow:0 1px 2px rgba(38,34,27,.18),0 6px 16px rgba(38,34,27,.16);
-    transition:transform .18s ease,box-shadow .18s ease;-webkit-tap-highlight-color:transparent}
-  .book:hover{transform:translateY(-5px);
-    box-shadow:0 2px 4px rgba(38,34,27,.16),0 14px 28px rgba(38,34,27,.22)}
-  .book:focus-visible{outline:3px solid var(--seal);outline-offset:3px}
-  @media (prefers-reduced-motion:reduce){.book{transition:none}.book:hover{transform:none}}
-  .book::before{content:"";position:absolute;inset:0 auto 0 0;width:11px;border-radius:2px 0 0 2px;
-    background:linear-gradient(90deg,rgba(0,0,0,.30),rgba(0,0,0,.10) 55%,rgba(255,255,255,.14) 88%,rgba(0,0,0,.12));
-    pointer-events:none}
-  .book::after{content:"";position:absolute;inset:0;border-radius:inherit;
-    background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px),
-               repeating-linear-gradient(90deg,rgba(0,0,0,.03) 0 1px,transparent 1px 3px);
-    pointer-events:none}
-  .slip{position:absolute;top:9px;left:17px;z-index:1;background:var(--slip);
-    padding:12px 6px 14px;writing-mode:vertical-rl;max-height:76%;
-    border-radius:1px;box-shadow:0 1px 2px rgba(0,0,0,.28)}
-  .slip::after{content:"";position:absolute;inset:3px;border:1px solid rgba(42,37,32,.22)}
-  .t{font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,serif;
-    font-weight:900;line-height:1;color:var(--slip-ink);display:block;
-    white-space:nowrap;max-height:100%;overflow:hidden}
-  .s5{font-size:20px;letter-spacing:.14em}
-  .s7{font-size:16.5px;letter-spacing:.12em}
-  .s9{font-size:14px;letter-spacing:.10em}
-  .s12{font-size:12px;letter-spacing:.06em}
-  .s99{font-size:10.5px;letter-spacing:.04em;white-space:normal}
-  .sub{position:absolute;top:14px;right:9px;z-index:1;writing-mode:vertical-rl;
-    max-height:62%;overflow:hidden;font-size:10.5px;line-height:1.35;
-    letter-spacing:.12em;color:rgba(255,255,255,.72)}
-  .seal{position:absolute;right:11px;bottom:11px;z-index:1;width:27px;height:27px;
-    background:var(--seal);border-radius:3.5px;display:flex;align-items:center;justify-content:center;
-    writing-mode:vertical-rl;font-family:"Songti SC","Noto Serif SC",STSong,serif;
-    font-size:10.5px;line-height:1.15;letter-spacing:.05em;color:#F6F1E6;
-    box-shadow:0 1px 2px rgba(0,0,0,.25);opacity:.95}
-  .empty{color:var(--muted);text-align:center;margin-top:60px}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:#FAF6EF;color:#2A2521;
+    font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  main{max-width:440px;margin:0 auto;padding:6px 20px 44px}
+  /* minmax(0,1fr)：1fr 的隐式 min-content 下限会被 nowrap 长书名撑破列宽
+     （封面按 0.7 比例跟着变高，同排两本高矮不一），钉死为 0 让 ellipsis 生效。 */
+  .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}
+  .cell{display:block;text-decoration:none;-webkit-tap-highlight-color:transparent}
+  .cover,.coverW{position:relative;display:block;aspect-ratio:0.7;overflow:hidden;
+    border-radius:2px 5px 5px 2px}
+  .cover{background:linear-gradient(135deg,var(--c),var(--c2));
+    box-shadow:0 7px 16px rgba(60,45,30,.35),0 2px 4px rgba(60,45,30,.20)}
+  .cover::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(190px at 25% 15%,rgba(255,255,255,.10),transparent)}
+  .cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .cloth{position:absolute;inset:0;padding:26px 16px 0 24px;display:block}
+  .cloth b{display:block;font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,serif;
+    font-size:22px;font-weight:700;letter-spacing:3px;line-height:1.36;color:#F7F1DF;
+    text-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .cloth i{display:block;width:26px;height:1px;background:rgba(247,241,223,.55);margin:9px 0}
+  .cloth small{display:block;font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,serif;
+    font-size:11.5px;line-height:1.55;color:rgba(247,241,223,.72)}
+  .spine{position:absolute;inset:0 auto 0 0;width:13px;pointer-events:none;
+    background:linear-gradient(90deg,rgba(0,0,0,.36) 0,rgba(0,0,0,.10) 55%,rgba(255,255,255,.12) 100%)}
+  .edge{position:absolute;inset:0 0 0 auto;width:3px;pointer-events:none;
+    background:repeating-linear-gradient(180deg,rgba(255,255,255,.85) 0 1px,rgba(214,202,180,.9) 1px 2px)}
+  .coverW{background:#F3ECE0;border:1.5px dashed #CFC0A6;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px}
+  .plus{width:34px;height:34px;border-radius:50%;background:#E5392E;color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;
+    line-height:1;box-shadow:0 3px 9px rgba(229,57,46,.30)}
+  .wz{font-size:15px;font-weight:600;letter-spacing:1px;color:#6F685D}
+  .cap{display:block;margin-top:9px}
+  .cap b{display:block;font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,serif;
+    font-size:14.5px;font-weight:600;color:#2A2521;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cap small{display:block;margin-top:2px;font-size:12.5px;color:#A89E8E;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .shelfbar{height:6px;border-radius:1px;margin:8px -6px 14px;
+    background:linear-gradient(#E3D7C2,#C9B99E);
+    box-shadow:0 3px 7px rgba(120,95,60,.18)}
 </style></head>
 <body><main>
-<header><h1>书架</h1><p class="count">VoiceDrop&nbsp;&nbsp;共 ${books.length} 册</p></header>
-${books.length ? `<div class="shelf">${covers}</div>` : '<p class="empty">还没有书。</p>'}
+${rows.join('\n')}
 </main></body></html>`;
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
