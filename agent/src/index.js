@@ -28,7 +28,7 @@ import { writeLlmLog } from "./llmlog.js";
 import { QUEUE_TABLE_SQL, makeSqlStore, ArticleQueue, normalizeAnchor } from "./queue.js";
 import { runEditTurn } from "./edit-turn.js";
 import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
-import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
+import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, bookReviseCostUY, BOOK_REVISE_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
 import { ensureAccount, balanceUY, debit, editCount, getLedger, grantBucket, allAccounts, mintLedger, referralLedger, usageSummary } from "./usage_store.js";
 import { handleMintRoutes, feedQuote } from "./mint.js";
 import { handleIapRoute } from "./iap.js";
@@ -845,7 +845,8 @@ export async function handleUsageRoute(url, request, env) {
       granted_suanli: r1(uyToSuanli(a.granted_uy)), spent_suanli: r1(uyToSuanli(a.spent_uy)) });
   }
 
-  // 写书扣费（lab.jianshuo.dev /api/book 调用，转发用户 bearer）：一口价 320 算力。
+  // 写书/修书扣费（lab.jianshuo.dev /api/book* 调用，转发用户 bearer）：一口价按算力。
+  // kind 缺省 = 写书 320；kind:"revise" = 修书 40（写好的书按主人指令改一轮）。
   // 余额不足 402（不扣）；成功即记账并返回新余额。dry=true 只验余额不扣费。
   // 这同时就是写书的准入门槛：伪造随机 token 的新账户只有 200 注册赠送，不够一本书。
   if (url.pathname === "/agent/usage/book-charge" && request.method === "POST") {
@@ -853,16 +854,22 @@ export async function handleUsageRoute(url, request, env) {
     if (!scope) return J({ error: "unauthorized" }, 401);
     if (!env.USAGE) return J({ error: "degraded" }, 503);
     const b = await request.json().catch(() => ({}));
+    const revise = b.kind === "revise";
+    const [costUY, priceSuanli, reason] = revise
+      ? [bookReviseCostUY(), BOOK_REVISE_SUANLI, "book-revise"]
+      : [bookCostUY(), BOOK_SUANLI, "book"];
     const now = Date.now();
     const bal = await ensureAccount(env.USAGE, scope, now);
-    if (bal < bookCostUY())
-      return J({ error: "no-credit", need_suanli: BOOK_SUANLI, suanli: r1(uyToSuanli(bal)) }, 402);
+    if (bal < costUY)
+      return J({ error: "no-credit", need_suanli: priceSuanli, suanli: r1(uyToSuanli(bal)) }, 402);
     // dry 也带 need_suanli：客户端两种结果拿到同一个价目字段，价格不用写死在 App 里。
-    if (b.dry) return J({ ok: true, dry: true, scope, need_suanli: BOOK_SUANLI, suanli: r1(uyToSuanli(bal)) });
-    await debit(env.USAGE, scope, bookCostUY(), "book",
-      b.seed ? { seed: String(b.seed).slice(0, 200) } : null, now);
+    if (b.dry) return J({ ok: true, dry: true, scope, need_suanli: priceSuanli, suanli: r1(uyToSuanli(bal)) });
+    const meta = revise
+      ? (b.slug ? { slug: String(b.slug).slice(0, 80) } : null)
+      : (b.seed ? { seed: String(b.seed).slice(0, 200) } : null);
+    await debit(env.USAGE, scope, costUY, reason, meta, now);
     const after = await balanceUY(env.USAGE, scope, now);
-    return J({ ok: true, scope, charged_suanli: BOOK_SUANLI, suanli: r1(uyToSuanli(after)) });
+    return J({ ok: true, scope, charged_suanli: priceSuanli, suanli: r1(uyToSuanli(after)) });
   }
 
   if (url.pathname === "/agent/usage/ledger" && request.method === "GET") {

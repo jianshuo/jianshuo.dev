@@ -8,7 +8,7 @@ import { fakeD1, usageSql } from "./fakes.js";
 import { handleUsageRoute } from "../src/index.js";
 import { grantBucket } from "../src/usage_store.js";
 import { anonScopeFromToken } from "../../functions/lib/auth.js";
-import { BOOK_SUANLI, suanliToUY } from "../src/usage.js";
+import { BOOK_SUANLI, BOOK_REVISE_SUANLI, suanliToUY } from "../src/usage.js";
 
 const SQL = usageSql();
 const PATH = "/agent/usage/book-charge";
@@ -61,5 +61,25 @@ describe("book-charge", () => {
     expect(spends.length).toBe(1);
     expect(spends[0].reason).toBe("book");
     expect(JSON.parse(spends[0].detail).seed).toBe("熵");
+  });
+
+  it("kind:revise → 修书价 40，记 book-revise 流水带 slug；注册赠送 200 就够", async () => {
+    const db = fakeD1(SQL);
+    const env = { USAGE: db, SESSION_SECRET: "" };
+    const tok = "anon_revise_token_abcdefghijklmnop";
+    // dry：新账户 200 ≥ 40，过且带修书价目
+    const dry = await call(env, { token: tok, body: { kind: "revise", dry: true } });
+    expect(dry.status).toBe(200);
+    expect((await dry.json()).need_suanli).toBe(BOOK_REVISE_SUANLI);
+    // 真扣
+    const r = await call(env, { token: tok, body: { kind: "revise", slug: "entropy" } });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.charged_suanli).toBe(BOOK_REVISE_SUANLI);
+    expect(Math.round(body.suanli)).toBe(200 - BOOK_REVISE_SUANLI);
+    const spends = db.prepare("SELECT reason, detail FROM ledger WHERE kind=\'spend\'").bind().all().results;
+    expect(spends.length).toBe(1);
+    expect(spends[0].reason).toBe("book-revise");
+    expect(JSON.parse(spends[0].detail).slug).toBe("entropy");
   });
 });

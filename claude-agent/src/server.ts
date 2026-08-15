@@ -7,7 +7,8 @@
  * itself only listens on localhost and trusts Caddy.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -193,7 +194,83 @@ async function getSessionMessages(id: string) {
 // 认证不走 Caddy basic_auth（Caddyfile 对此路径豁免）：客户端带 VoiceDrop 用户
 // bearer（anon_*/session JWT），这里拿它去 jianshuo.dev whoami 验真——app 里零内置密钥。
 const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80);
+const REVISE_MAX_TURNS = Number(process.env.REVISE_MAX_TURNS ?? 50);
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
+
+// --- 书的登记簿（bookmeta）：每本书一份 JSON，主人 + 持久对话线 ---
+//
+// bookmeta/<slug>.json = { slug, scope, author, createdAt, thread: [entry…] }
+// entry = { ts, kind: "create"|"revise", instruction, sessionId?, status:
+//           "running"|"done"|"failed", reply?, error? }
+// 这是「谁能修这本书」的准入真源（scope = 创建时扣费的账户），也是 App 里
+// 「修改这本书」页面读的那条永久对话历史。sessionId 指向 SDK 落盘的
+// .claude/projects/**/<sessionId>.jsonl 完整过程（lab 网页 /api/sessions/<id> 可看）。
+const BOOKMETA_DIR = process.env.BOOKMETA_DIR ?? join(__dirname, "..", "bookmeta");
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+type ThreadEntry = {
+  ts: number;
+  kind: "create" | "revise";
+  instruction: string;
+  sessionId?: string;
+  status: "running" | "done" | "failed";
+  reply?: string;
+  error?: string;
+};
+type BookMeta = { slug: string; scope: string; author: string; createdAt: number; thread: ThreadEntry[] };
+
+function metaPath(slug: string): string {
+  return join(BOOKMETA_DIR, slug + ".json");
+}
+async function readBookMeta(slug: string): Promise<BookMeta | null> {
+  try {
+    return JSON.parse(await readFile(metaPath(slug), "utf8"));
+  } catch {
+    return null;
+  }
+}
+// 单进程低频写，串行化一下防「读-改-写」互相覆盖（create 收尾与 revise 并发时）。
+let metaWriteChain: Promise<unknown> = Promise.resolve();
+function writeBookMeta(meta: BookMeta): Promise<void> {
+  const p = metaWriteChain.then(async () => {
+    await mkdir(BOOKMETA_DIR, { recursive: true });
+    await writeFile(metaPath(meta.slug), JSON.stringify(meta, null, 2) + "\n");
+  });
+  metaWriteChain = p.catch(() => {});
+  return p as Promise<void>;
+}
+async function patchThreadEntry(slug: string, ts: number, patch: Partial<ThreadEntry>): Promise<void> {
+  const meta = await readBookMeta(slug);
+  if (!meta) return;
+  const e = meta.thread.find((x) => x.ts === ts);
+  if (!e) return;
+  Object.assign(e, patch);
+  await writeBookMeta(meta);
+}
+
+// 写书 job 起跑时还不知道 slug（slug 是建筑师中途起的），所以把任务号 jobId 塞进
+// prompt 让 agent 写进 book.json；收尾时拿 jobId 去工作目录里反查 slug。
+// 扫两处：WORKSPACE（修书/新版写书的耐久工作目录）和 /tmp（旧约定；PrivateTmp
+// 下与本进程同命名空间，job 刚结束时还在）。
+async function findSlugByJobId(jobId: string): Promise<string | null> {
+  for (const root of [WORKSPACE, "/tmp"]) {
+    let dirs: string[];
+    try {
+      dirs = await readdir(root);
+    } catch {
+      continue;
+    }
+    for (const d of dirs) {
+      try {
+        const j = JSON.parse(await readFile(join(root, d, "book.json"), "utf8"));
+        if (j?.jobId === jobId && typeof j?.slug === "string" && SLUG_RE.test(j.slug)) return j.slug;
+      } catch {
+        /* not a book dir */
+      }
+    }
+  }
+  return null;
+}
 
 // 认证 = 计费（2026-08-10 起，替代早前的「须有成文文章 + 每日限额」门槛）：
 // 转发用户 bearer 到 agent worker 的 book-charge，一口价扣 320 算力，扣成功才开写。
@@ -201,7 +278,7 @@ const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/age
 // 取消——算力就是闸门。dry=true 只验余额不扣（部署冒烟 + App 预检）。
 async function chargeBook(
   auth: string | undefined,
-  seed: string,
+  extra: { seed?: string; slug?: string; kind?: "revise" },
   dry: boolean,
 ): Promise<{ status: number; body: any }> {
   if (!auth?.startsWith("Bearer ")) return { status: 401, body: { error: "bad token" } };
@@ -209,12 +286,24 @@ async function chargeBook(
     const r = await fetch(BOOK_CHARGE_URL, {
       method: "POST",
       headers: { Authorization: auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ seed: seed.slice(0, 200), dry }),
+      body: JSON.stringify({ ...extra, seed: extra.seed?.slice(0, 200), dry }),
     });
     const body = await r.json().catch(() => ({}));
     return { status: r.status, body };
   } catch {
     return { status: 502, body: { error: "charge unreachable" } };
+  }
+}
+
+// 用 bearer 问 files API 这是谁（history 只读不扣费，用这个拿 scope 做主人校验）。
+async function fetchScope(auth: string | undefined): Promise<string> {
+  if (!auth?.startsWith("Bearer ")) return "";
+  try {
+    const r = await fetch("https://jianshuo.dev/files/api/whoami", { headers: { Authorization: auth } });
+    if (!r.ok) return "";
+    return String(((await r.json()) as any)?.scope ?? "");
+  } catch {
+    return "";
   }
 }
 
@@ -236,12 +325,17 @@ async function fetchAuthorName(auth: string | undefined): Promise<string> {
 }
 
 function runBookJob(seed: string, scope: string, author: string) {
-  console.log(`[book] start scope=${scope} author=${author || "-"} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
+  const jobId = randomUUID();
+  const startedAt = Date.now();
+  console.log(`[book] start scope=${scope} author=${author || "-"} job=${jobId} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author
     ? `作者署名「${author}」——book.json 的 author 字段用这个名字，封面/页脚照此署名。`
     : `提交者没有留名字——book.json 不写 author 字段，全书不署名（不要默认署任何人名）。`;
   const q = query({
-    prompt: `用 wjs-voicedrop-writing-book skill 写一本书。${byline}\n种子：\n${seed}`,
+    prompt:
+      `用 wjs-voicedrop-writing-book skill 写一本书。${byline}\n` +
+      `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
+      `种子：\n${seed}`,
     options: {
       cwd: WORKSPACE,
       model: MODEL,
@@ -251,16 +345,94 @@ function runBookJob(seed: string, scope: string, author: string) {
     },
   });
   (async () => {
+    let sessionId = "";
+    let ok = false;
+    let reply = "";
     try {
       for await (const msg of q as AsyncIterable<any>) {
-        if (msg.type === "result")
+        if (msg.type === "system" && msg.subtype === "init" && msg.session_id) sessionId = msg.session_id;
+        if (msg.type === "result") {
+          ok = msg.subtype === "success";
+          reply = typeof msg.result === "string" ? msg.result : "";
           console.log(
             `[book] done scope=${scope} turns=${msg.num_turns} cost=${msg.total_cost_usd}` +
-              (msg.subtype !== "success" ? ` ERROR=${msg.subtype}` : ""),
+              (ok ? "" : ` ERROR=${msg.subtype}`),
           );
+        }
       }
     } catch (e) {
       console.error("[book] job failed", e);
+    }
+    // 收尾登记：jobId → slug → bookmeta（主人 + 对话线第一条）。找不到 slug 就落
+    // _unmatched 便于人工对号——绝不让一本已扣费的书没有主人记录。
+    try {
+      const slug = await findSlugByJobId(jobId);
+      const entry: ThreadEntry = {
+        ts: startedAt,
+        kind: "create",
+        instruction: seed.slice(0, 4000),
+        ...(sessionId ? { sessionId } : {}),
+        status: ok ? "done" : "failed",
+        ...(reply ? { reply: reply.slice(0, 4000) } : {}),
+      };
+      if (slug) {
+        const meta = (await readBookMeta(slug)) ?? { slug, scope, author, createdAt: startedAt, thread: [] };
+        meta.thread.push(entry);
+        await writeBookMeta(meta);
+        console.log(`[book] registered slug=${slug} scope=${scope} session=${sessionId}`);
+      } else {
+        await mkdir(BOOKMETA_DIR, { recursive: true });
+        await writeFile(
+          join(BOOKMETA_DIR, `_unmatched-${jobId}.json`),
+          JSON.stringify({ jobId, scope, author, ...entry }, null, 2) + "\n",
+        );
+        console.error(`[book] job=${jobId} finished but no book.json carries this jobId — wrote _unmatched`);
+      }
+    } catch (e) {
+      console.error("[book] register failed", e);
+    }
+  })();
+}
+
+// 修书 job：不 resume 写书旧 session（子 agent 的正文本来就不在主对话里，背着整段
+// 历史只多花钱）——每次修改都是全新 session，以工作目录/线上成书这些「文件」为真源。
+function runReviseJob(slug: string, scope: string, author: string, instruction: string, entryTs: number) {
+  console.log(`[revise] start slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
+  const byline = author ? `这本书署名「${author}」，改动不要动署名。` : "这本书不署名，保持不署名。";
+  const q = query({
+    prompt:
+      `用 wjs-voicedrop-writing-book skill 的「修书模式」修改一本已出版的书。\n` +
+      `slug：${slug}\n${byline}\n` +
+      `书的主人提出的修改指令：\n${instruction}\n\n` +
+      `要求：只改与指令相关的章节/目录/封面，其余一律不动；改完把受影响的页面重新发布；` +
+      `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。`,
+    options: {
+      cwd: WORKSPACE,
+      model: MODEL,
+      maxTurns: REVISE_MAX_TURNS,
+      permissionMode: "bypassPermissions",
+      systemPrompt: { type: "preset", preset: "claude_code" },
+    },
+  });
+  (async () => {
+    try {
+      for await (const msg of q as AsyncIterable<any>) {
+        if (msg.type === "system" && msg.subtype === "init" && msg.session_id)
+          await patchThreadEntry(slug, entryTs, { sessionId: msg.session_id });
+        if (msg.type === "result") {
+          const ok = msg.subtype === "success";
+          const reply = typeof msg.result === "string" ? msg.result.trim() : "";
+          await patchThreadEntry(slug, entryTs, {
+            status: ok ? "done" : "failed",
+            ...(reply ? { reply: reply.slice(0, 4000) } : {}),
+            ...(ok ? {} : { error: String(msg.subtype) }),
+          });
+          console.log(`[revise] done slug=${slug} turns=${msg.num_turns} cost=${msg.total_cost_usd}` + (ok ? "" : ` ERROR=${msg.subtype}`));
+        }
+      }
+    } catch (e: any) {
+      console.error("[revise] job failed", e);
+      await patchThreadEntry(slug, entryTs, { status: "failed", error: String(e?.message ?? e) }).catch(() => {});
     }
   })();
 }
@@ -274,7 +446,7 @@ async function handleBook(req: IncomingMessage, res: ServerResponse, payload: an
   }
   // 扣费即准入：402 = 算力不足（body 里带 need_suanli/suanli 供 App 展示），
   // 401 = token 无效。扣成功立刻开写——没有数量限制。
-  const charge = await chargeBook(req.headers.authorization, seed, !!payload?.dry);
+  const charge = await chargeBook(req.headers.authorization, { seed }, !!payload?.dry);
   if (charge.status !== 200 || !charge.body?.ok) {
     res.writeHead(charge.status === 200 ? 502 : charge.status, json).end(JSON.stringify(charge.body));
     return;
@@ -289,6 +461,91 @@ async function handleBook(req: IncomingMessage, res: ServerResponse, payload: an
     (await fetchAuthorName(req.headers.authorization));
   runBookJob(seed, String(charge.body.scope ?? ""), author);
   res.writeHead(202, json).end(JSON.stringify({ ok: true, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }));
+}
+
+// POST /api/book/revise {slug, instruction[, dry]} + 用户 bearer —— 修书。
+// 主人校验在扣费之前（先 dry 拿 scope 比对，再真扣）：403 时一分钱不动。
+// 同一本书同时只跑一个修改（409 busy）。202 后 App 轮询 history 看进度和答复。
+async function handleBookRevise(req: IncomingMessage, res: ServerResponse, payload: any) {
+  const json = { "Content-Type": "application/json" };
+  const slug = String(payload?.slug ?? "").trim();
+  const instruction = String(payload?.instruction ?? "").trim().slice(0, 4000);
+  if (!SLUG_RE.test(slug)) {
+    res.writeHead(400, json).end(JSON.stringify({ error: "bad slug" }));
+    return;
+  }
+  if (!instruction && !payload?.dry) {
+    res.writeHead(400, json).end(JSON.stringify({ error: "empty instruction" }));
+    return;
+  }
+  const meta = await readBookMeta(slug);
+  if (!meta) {
+    // 没登记主人的书（登记簿上线前写的老书）不能在线修改——否则任何人都能改别人的书。
+    res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
+    return;
+  }
+  // dry 探路：验 token、验余额、拿 scope——都不扣费。
+  const probe = await chargeBook(req.headers.authorization, { slug, kind: "revise" }, true);
+  if (probe.status !== 200 || !probe.body?.ok) {
+    res.writeHead(probe.status === 200 ? 502 : probe.status, json).end(JSON.stringify(probe.body));
+    return;
+  }
+  if (meta.scope && meta.scope !== String(probe.body.scope ?? "")) {
+    res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
+    return;
+  }
+  if (meta.thread.some((e) => e.status === "running")) {
+    res.writeHead(409, json).end(JSON.stringify({ error: "busy" }));
+    return;
+  }
+  if (payload?.dry) {
+    res.writeHead(200, json).end(JSON.stringify(probe.body));
+    return;
+  }
+  const charge = await chargeBook(req.headers.authorization, { slug, kind: "revise" }, false);
+  if (charge.status !== 200 || !charge.body?.ok) {
+    res.writeHead(charge.status === 200 ? 502 : charge.status, json).end(JSON.stringify(charge.body));
+    return;
+  }
+  const entry: ThreadEntry = { ts: Date.now(), kind: "revise", instruction, status: "running" };
+  meta.thread.push(entry);
+  await writeBookMeta(meta);
+  runReviseJob(slug, meta.scope, meta.author, instruction, entry.ts);
+  res.writeHead(202, json).end(
+    JSON.stringify({ ok: true, ts: entry.ts, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }),
+  );
+}
+
+// GET /api/book/history?slug=<slug> + 用户 bearer —— 这本书的永久对话线（主人可见）。
+async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug: string) {
+  const json = { "Content-Type": "application/json" };
+  if (!SLUG_RE.test(slug)) {
+    res.writeHead(400, json).end(JSON.stringify({ error: "bad slug" }));
+    return;
+  }
+  const meta = await readBookMeta(slug);
+  if (!meta) {
+    res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
+    return;
+  }
+  const scope = await fetchScope(req.headers.authorization);
+  if (!scope) {
+    res.writeHead(401, json).end(JSON.stringify({ error: "bad token" }));
+    return;
+  }
+  if (meta.scope && meta.scope !== scope) {
+    res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
+    return;
+  }
+  res.writeHead(200, json).end(
+    JSON.stringify({
+      slug: meta.slug,
+      author: meta.author,
+      createdAt: meta.createdAt,
+      running: meta.thread.some((e) => e.status === "running"),
+      thread: meta.thread,
+    }),
+  );
 }
 
 // --- chat runs（断线不中止） ---
@@ -583,6 +840,30 @@ const server = createServer((req, res) => {
       } else {
         res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"no active run"}');
       }
+    });
+    return;
+  }
+  const hm = req.url?.match(/^\/api\/book\/history\?slug=([^&]+)$/);
+  if (req.method === "GET" && hm) {
+    handleBookHistory(req, res, decodeURIComponent(hm[1])).catch((err) => {
+      res.writeHead(500).end(String(err?.message ?? err));
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/book/revise") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      let payload: any;
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400).end("bad json");
+        return;
+      }
+      handleBookRevise(req, res, payload).catch((err) => {
+        res.writeHead(500).end(String(err?.message ?? err));
+      });
     });
     return;
   }

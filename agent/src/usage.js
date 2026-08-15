@@ -66,6 +66,10 @@ export function imageCostUY() { return suanliToUY(IMAGE_SUANLI); }
 export const BOOK_SUANLI = 320;
 export function bookCostUY() { return suanliToUY(BOOK_SUANLI); }
 
+// 修书（lab /api/book/revise，写好的书按主人指令改一轮）单价：一口价按算力计。
+export const BOOK_REVISE_SUANLI = 40;
+export function bookReviseCostUY() { return suanliToUY(BOOK_REVISE_SUANLI); }
+
 export function gateDecision(balanceUY, durationSec) {
   if ((durationSec || 0) > MAX_RECORDING_SEC) return "too-long";
   if (balanceUY <= 0) return "no-credit";
@@ -111,6 +115,7 @@ export const REASON_ZH = {
   "overdraft":     "透支",
   "realtime":      "AI 采访",
   "book":          "写书",
+  "book-revise":   "修书",
   "referral_author": "邀请奖励",
   "referral_new":    "受邀赠送",
 };

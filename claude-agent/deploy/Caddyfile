@@ -5,7 +5,9 @@
 lab.jianshuo.dev {
 	encode gzip
 
-	basic_auth {
+	# /api/book* 走 App 自己的 VoiceDrop bearer（服务端扣费即准入），豁免密码门。
+	@needsauth not path /api/book /api/book/*
+	basic_auth @needsauth {
 		wjs REPLACE_WITH_BCRYPT_HASH
 	}
 
