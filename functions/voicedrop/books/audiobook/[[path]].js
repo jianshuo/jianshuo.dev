@@ -24,7 +24,7 @@ const CACHE_PREFIX = 'audiobook/';
 const TTS_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
 
 const NARRATOR = 'zh_male_yuanboxiaoshu_uranus_bigtts';   // 旁白·渊博小叔
-const CASUAL = 'zh_male_fanjuanqingnian_uranus_bigtts';   // 大白话·反卷青年
+const CASUAL = 'zh_female_shuangkuaisisi_uranus_bigtts';  // 大白话·爽快思思（女声，与男声旁白区分）
 const QUOTE = 'zh_male_yizhipiannan_uranus_bigtts';       // 引用·译制片男
 const GLOBAL_INSTR = {
   [NARRATOR]: '这是一本有声书，请像一位知识渊博的朋友在给你讲故事，自然口语化，娓娓道来，不要播音腔',

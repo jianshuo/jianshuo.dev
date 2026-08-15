@@ -83,7 +83,12 @@ export async function onRequest({ request, env, params }) {
 
 // 「听本章」浮动播放器。相对路径 ../audiobook/<slug>/<stem> 在两个域名下都成立
 // （jianshuo.dev/voicedrop/books/... 与 voicedrop.cn/books/...）。
-// 首播（R2 无缓存）走边合成边流：能播、不能拖；再播是 R2 mp3：可拖、可倍速。
+// 已缓存：<audio> 直连 R2 mp3（可拖、可倍速）。
+// 首播（边合成边流）：不能把 chunked 流直接塞给 <audio>.src——流结束、时长从未知
+// 变已知的那一刻，浏览器会把播放位置重置回 0（实测「全部生成完就跳回最开始」）。
+// 改用 (Managed)MediaSource：fetch 读流、SourceBuffer 逐块喂，收完 endOfStream()
+// 定格时长，播放位置不动。不支持 MSE 的浏览器（老 iOS Safari）兜底为
+// 「先生成显示进度、生成完直接播 R2 缓存」，同样没有跳回问题。
 function audioWidget(slug, stem) {
   const src = `../audiobook/${encodeURIComponent(slug)}/${encodeURIComponent(stem)}`;
   return `
@@ -95,18 +100,77 @@ function audioWidget(slug, stem) {
 <script>
 (function(){
   var btn=document.getElementById('abbtn'),box=document.getElementById('abw'),src=${JSON.stringify(src)};
+
+  function panel(tipText){
+    box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
+      'padding:10px 14px;box-shadow:0 4px 14px rgba(60,45,30,.18);max-width:78vw">'+
+      '<div id="abtip" style="font-size:12px;color:#7a7264;margin-bottom:6px"></div>'+
+      '<audio id="abaudio" controls style="width:300px;max-width:72vw;display:block"></audio></div>';
+    document.getElementById('abtip').textContent=tipText;
+    var a=document.getElementById('abaudio');
+    a.onerror=function(){document.getElementById('abtip').textContent='加载失败，刷新重试';};
+    return a;
+  }
+
+  // 边合成边播：fetch 流 → SourceBuffer 逐块 append，结束 endOfStream 定格时长。
+  function playStreaming(MS){
+    var a=panel('首次播放：边合成边播（此次不能拖动，下次即可）');
+    var ms=new MS();
+    if('disableRemotePlayback' in a) a.disableRemotePlayback=true;  // ManagedMediaSource 要求
+    a.src=URL.createObjectURL(ms);
+    ms.addEventListener('sourceopen',function(){
+      var sb=ms.addSourceBuffer('audio/mpeg');
+      var queue=[],done=false,busy=false;
+      function pump(){
+        if(busy) return;
+        if(queue.length){busy=true;try{sb.appendBuffer(queue.shift());}catch(e){busy=false;}}
+        else if(done&&ms.readyState==='open'){try{ms.endOfStream();}catch(e){}}
+      }
+      sb.addEventListener('updateend',function(){busy=false;pump();});
+      fetch(src).then(function(r){
+        if(!r.ok) throw 0;
+        var rd=r.body.getReader();
+        (function step(){rd.read().then(function(x){
+          if(x.done){done=true;pump();return;}
+          queue.push(x.value);pump();step();
+        }).catch(function(){done=true;pump();});})();
+      }).catch(function(){document.getElementById('abtip').textContent='生成失败，刷新重试';});
+    },{once:true});
+    a.play().catch(function(){});
+  }
+
+  // 无 MSE 兜底：先拉完整个流（显示生成进度），生成完直接播 R2 缓存版。
+  function generateThenPlay(){
+    var a=panel('正在生成本章音频…');
+    var tip=document.getElementById('abtip');
+    fetch(src).then(function(r){
+      if(!r.ok) throw 0;
+      var rd=r.body.getReader(),got=0;
+      function step(){return rd.read().then(function(x){
+        if(x.done) return;
+        got+=x.value.length;
+        tip.textContent='正在生成 '+Math.round(got/1024)+' KB…';
+        return step();
+      });}
+      return step();
+    }).then(function(){
+      tip.textContent='已生成，可拖动进度';
+      a.src=src;a.play().catch(function(){});
+    }).catch(function(){tip.textContent='生成失败，刷新重试';});
+  }
+
   btn.onclick=function(){
     btn.disabled=true;btn.textContent='准备中…';
     fetch(src,{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return false;})
     .then(function(cached){
-      box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
-        'padding:10px 14px;box-shadow:0 4px 14px rgba(60,45,30,.18);max-width:78vw">'+
-        '<div id="abtip" style="font-size:12px;color:#7a7264;margin-bottom:6px"></div>'+
-        '<audio id="abaudio" controls autoplay style="width:300px;max-width:72vw;display:block"></audio></div>';
-      var a=document.getElementById('abaudio'),tip=document.getElementById('abtip');
-      tip.textContent=cached?'已生成，可拖动进度':'首次播放：边合成边播（此次不能拖动，下次即可）';
-      a.src=src;
-      a.onerror=function(){tip.textContent='加载失败，刷新重试';};
+      if(cached){
+        var a=panel('已生成，可拖动进度');
+        a.src=src;a.play().catch(function(){});
+        return;
+      }
+      var MS=window.ManagedMediaSource||window.MediaSource;
+      if(MS&&MS.isTypeSupported&&MS.isTypeSupported('audio/mpeg')) playStreaming(MS);
+      else generateThenPlay();
     });
   };
 })();
