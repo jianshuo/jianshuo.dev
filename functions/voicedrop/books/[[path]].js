@@ -58,16 +58,59 @@ export async function onRequest({ request, env, params }) {
 
   const ext = (rel.split('.').pop() || '').toLowerCase();
   const leaf = rel.split('/').pop();
-  return new Response(request.method === 'HEAD' ? null : obj.body, {
-    headers: {
-      'Content-Type': obj.httpMetadata?.contentType || TYPES[ext] || 'application/octet-stream',
-      'Content-Length': String(obj.size),
-      // inline：PDF/图片/HTML 浏览器里直接打开；filename* 让「另存为」得到原名（含中文）。
-      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(leaf)}`,
-      'Cache-Control': SHORT_CACHE.has(ext) ? 'public, max-age=300' : 'public, max-age=86400',
-      'Access-Control-Allow-Origin': '*',
-    },
-  });
+  const headers = {
+    'Content-Type': obj.httpMetadata?.contentType || TYPES[ext] || 'application/octet-stream',
+    'Content-Length': String(obj.size),
+    // inline：PDF/图片/HTML 浏览器里直接打开；filename* 让「另存为」得到原名（含中文）。
+    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(leaf)}`,
+    'Cache-Control': SHORT_CACHE.has(ext) ? 'public, max-age=300' : 'public, max-age=86400',
+    'Access-Control-Allow-Origin': '*',
+  };
+
+  // 章节页（<slug>/<非index/intro>.html）注入「听本章」播放器，
+  // 音频端点见 functions/voicedrop/books/audiobook/[[path]].js。
+  const ch = /^([^/]+)\/(?!index\.|intro\.)([^/]+)\.html?$/.exec(rel);
+  if (ch && request.method === 'GET') {
+    let html = await obj.text();
+    const widget = audioWidget(ch[1], ch[2]);
+    html = html.includes('</body>') ? html.replace('</body>', widget + '</body>') : html + widget;
+    delete headers['Content-Length'];
+    return new Response(html, { headers });
+  }
+
+  return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
+}
+
+// 「听本章」浮动播放器。相对路径 ../audiobook/<slug>/<stem> 在两个域名下都成立
+// （jianshuo.dev/voicedrop/books/... 与 voicedrop.cn/books/...）。
+// 首播（R2 无缓存）走边合成边流：能播、不能拖；再播是 R2 mp3：可拖、可倍速。
+function audioWidget(slug, stem) {
+  const src = `../audiobook/${encodeURIComponent(slug)}/${encodeURIComponent(stem)}`;
+  return `
+<div id="abw" style="position:fixed;right:18px;bottom:18px;z-index:99">
+  <button id="abbtn" style="display:flex;align-items:center;gap:8px;border:1px solid rgba(51,48,42,.18);
+    background:#fcf9f1;color:#33302a;border-radius:24px;padding:10px 18px;font-size:14px;
+    box-shadow:0 4px 14px rgba(60,45,30,.18);cursor:pointer">🎧 听本章</button>
+</div>
+<script>
+(function(){
+  var btn=document.getElementById('abbtn'),box=document.getElementById('abw'),src=${JSON.stringify(src)};
+  btn.onclick=function(){
+    btn.disabled=true;btn.textContent='准备中…';
+    fetch(src,{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return false;})
+    .then(function(cached){
+      box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
+        'padding:10px 14px;box-shadow:0 4px 14px rgba(60,45,30,.18);max-width:78vw">'+
+        '<div id="abtip" style="font-size:12px;color:#7a7264;margin-bottom:6px"></div>'+
+        '<audio id="abaudio" controls autoplay style="width:300px;max-width:72vw;display:block"></audio></div>';
+      var a=document.getElementById('abaudio'),tip=document.getElementById('abtip');
+      tip.textContent=cached?'已生成，可拖动进度':'首次播放：边合成边播（此次不能拖动，下次即可）';
+      a.src=src;
+      a.onerror=function(){tip.textContent='加载失败，刷新重试';};
+    });
+  };
+})();
+</script>`;
 }
 
 function notFound() {
