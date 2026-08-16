@@ -20,6 +20,8 @@
 //   node build.mjs all     <workdir>          # index+intro+全部 done 的章节，最后打印公开 URL
 // 约定：
 //   <workdir>/book.json         —— 书的清单（见 SKILL.md 的「book.json 结构」）
+//     其中 type=explainary|childrens|novel 决定通用文案（页脚 tagline / 目录副标注 meta）的中性缺省；
+//     书自己写了 meta/tagline 就用书的，没写才按 type 兜底。三种类型页面骨架完全一致。
 //   <workdir>/intro.html        —— 导读正文的 HTML 片段（可选）
 //   <workdir>/chapters/NN.html  —— 第 NN 章正文的 HTML 片段（放进 <article> 的内容）
 // 认证复用 wjs-voicedrop 的 token（~/.config/voicedrop/credentials）。Node ≥ 20。
@@ -45,7 +47,7 @@ const pad = n => String(n).padStart(2, "0");
 // book.json 里写了 meta/tagline 就用书自己的；没写才按类型兜底。
 const bookType = b => (b && b.type) || "explainary";
 const DEFAULTS = {
-  explainary: { meta: "面向理工背景的好奇者 · 一个词/一句话长成一本书", tagline: "费曼式写法 · 由多个 AI 代理撰写与互相审校" },
+  explainary: { meta: "面向理工背景的好奇者 · 一个词/一句话长成一本书", tagline: "面向对世界有好奇心的人 · 费曼式写法 · 由多个 AI 代理撰写与互相审校" },
   childrens:  { meta: "一本图画书 · 亲子共读",                          tagline: "图画故事 · 由 AI 代理撰写与互相审校" },
   novel:      { meta: "一部虚构作品",                                   tagline: "由 AI 代理撰写与互相审校" },
 };
@@ -163,7 +165,7 @@ ${book.author ? '<meta name="author" content="' + esc(book.author) + '">' : ''}
 
 const foot = book => `<div class="foot">
 ${esc(book.title)}${book.author ? " · " + esc(book.author) : ""}<br>
-面向对世界有好奇心的人 · 费曼式写法 · 由多个 AI 代理撰写与互相审校</div></div></body></html>`;
+${esc(book.tagline || defTagline(book))}</div></div></body></html>`;
 
 const topbar = book => `<div class="top">
   <a class="crumb" href="${linkPath(book.slug, fileName.index)}"><span class="dot"></span>${esc(book.title)}</a>
@@ -186,7 +188,7 @@ function renderIndex(book) {
   <span class="badge">${doneN}/${chs.length} 章已发布</span>
   <h1 style="margin-top:14px">${esc(book.title)}</h1>
   ${book.subtitle ? `<p class="sub">${esc(book.subtitle)}</p>` : ""}
-  <p class="meta">${esc(book.meta || "面向理工背景的好奇者 · 一个词/一句话长成一本书")}</p>
+  <p class="meta">${esc(book.meta || defMeta(book))}</p>
   ${book.introTeaser ? `<a class="introcard" href="${linkPath(book.slug, fileName.intro)}"><b>导读 · 从这里进门</b><p>${esc(book.introTeaser)}</p></a>` : ""}
   <div class="toc"><h3>目录</h3>${rows}</div>
   ` + foot(book);
