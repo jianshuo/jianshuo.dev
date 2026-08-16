@@ -10,6 +10,7 @@
 #   mcp/**          被 functions/voicedrop/mcp.js import，会一起打进 bundle
 #   wrangler.jsonc  R2 / D1 绑定
 #   _headers,_redirects  Pages 配置
+#   a/**              生成页面归档（/a/ 下的静态页）
 #
 # agent/ 和 reco/ 是独立的 Worker，不归这个工作流管（各自手动 wrangler deploy）。
 name: deploy-pages
@@ -18,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'voicedrop/**'
+      - 'a/**'
       - 'functions/**'
       - 'mcp/**'
       - 'wrangler.jsonc'
