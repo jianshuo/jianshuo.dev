@@ -20,7 +20,10 @@ browser ──HTTPS+password──▶ Caddy ──▶ Node (this) ──query()�
 - `public/index.html` — single-file light-theme chat UI; tool calls render as expandable cards;
   left sidebar lists past sessions (click to reopen + resume, persists server-side across devices).
 - `deploy/` — `provision.sh` (one-time), `claude-agent.service` (systemd), `Caddyfile`.
-- `deploy.sh` — build + rsync + restart.
+- `deploy.sh` — build + rsync + restart. Also syncs `skills/` → VPS `.claude/skills/` (with
+  `--delete`, so this repo is the source of truth — edit skills here, not on the VPS).
+- `skills/` — the agent's Claude Code skills (wjs-voicedrop*, writing-book, etc.), deployed
+  to `/opt/claude-agent/.claude/skills/`.
 
 ## Auth
 

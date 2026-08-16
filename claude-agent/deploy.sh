@@ -16,6 +16,10 @@ rsync -az --delete \
   dist public bin package.json package-lock.json deploy \
   "$VPS:$REMOTE/"
 
+echo "▸ sync skills → $VPS:$REMOTE/.claude/skills"
+rsync -az --delete skills/ "$VPS:$REMOTE/.claude/skills/"
+ssh "$VPS" "chown -R claude-agent:claude-agent $REMOTE/.claude/skills"
+
 echo "▸ install + restart"
 ssh "$VPS" "cd $REMOTE && npm ci --omit=dev && systemctl restart claude-agent && sleep 1 && systemctl --no-pager --lines=8 status claude-agent | head -12"
 echo "✓ deployed"
