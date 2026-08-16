@@ -17,7 +17,8 @@
 //                      封面（封面色按 slug 哈希稳定分配），书脊/页口/投影一比一复刻。
 //                      改这边样式记得同步看 iOS 那份，两边保持一致。
 // GET /books/?format=json → 同一份索引的 JSON 版（iOS「写书」tab 图书馆用）：
-//                      {books:[{slug,title,main,sub,c,c2,author,cover,chapters,createdAt}]}。
+//                      {books:[{slug,title,main,sub,c,c2,author,cover,coverAt,chapters,createdAt}]}。
+//                      coverAt = cover.jpg 的上传时间戳，书架 <img> 用它当 ?v= 破缓存。
 //                      cover = 该书文件夹里有没有 cover.jpg；chapters = 顶层
 //                      章节 html 数（排除 index/intro）。
 // GET /books/<name>  → 文件本体，inline 展示；html/md/txt 只缓存 5 分钟（书会
@@ -63,7 +64,9 @@ export async function onRequest({ request, env, params }) {
     'Content-Length': String(obj.size),
     // inline：PDF/图片/HTML 浏览器里直接打开；filename* 让「另存为」得到原名（含中文）。
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(leaf)}`,
-    'Cache-Control': SHORT_CACHE.has(ext) ? 'public, max-age=300' : 'public, max-age=86400',
+    // cover.jpg 会被替换重传（修书/串图修复），也走短缓存——曾因 1 天缓存把换错的
+    // 封面钉在边缘一整天（2026-08-16），别改回长缓存。
+    'Cache-Control': (SHORT_CACHE.has(ext) || leaf.toLowerCase() === 'cover.jpg') ? 'public, max-age=300' : 'public, max-age=86400',
     'Access-Control-Allow-Origin': '*',
   };
 
@@ -224,7 +227,7 @@ async function collectBooks(env) {
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
   const books = await Promise.all(slugs.map(async (slug) => {
-    let title = slug, author = '', createdAt = 0, cover = false, chapters = 0;
+    let title = slug, author = '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
       if (obj) {
@@ -243,7 +246,7 @@ async function collectBooks(env) {
           const rel = o.key.slice(PUBLISHER.length + slug.length + 1);
           if (rel.includes('/')) continue;                     // 只看顶层文件
           const leaf = rel.toLowerCase();
-          if (leaf === 'cover.jpg') cover = true;
+          if (leaf === 'cover.jpg') { cover = true; coverAt = t; }
           else if (/\.html?$/.test(leaf) && leaf !== 'index.html' && leaf !== 'intro.html') chapters++;
         }
         cursor = listed.truncated ? listed.cursor : undefined;
@@ -251,7 +254,7 @@ async function collectBooks(env) {
     } catch {}
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author, cover, chapters, createdAt };
+    return { slug, title, main, sub, c, c2, author, cover, coverAt, chapters, createdAt };
   }));
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
@@ -282,7 +285,7 @@ async function index(env) {
   const bookCell = (b) => {
     const href = `/books/${encodeURI(b.slug)}/`;
     const face = b.cover
-      ? `<img src="${href}cover.jpg" alt="" loading="lazy">`
+      ? `<img src="${href}cover.jpg?v=${b.coverAt}" alt="" loading="lazy">`
       : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
     return `<a class="cell" href="${href}" title="${esc(b.title)}">` +
       `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i></span>` +
