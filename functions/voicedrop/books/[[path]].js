@@ -16,6 +16,8 @@
 //                      voicedrop.cn 落地页），有 cover.jpg 铺封面图，没有的用布面缺省
 //                      封面（封面色按 slug 哈希稳定分配），书脊/页口/投影一比一复刻。
 //                      改这边样式记得同步看 iOS 那份，两边保持一致。
+//                      网页版另加：顶部类目导航（六词：商业/身心/人文/投资/AI/故事，
+//                      样式对齐社区 tabRow）+ 书名下类目小标签；iOS 暂无此导航。
 // GET /books/?format=json → 同一份索引的 JSON 版（iOS「写书」tab 图书馆用）：
 //                      {books:[{slug,title,main,sub,c,c2,author,cover,coverAt,chapters,createdAt}]}。
 //                      coverAt = cover.jpg 的上传时间戳，书架 <img> 用它当 ?v= 破缓存。
@@ -25,6 +27,36 @@
 //                      反复重发迭代），其余（pdf/图片等大文件）缓存一天。
 
 const PUBLISHER = 'users/anon-ae209ac53499d51d513425503bd134b0/books/';
+
+// 类目（2026-08-17 定的六个词）：书架导航 + 每本书的标签。
+// 新书优先读自己 index.html 里的 <meta name="category" content="…">（写书 skill
+// 以后可自报类目）；没有的落到这张手工映射表；两边都没有就不挂标签、只出现在「全部」。
+const CATEGORY_ORDER = ['商业', '身心', '人文', '投资', 'AI', '故事'];
+const CATEGORY_OF = (() => {
+  const groups = {
+    商业: ['who-actually-sees-your-post', 'us-tax-machine', 'zhu-rongji-the-engineer',
+      'dragon-restaurant-as-a-system', 'beauty-store-growth-flywheel', 'the-memory-titan',
+      'musk-slogan-or-cash', 'miners-neocloud-gambit', 'hynix-survivor-saga',
+      'microsoft-buy-and-not-build', 'oracle-cloud-gamble', 'software-survivors-2000',
+      'positive-marginal-cost', 'software-empires', 'us-software-history'],
+    身心: ['dont-wait-for-retirement', 'sitting-still-mechanism', 'judgment', 'zhengji-xinfa',
+      'yandu-jizhu', 'action-first', 'energy-thread', '400-gram-fast', 'walking-home',
+      'the-god-you-build', 'sleep-drift', 'entropy'],
+    人文: ['nordic-shaped-by-ice-and-sea', 'art-as-human-evidence',
+      'higashino-keigo-engineering-mystery', 'homer-odyssey-for-moviegoers', 'nanfeng-xizhou',
+      'secret-banquet-kitchen', 'troy-luoyang-order-collapse', 'japan-countryside-philosophy',
+      'tcm-analysis', 'bazi', 'jingangjing'],
+    投资: ['pm-edge-in-markets', 'reading-a-company-google-buffett', 'how-money-moves', 'jingzu',
+      'stock-101', 'why-did-he-sell', 'options-trading', 'market-cap', 'money'],
+    AI: ['the-line-ai-cant-cross', 'why-your-major-lied', 'pm-full-stack-ai', 'beyond-code',
+      'dev-leverage', 'shoucuo-llm'],
+    故事: ['meow-team-saves-the-moon', 'backflow-shanghai-flood', 'mountain-night-letters',
+      'meow-squad-resilience', 'aetheria', 'tangmusan'],
+  };
+  const map = {};
+  for (const [cat, slugs] of Object.entries(groups)) for (const s of slugs) map[s] = cat;
+  return map;
+})();
 
 const TYPES = {
   pdf: 'application/pdf', epub: 'application/epub+zip', mobi: 'application/x-mobipocket-ebook',
@@ -227,7 +259,7 @@ async function collectBooks(env) {
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
   const books = await Promise.all(slugs.map(async (slug) => {
-    let title = slug, author = '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
+    let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
       if (obj) {
@@ -236,6 +268,8 @@ async function collectBooks(env) {
         if (m && m[1].trim()) title = m[1].trim();
         const a = /<meta\s+name="author"\s+content="([^"]*)"/i.exec(html);
         if (a && a[1].trim()) author = a[1].trim().slice(0, 20);
+        const c = /<meta\s+name="category"\s+content="([^"]*)"/i.exec(html);
+        if (c && c[1].trim()) category = c[1].trim().slice(0, 8);
       }
       let cursor;
       do {
@@ -254,7 +288,7 @@ async function collectBooks(env) {
     } catch {}
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author, cover, coverAt, chapters, createdAt };
+    return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt };
   }));
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
@@ -280,14 +314,18 @@ async function index(env) {
   const books = await collectBooks(env);
 
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const metaLine = (b) => (b.chapters > 0 ? `${b.chapters} 章` : (b.sub ? esc(b.sub) : '&nbsp;'));
+  const metaLine = (b) => {
+    const base = b.chapters > 0 ? `${b.chapters} 章` : (b.sub ? esc(b.sub) : '');
+    const tag = b.category ? `<span class="tag">${esc(b.category)}</span>` : '';
+    return (base || tag) ? `${base}${base && tag ? ' ' : ''}${tag}` : '&nbsp;';
+  };
 
   const bookCell = (b) => {
     const href = `/books/${encodeURI(b.slug)}/`;
     const face = b.cover
       ? `<img src="${href}cover.jpg?v=${b.coverAt}" alt="" loading="lazy">`
       : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
-    return `<a class="cell" href="${href}" title="${esc(b.title)}">` +
+    return `<a class="cell" href="${href}" title="${esc(b.title)}" data-cat="${esc(b.category)}">` +
       `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i></span>` +
       `<span class="cap"><b>${esc(b.main)}</b><small>${metaLine(b)}</small></span></a>`;
   };
@@ -301,6 +339,12 @@ async function index(env) {
   for (let i = 0; i < cells.length; i += 2) {
     rows.push(`<div class="row">${cells[i]}${cells[i + 1] || '<span></span>'}</div><div class="shelfbar"></div>`);
   }
+
+  // 分类导航：与社区 tab 同款（选中墨色加粗，未选中 metaChrome），只列实际有书的类目。
+  const present = CATEGORY_ORDER.filter((c) => books.some((b) => b.category === c));
+  const tabs = ['全部', ...present]
+    .map((c, i) => `<a href="#" data-cat="${c === '全部' ? '' : esc(c)}"${i === 0 ? ' class="on"' : ''}>${esc(c)}</a>`)
+    .join('');
 
   const html = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -350,10 +394,53 @@ async function index(env) {
   .shelfbar{height:6px;border-radius:1px;margin:8px -6px 14px;
     background:linear-gradient(#E3D7C2,#C9B99E);
     box-shadow:0 3px 7px rgba(120,95,60,.18)}
+  /* 分类导航（对齐社区 tabRow：15px，选中 ink 600、未选中 metaChrome）。 */
+  .tabs{display:flex;gap:18px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;padding:10px 2px 14px;white-space:nowrap}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs a{font-size:15px;color:#A89E8E;text-decoration:none;flex:none;
+    -webkit-tap-highlight-color:transparent}
+  .tabs a.on{color:#2A2521;font-weight:600}
+  /* 书名下的小类目标签：随 cap small 一行，浅棕描边小胶囊。 */
+  .tag{display:inline-block;font-size:10.5px;line-height:1;color:#8A7F6C;
+    border:1px solid #D8CCB6;border-radius:8px;padding:2.5px 6px;vertical-align:1px}
 </style></head>
 <body><main>
+<nav class="tabs">${tabs}</nav>
+<div id="shelf">
 ${rows.join('\n')}
-</main></body></html>`;
+</div>
+</main>
+<script>
+(function(){
+  var tabs=document.querySelectorAll('.tabs a');
+  var shelf=document.getElementById('shelf');
+  var all=[].slice.call(shelf.querySelectorAll('a.cell'));
+  var write=all.shift();                       // 第一格「写书」入口，任何类目下都在
+  function render(cat){
+    var list=all.filter(function(c){return !cat||c.getAttribute('data-cat')===cat;});
+    var cells=[write].concat(list);
+    shelf.textContent='';
+    for(var i=0;i<cells.length;i+=2){
+      var row=document.createElement('div');row.className='row';
+      row.appendChild(cells[i]);
+      if(cells[i+1])row.appendChild(cells[i+1]);else row.appendChild(document.createElement('span'));
+      shelf.appendChild(row);
+      var bar=document.createElement('div');bar.className='shelfbar';
+      shelf.appendChild(bar);
+    }
+  }
+  [].forEach.call(tabs,function(t){
+    t.addEventListener('click',function(e){
+      e.preventDefault();
+      [].forEach.call(tabs,function(x){x.classList.remove('on');});
+      t.classList.add('on');
+      render(t.getAttribute('data-cat'));
+    });
+  });
+})();
+</script>
+</body></html>`;
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
   });
