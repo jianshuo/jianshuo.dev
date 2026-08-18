@@ -58,6 +58,9 @@ const CATEGORY_OF = (() => {
   return map;
 })();
 
+// 不上架的书：文件仍在 R2（直链可开），但不出现在书架 index（HTML 和 JSON 都不出）。
+const HIDDEN = new Set(['jason-spain']);
+
 const TYPES = {
   pdf: 'application/pdf', epub: 'application/epub+zip', mobi: 'application/x-mobipocket-ebook',
   azw3: 'application/vnd.amazon.ebook', txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8',
@@ -252,6 +255,7 @@ async function collectBooks(env) {
     slugs.push(...(listed.delimitedPrefixes || []).map((p) => p.slice(PUBLISHER.length).replace(/\/$/, '')).filter(Boolean));
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
+  for (let i = slugs.length - 1; i >= 0; i--) if (HIDDEN.has(slugs[i])) slugs.splice(i, 1);
 
   // 书名 = <slug>/index.html 的 <title>；作者 = 同页 <meta name="author">（写书
   // skill 2026-08-11 起按提交者署名输出；没有此 meta 的存量书都是建硕的）。
