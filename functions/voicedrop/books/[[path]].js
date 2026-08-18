@@ -58,9 +58,6 @@ const CATEGORY_OF = (() => {
   return map;
 })();
 
-// 不上架的书：文件仍在 R2（直链可开），但不出现在书架 index（HTML 和 JSON 都不出）。
-const HIDDEN = new Set(['jason-spain']);
-
 const TYPES = {
   pdf: 'application/pdf', epub: 'application/epub+zip', mobi: 'application/x-mobipocket-ebook',
   azw3: 'application/vnd.amazon.ebook', txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8',
@@ -255,14 +252,24 @@ async function collectBooks(env) {
     slugs.push(...(listed.delimitedPrefixes || []).map((p) => p.slice(PUBLISHER.length).replace(/\/$/, '')).filter(Boolean));
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
-  for (let i = slugs.length - 1; i >= 0; i--) if (HIDDEN.has(slugs[i])) slugs.splice(i, 1);
+
+  // 不上架的书：book.json 里写 "hidden": true（build.mjs 会镜像到 _src/book.json），
+  // 文件仍在 R2（直链可开），但不出现在书架 index（HTML 和 JSON 都不出）。
+  const visible = await Promise.all(slugs.map(async (slug) => {
+    try {
+      const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
+      if (o && JSON.parse(await o.text()).hidden === true) return null;
+    } catch {}
+    return slug;
+  }));
+  const shown = visible.filter(Boolean);
 
   // 书名 = <slug>/index.html 的 <title>；作者 = 同页 <meta name="author">（写书
   // skill 2026-08-11 起按提交者署名输出；没有此 meta 的存量书都是建硕的）。
   // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
-  const books = await Promise.all(slugs.map(async (slug) => {
+  const books = await Promise.all(shown.map(async (slug) => {
     let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
