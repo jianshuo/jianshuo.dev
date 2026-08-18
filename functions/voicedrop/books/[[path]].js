@@ -64,7 +64,6 @@ const TYPES = {
   html: 'text/html; charset=utf-8', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
   webp: 'image/webp', gif: 'image/gif', zip: 'application/zip', cbz: 'application/vnd.comicbook+zip',
 };
-const SHORT_CACHE = new Set(['html', 'htm', 'md', 'txt']);
 
 export async function onRequest({ request, env, params }) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -96,9 +95,9 @@ export async function onRequest({ request, env, params }) {
     'Content-Length': String(obj.size),
     // inline：PDF/图片/HTML 浏览器里直接打开；filename* 让「另存为」得到原名（含中文）。
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(leaf)}`,
-    // cover.jpg 会被替换重传（修书/串图修复），也走短缓存——曾因 1 天缓存把换错的
-    // 封面钉在边缘一整天（2026-08-16），别改回长缓存。
-    'Cache-Control': (SHORT_CACHE.has(ext) || leaf.toLowerCase() === 'cover.jpg') ? 'public, max-age=300' : 'public, max-age=86400',
+    // 所有可被替换重传的文件（HTML/图片/cover）都走短缓存——曾因 1 天缓存把换错的封面钉在
+    // 边缘一整天（2026-08-16），又因 1 天缓存让重画的绘本页图钉住旧版（2026-08-18），别改回长缓存。
+    'Cache-Control': 'public, max-age=300',
     'Access-Control-Allow-Origin': '*',
   };
 
