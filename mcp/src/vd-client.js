@@ -14,6 +14,10 @@ export const AGENT_ORIGIN = "https://voicedrop-agent.jianshuo.workers.dev";
 // session JWT 打过去会 401，所以社区列表要有回退（见 tools.js 的 community_feed）。
 export const RECO_ORIGIN = "https://voicedrop-reco.jianshuo.workers.dev";
 
+// 写书 agent（Tokyo VPS 上的常驻 Claude）。POST /api/book 开写一本、
+// POST /api/book/revise 修一本、GET /api/book/history 看对话线。
+export const LAB_ORIGIN = "https://lab.jianshuo.dev";
+
 export class VoiceDropError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -56,6 +60,10 @@ export function createClient({ token, fetch: fetchImpl = globalThis.fetch }) {
     files: (method, path, opts) => request(FILES_ORIGIN, "/files/api", method, path, opts),
     agent: (method, path, opts) => request(AGENT_ORIGIN, "/agent", method, path, opts),
     reco: (method, path, opts) => request(RECO_ORIGIN, "/reco", method, path, opts),
+    lab: (method, path, opts) => request(LAB_ORIGIN, "/api", method, path, opts),
+    // 公开书架（voicedrop.cn/books 的原始路径）。GET-only、无需 token——
+    // 带上 Authorization 也无妨，公开路由不看它。
+    books: (method, path, opts) => request(FILES_ORIGIN, "/voicedrop/books", method, path, opts),
   };
 }
 
@@ -74,6 +82,8 @@ const BY_CODE = {
   pool_exhausted: "今天的投币池已经发完了，明天再来。",
   "read-only token": "这是只读 token，只能列出和下载，不能做任何写操作。",
   insufficient_credit: "算力不够了。",
+  // lab 写书 API 的 402（写一本 320 算力、修一次 40 算力）。
+  "no-credit": "算力不够了。写一本书要 320 算力，修改一次 40 算力——用 credit_balance 看余额。",
 };
 
 function translate(status, parsed, raw) {
@@ -92,7 +102,7 @@ function translate(status, parsed, raw) {
 
   if (status === 404) {
     return new VoiceDropError(
-      `不存在（404）。检查 stem / shareId 是不是写错了——先用 list_articles 确认。原始响应：${raw}`,
+      `不存在（404）。检查 stem / shareId / slug 是不是写错了——先用 list_articles 或 list_books 确认。原始响应：${raw}`,
       status,
       parsed,
     );

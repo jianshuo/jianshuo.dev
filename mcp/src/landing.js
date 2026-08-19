@@ -18,7 +18,7 @@ export function landingHtml() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VoiceDrop MCP</title>
-<meta name="description" content="把 VoiceDrop 账号接进 Claude —— 读写文章、改文风、触发挖矿、逛社区、查算力、发公众号。">
+<meta name="description" content="把 VoiceDrop 账号接进 Claude —— 读写文章、改文风、触发挖矿、逛社区、查算力、发公众号、读书写书。">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -60,7 +60,7 @@ export function landingHtml() {
   <h1>VoiceDrop MCP</h1>
   <p class="lede">
     把你的 VoiceDrop 账号接进 Claude。说完话，剩下的交给对话——
-    读写文章、改文风、触发挖矿、逛社区、查算力、发公众号。
+    读写文章、改文风、触发挖矿、逛社区、查算力、发公众号、读书写书。
   </p>
 
   <h2>端点</h2>
@@ -97,6 +97,7 @@ export function landingHtml() {
     <li><b>社区</b> —— 看推荐流、读帖、分享自己的文章、给别人投币</li>
     <li><b>算力</b> —— 余额、流水、收支汇总（23 算力 = 1 元）</li>
     <li><b>发布</b> —— 公开分享链接、微信公众号草稿、小红书文案</li>
+    <li><b>书</b> —— 逛公开书架、读书；交一个中心思想让云端 agent 写一本书、再逐条指令修它</li>
   </ul>
   <p class="note">
     工具的完整说明随 MCP 一起下发（<code>tools/list</code>），接上就能看见，这里不重复——

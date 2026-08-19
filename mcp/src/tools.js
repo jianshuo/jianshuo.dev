@@ -18,6 +18,34 @@ const STEM = str(
   "文章的 stem（不含扩展名的文件名，形如 VoiceDrop-2026-07-13-143052-...）。用 list_articles 拿。",
 );
 const SHARE_ID = str("社区帖子的 shareId（12 位）。用 community_feed 拿。");
+const SLUG = str("书的 slug（书架 URL 里的短名，形如 software-survivors-2000）。用 list_books 拿。");
+
+// 书的公开阅读地址（给人看/下载用这个域名，微信里也能开）。
+const bookURL = (slug, file = "") =>
+  `https://voicedrop.cn/books/${encodeURIComponent(slug)}/${file}`;
+
+// 章节 HTML → 可读纯文本。够用就好：书页是写书 skill 生成的规整文章 HTML，
+// 不是任意网页。先摘掉 script/style 和公开路由注入的「听本章」播放器，
+// 再把块级闭合换成换行、剥标签、解常用实体。
+function htmlToText(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<div id="abw"[\s\S]*?<\/div>/, "")
+    .replace(/<(?:h[1-6])[^>]*>/gi, "\n\n")
+    .replace(/<\/(?:p|div|h[1-6]|li|blockquote|tr|section|figure)>/gi, "\n")
+    .replace(/<br[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export const TOOLS = [
   // ─────────────────────────── 登录 ───────────────────────────
@@ -393,6 +421,119 @@ export const TOOLS = [
     description: "把一篇文章改写成小红书文案（配上图片 key）。花算力。",
     inputSchema: obj({ stem: STEM }, ["stem"]),
     handler: ({ stem }, { client }) => client.agent("POST", "xhs-pack", { body: { stem } }),
+  },
+
+  // ─────────────────────────── 书 ───────────────────────────
+  // 公开书架 voicedrop.cn/books：写书 agent（lab.jianshuo.dev）长出来的书。
+  // 读（list_books / read_book / read_book_chapter）是公开内容，免 token
+  // （http.js 的 NO_TOKEN_TOOLS）；写和修走 lab API，扣算力、要 token。
+  {
+    name: "list_books",
+    description:
+      "看公开书架（voicedrop.cn/books）上的全部书。返回每本的 slug、书名、作者、类目、章节数、" +
+      "有无封面、创建时间和阅读 URL。书架是公开内容，不花算力、不需要登录。" +
+      "读目录用 read_book，读正文用 read_book_chapter。",
+    inputSchema: obj({}),
+    handler: async (_a, { client }) => {
+      const out = await client.books("GET", "", { query: { format: "json" } });
+      const books = (out.books ?? []).map(({ slug, title, author, category, chapters, cover, createdAt }) => ({
+        slug, title, author, category, chapters, cover, createdAt, url: bookURL(slug),
+      }));
+      return { count: books.length, books };
+    },
+  },
+  {
+    name: "read_book",
+    description:
+      "看一本书的目录和梗概：书名、副题、一句话简介、每章的编号 + 标题 + 梗概 + 状态" +
+      "（老书没有源数据，只回章节编号清单）。公开内容，不需要登录。" +
+      "拿到章节编号后用 read_book_chapter 读正文。",
+    inputSchema: obj({ slug: SLUG }, ["slug"]),
+    handler: async ({ slug }, { client }) => {
+      const url = bookURL(slug);
+      // 新书：写书 skill 把源数据镜像在 _src/book.json（含每章 brief/status）。
+      try {
+        const src = await client.books("GET", [slug, "_src", "book.json"]);
+        if (src && typeof src === "object" && Array.isArray(src.chapters)) {
+          const { title, subtitle, tagline, type } = src;
+          return {
+            slug, title, subtitle, tagline, type, url,
+            chapters: src.chapters.map((c) => ({
+              chapter: String(c.no).padStart(2, "0"), title: c.title, brief: c.brief, status: c.status,
+            })),
+          };
+        }
+      } catch (e) {
+        if (e.status !== 404) throw e;
+      }
+      // 老书（没镜像源数据）：从 index.html 抠 <title> 和章节链接（01.html…NN.html）。
+      const html = String(await client.books("GET", [slug, "index.html"]));
+      const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? slug).trim();
+      const chapters = [...new Set([...html.matchAll(/href="(\d+)\.html"/g)].map((m) => m[1]))]
+        .sort()
+        .map((n) => ({ chapter: n }));
+      return { slug, title, url, chapters };
+    },
+  },
+  {
+    name: "read_book_chapter",
+    description:
+      "读（下载）一本书的一章正文，HTML 已转成纯文本。chapter 用 read_book 返回的编号（01、02…）；" +
+      "intro 是序章。公开内容，不需要登录。返回里的 url 是网页原版（排版、插图俱全），" +
+      "要给人看或下载就给 url。",
+    inputSchema: obj(
+      { slug: SLUG, chapter: str("章节编号（01、02…，用 read_book 拿），或 intro（序章）") },
+      ["slug", "chapter"],
+    ),
+    handler: async ({ slug, chapter }, { client }) => {
+      const stem = /^\d$/.test(chapter) ? `0${chapter}` : chapter; // 容忍 "1" → "01"
+      const html = String(await client.books("GET", [slug, `${stem}.html`]));
+      return { slug, chapter: stem, url: bookURL(slug, `${stem}.html`), text: htmlToText(html) };
+    },
+  },
+  {
+    name: "write_book",
+    description:
+      "写一本新书：把一个「中心思想」（seed）交给云端写书 agent——它拆大纲、逐章写正文（费曼式白话）、" +
+      "独立评审过稿，一章一章增量上架到公开书架 voicedrop.cn/books。一口价 320 算力，扣费成功即受理" +
+      "（fire-and-forget），整本书要几十分钟长成：书很快出现在 list_books，章节逐章补齐，" +
+      "进度用 book_history 看。署名用我在 App 设置里的名字。",
+    inputSchema: obj({ seed: str("中心思想：想让这本书讲什么。一两句话到一段话都行。") }, ["seed"]),
+    handler: async ({ seed }, { client }) => {
+      const out = await client.lab("POST", "book", { body: { seed } });
+      return {
+        ...(out && typeof out === "object" ? out : { response: out }),
+        next:
+          "已受理，开写了（320 算力已扣）。整本书要几十分钟：先用 list_books 等它上架，" +
+          "再用 book_history 看逐章进度。现在关掉对话也不影响。",
+      };
+    },
+  },
+  {
+    name: "revise_book",
+    description:
+      "修改我写的一本书：给云端写书 agent 发一条修改指令（只有书的主人能修）。一口价 40 算力，" +
+      "受理后异步执行——用 book_history 看进度，改完那条的 reply 就是 agent 的修改说明。",
+    inputSchema: obj(
+      { slug: SLUG, instruction: str("修改指令，例如「第三章太啰嗦，砍掉一半」「换个更口语的书名」") },
+      ["slug", "instruction"],
+    ),
+    handler: async ({ slug, instruction }, { client }) => {
+      const out = await client.lab("POST", "book/revise", { body: { slug, instruction } });
+      return {
+        ...(out && typeof out === "object" ? out : { response: out }),
+        next: "已受理（40 算力已扣）。异步执行中，用 book_history 看进度和修改说明。",
+      };
+    },
+  },
+  {
+    name: "book_history",
+    description:
+      "看一本书的写作/修改对话线（只有书的主人可见）：第一条是开书种子，之后每条是修改指令 + " +
+      "agent 的回执（status running→done，reply 是修改说明）。running:true 表示还有任务在跑。" +
+      "403 = 不是这本书的主人；404 = 登记簿上线前的老书。",
+    inputSchema: obj({ slug: SLUG }, ["slug"]),
+    handler: ({ slug }, { client }) => client.lab("GET", "book/history", { query: { slug } }),
   },
 
   // ────────────────────── 媒体与身份 ──────────────────────

@@ -3,7 +3,7 @@
 //   voicedrop.cn/mcp            ← 备案接入点的 Caddy 会补上 /voicedrop 前缀
 //   jianshuo.dev/voicedrop/mcp  ← 同一个东西
 //
-// 真正的实现在 mcp/ 里（有自己的 package.json 和 83 个测试）。这里只是把 Pages
+// 真正的实现在 mcp/ 里（有自己的 package.json 和 142 个测试）。这里只是把 Pages
 // 的 Request 递进去——薄到没有逻辑可出错。
 //
 // 放在 Pages Function 而不是 agent worker，是因为 Caddy 只把 /files/* 原样透传，

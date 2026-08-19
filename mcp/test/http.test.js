@@ -67,6 +67,26 @@ describe("认证", () => {
     expect((await noAuth("tools/list")).status).toBe(200);
   });
 
+  it("没 token 也能逛公开书架 —— list_books 和网页上的 voicedrop.cn/books 一样公开", async () => {
+    const booksFetch = async () =>
+      new Response(JSON.stringify({ books: [{ slug: "s", title: "书" }] }), { status: 200 });
+    const res = await handleRequest(
+      new Request("https://voicedrop.cn/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_books", arguments: {} },
+        }),
+      }),
+      { fetch: booksFetch },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.result.isError).toBeFalsy();
+    expect(JSON.parse(body.result.content[0].text).count).toBe(1);
+  });
+
   it("initialize 不需要 token —— 客户端要先握手才谈得上认证", async () => {
     const res = await handleRequest(
       new Request("https://voicedrop.cn/mcp", {

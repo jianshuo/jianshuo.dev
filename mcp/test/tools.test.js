@@ -15,7 +15,13 @@ function fakeClient(responses = {}) {
     if (r instanceof Error) throw r;
     return r ?? { ok: true };
   };
-  return { calls, client: { files: make("files"), agent: make("agent"), reco: make("reco") } };
+  return {
+    calls,
+    client: {
+      files: make("files"), agent: make("agent"), reco: make("reco"),
+      lab: make("lab"), books: make("books"),
+    },
+  };
 }
 
 const run = (name, args, responses) => {
@@ -47,6 +53,7 @@ describe("工具表本身", () => {
       "community_feed", "share_to_community", "feed_coin",    // 社区
       "credit_balance",                                       // 算力
       "publish_wechat", "share_link", "xhs_pack",             // 发布
+      "list_books", "read_book_chapter", "write_book",        // 书
     ]) {
       expect(names, `少了 ${n}`).toContain(n);
     }
@@ -287,6 +294,98 @@ describe("发布", () => {
     const { calls } = await run("xhs_pack", { stem: "s1" });
     expect(calls[0]).toMatchObject({ source: "agent", method: "POST", path: "xhs-pack" });
     expect(calls[0].body).toEqual({ stem: "s1" });
+  });
+});
+
+describe("书", () => {
+  it("list_books → GET books 索引（format=json），只留模型用得上的字段并补阅读 URL", async () => {
+    const { calls, out } = await run("list_books", {}, {
+      "books GET ": {
+        books: [{
+          slug: "s-book", title: "书名", main: "书名", sub: "", c: "#111", c2: "#222",
+          author: "王建硕", category: "商业", cover: true, coverAt: 123, chapters: 8, createdAt: 456,
+        }],
+      },
+    });
+    expect(calls[0]).toMatchObject({ source: "books", method: "GET", path: "" });
+    expect(calls[0].query).toEqual({ format: "json" });
+    expect(out.count).toBe(1);
+    expect(out.books[0]).toEqual({
+      slug: "s-book", title: "书名", author: "王建硕", category: "商业",
+      chapters: 8, cover: true, createdAt: 456, url: "https://voicedrop.cn/books/s-book/",
+    });
+  });
+
+  it("read_book 优先读 _src/book.json（含每章 brief/status），章号补零成两位", async () => {
+    const { calls, out } = await run("read_book", { slug: "s-book" }, {
+      "books GET s-book/_src/book.json": {
+        title: "书名", subtitle: "副题", tagline: "一句话", type: "novel",
+        chapters: [{ no: 1, title: "第一章", brief: "梗概", status: "done" }],
+      },
+    });
+    expect(calls[0].path).toBe("s-book/_src/book.json");
+    expect(out.title).toBe("书名");
+    expect(out.chapters).toEqual([{ chapter: "01", title: "第一章", brief: "梗概", status: "done" }]);
+    expect(out.url).toBe("https://voicedrop.cn/books/s-book/");
+  });
+
+  it("read_book 老书没有 _src/book.json（404）→ 从 index.html 抠标题和章节链接", async () => {
+    const { calls, out } = await run("read_book", { slug: "old-book" }, {
+      "books GET old-book/_src/book.json": new VoiceDropError("不存在（404）", 404, {}),
+      "books GET old-book/index.html":
+        '<html><title>老书 · 副题</title><a href="intro.html">序</a>' +
+        '<a href="01.html">一</a><a href="02.html">二</a><a href="01.html">重复</a></html>',
+    });
+    expect(calls.map((c) => c.path)).toEqual(["old-book/_src/book.json", "old-book/index.html"]);
+    expect(out.title).toBe("老书 · 副题");
+    expect(out.chapters).toEqual([{ chapter: "01" }, { chapter: "02" }]);
+  });
+
+  it("read_book 非 404 的错误不吞——那是真故障", async () => {
+    const { err } = await run("read_book", { slug: "s" }, {
+      "books GET s/_src/book.json": new VoiceDropError("boom", 500, {}),
+    });
+    expect(err.status).toBe(500);
+  });
+
+  it("read_book_chapter → GET <slug>/<NN>.html，HTML 剥成纯文本，注入的播放器一并摘掉", async () => {
+    const { calls, out } = await run("read_book_chapter", { slug: "s-book", chapter: "01" }, {
+      "books GET s-book/01.html":
+        "<html><style>b{}</style><h1>第一章</h1><p>正文&amp;第一段。</p>" +
+        '<div id="abw"><button>🎧 听本章</button></div><script>var x=1;</script></html>',
+    });
+    expect(calls[0]).toMatchObject({ source: "books", method: "GET", path: "s-book/01.html" });
+    expect(out.text).toBe("第一章\n正文&第一段。");
+    expect(out.url).toBe("https://voicedrop.cn/books/s-book/01.html");
+  });
+
+  it("read_book_chapter 容忍单位数章号：1 → 01；intro 原样", async () => {
+    const a = await run("read_book_chapter", { slug: "s", chapter: "1" }, { "books GET s/01.html": "<p>x</p>" });
+    expect(a.calls[0].path).toBe("s/01.html");
+    const b = await run("read_book_chapter", { slug: "s", chapter: "intro" }, { "books GET s/intro.html": "<p>x</p>" });
+    expect(b.calls[0].path).toBe("s/intro.html");
+  });
+
+  it("write_book → POST lab book，body 带 {seed}，回执附下一步指引", async () => {
+    const { calls, out } = await run("write_book", { seed: "讲清楚复利" }, {
+      "lab POST book": { ok: true, slug: "compound-interest" },
+    });
+    expect(calls[0]).toMatchObject({ source: "lab", method: "POST", path: "book" });
+    expect(calls[0].body).toEqual({ seed: "讲清楚复利" });
+    expect(out.slug).toBe("compound-interest");
+    expect(out.next).toContain("book_history");
+  });
+
+  it("revise_book → POST lab book/revise，body 带 {slug, instruction}", async () => {
+    const { calls } = await run("revise_book", { slug: "s-book", instruction: "第三章砍一半" });
+    expect(calls[0]).toMatchObject({ source: "lab", method: "POST", path: "book/revise" });
+    expect(calls[0].body).toEqual({ slug: "s-book", instruction: "第三章砍一半" });
+  });
+
+  it("book_history → GET lab book/history，slug 走 query", async () => {
+    const { calls } = await run("book_history", { slug: "s-book" });
+    expect(calls[0]).toMatchObject({ source: "lab", method: "GET", path: "book/history" });
+    expect(calls[0].query).toEqual({ slug: "s-book" });
   });
 });
 

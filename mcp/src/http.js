@@ -33,9 +33,10 @@ const rpcError = (id, code, message, status) => json({ jsonrpc: "2.0", id, error
 // 真正碰用户数据的只有 tools/call，token 在那一步才必需。
 const NEEDS_NO_TOKEN = new Set(["initialize", "ping", "tools/list", "notifications/initialized"]);
 
-// login 是唯一免 token 的工具——它就是用来拿 token 的。要 token 才能登录、
-// 要登录才能拿 token，那是死锁。
-const NO_TOKEN_TOOLS = new Set(["login"]);
+// 免 token 的工具：login 是用来拿 token 的（要 token 才能登录、要登录才能拿
+// token，那是死锁）；书架三件（列书/看目录/读章节）是公开内容——网页上任何人
+// 不登录都能看 voicedrop.cn/books，MCP 里也一样。
+const NO_TOKEN_TOOLS = new Set(["login", "list_books", "read_book", "read_book_chapter"]);
 
 const needsToken = (m) =>
   !NEEDS_NO_TOKEN.has(m?.method) &&
