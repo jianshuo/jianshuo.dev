@@ -552,6 +552,36 @@ async function fetchScope(auth: string | undefined): Promise<string> {
   }
 }
 
+// 存储层所有权兜底（2026-08-20）：所有书都由本机 agent 用**同一个** voicedrop 账号
+// 发布（~/.config/voicedrop/credentials 的 scope）——存储位置分不出下单人，下单人只在
+// 扣费那一刻可知，这是 bookmeta 存在的原因。但反过来：请求者若就是发布账号本人
+// （token 的 scope == 发布 scope），他对店里所有书天然有存储层所有权——bookmeta 缺
+// 条目（老书/历史事故）也允许修，并当场补登记。其他人仍需 bookmeta 对号。
+let cachedPublisherScope = "";
+async function publisherScope(): Promise<string> {
+  if (cachedPublisherScope) return cachedPublisherScope;
+  try {
+    const j = JSON.parse(
+      await readFile(join(process.env.HOME ?? homedir(), ".config", "voicedrop", "credentials"), "utf8"),
+    );
+    cachedPublisherScope = String(j?.scope ?? "");
+  } catch {
+    /* 下次再试 */
+  }
+  return cachedPublisherScope;
+}
+
+// 线上 _src 源稿镜像的 book.json——书存在与否、署名是什么，以线上为准。
+async function fetchSrcBook(slug: string): Promise<any | null> {
+  try {
+    const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/_src/book.json`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
 // 真实作者署名（2026-08-11）：用提交者自己的 bearer 拉他的 CLAUDE.json，取
 // profile.name（设置页「名字」，挖文章署名同源）。拉不到/没填 → 空，书就不署名
 // ——绝不回落到任何默认人名。
@@ -581,8 +611,35 @@ function runBookJob(seed: string, scope: string, author: string) {
     `任务：写一本书。${byline}\n` +
     `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
     `种子：\n${seed}`;
+  let sessionId = "";
+  // 边跑边登记：slug 一出现（建筑师落 book.json，约 1 分钟内）就先写 bookmeta
+  // （status running）——只在收尾登记的话，进程中途死掉这本书就没有主人
+  // （2026-08-20 部署重启掐死在跑任务，实锤丢过一次）。
+  let earlySlug = "";
+  const reg = setInterval(async () => {
+    try {
+      const slug = await findSlugByJobId(jobId);
+      if (!slug) return;
+      clearInterval(reg);
+      earlySlug = slug;
+      const meta = (await readBookMeta(slug)) ?? { slug, scope, author, createdAt: startedAt, thread: [] };
+      if (!meta.thread.some((e) => e.ts === startedAt)) {
+        meta.thread.push({
+          ts: startedAt,
+          kind: "create",
+          instruction: seed.slice(0, 4000),
+          ...(sessionId ? { sessionId } : {}),
+          status: "running",
+        });
+        await writeBookMeta(meta);
+        console.log(`[book] early-registered slug=${slug} scope=${scope}`);
+      }
+    } catch {
+      /* 下一轮再试 */
+    }
+  }, 30000);
+  reg.unref?.();
   (async () => {
-    let sessionId = "";
     let ok = false;
     let reply = "";
     try {
@@ -595,28 +652,37 @@ function runBookJob(seed: string, scope: string, author: string) {
     } catch (e) {
       console.error("[book] job failed", e);
     }
-    // 收尾登记：jobId → slug → bookmeta（主人 + 对话线第一条）。找不到 slug 就落
+    // 收尾登记：早登记过就补 status/reply；没有就整条落档。找不到 slug 落
     // _unmatched 便于人工对号——绝不让一本已扣费的书没有主人记录。
+    clearInterval(reg);
     try {
-      const slug = await findSlugByJobId(jobId);
-      const entry: ThreadEntry = {
-        ts: startedAt,
-        kind: "create",
-        instruction: seed.slice(0, 4000),
+      const slug = earlySlug || (await findSlugByJobId(jobId));
+      const patch: Partial<ThreadEntry> = {
         ...(sessionId ? { sessionId } : {}),
         status: ok ? "done" : "failed",
         ...(reply ? { reply: reply.slice(0, 4000) } : {}),
       };
       if (slug) {
-        const meta = (await readBookMeta(slug)) ?? { slug, scope, author, createdAt: startedAt, thread: [] };
-        meta.thread.push(entry);
-        await writeBookMeta(meta);
+        const meta = await readBookMeta(slug);
+        if (meta?.thread.some((e) => e.ts === startedAt)) {
+          await patchThreadEntry(slug, startedAt, patch);
+        } else {
+          const m = meta ?? { slug, scope, author, createdAt: startedAt, thread: [] };
+          m.thread.push({
+            ts: startedAt,
+            kind: "create",
+            instruction: seed.slice(0, 4000),
+            status: "failed",
+            ...patch,
+          } as ThreadEntry);
+          await writeBookMeta(m);
+        }
         console.log(`[book] registered slug=${slug} scope=${scope} session=${sessionId}`);
       } else {
         await mkdir(BOOKMETA_DIR, { recursive: true });
         await writeFile(
           join(BOOKMETA_DIR, `_unmatched-${jobId}.json`),
-          JSON.stringify({ jobId, scope, author, ...entry }, null, 2) + "\n",
+          JSON.stringify({ jobId, scope, author, instruction: seed.slice(0, 4000), ...patch }, null, 2) + "\n",
         );
         console.error(`[book] job=${jobId} finished but no book.json carries this jobId — wrote _unmatched`);
       }
@@ -697,19 +763,34 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
     res.writeHead(400, json).end(JSON.stringify({ error: "empty instruction" }));
     return;
   }
-  const meta = await readBookMeta(slug);
-  if (!meta) {
-    // 没登记主人的书（登记簿上线前写的老书）不能在线修改——否则任何人都能改别人的书。
-    res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
-    return;
-  }
   // dry 探路：验 token、验余额、拿 scope——都不扣费。
   const probe = await chargeBook(req.headers.authorization, { slug, kind: "revise" }, true);
   if (probe.status !== 200 || !probe.body?.ok) {
     res.writeHead(probe.status === 200 ? 502 : probe.status, json).end(JSON.stringify(probe.body));
     return;
   }
-  if (meta.scope && meta.scope !== String(probe.body.scope ?? "")) {
+  const requester = String(probe.body.scope ?? "");
+  let meta = await readBookMeta(slug);
+  if (!meta) {
+    // 没登记主人的书（登记簿上线前的老书/历史事故）：存储层所有权兜底——请求者
+    // 就是发布账号本人时放行并当场补登记；其他人仍 404（否则任何人都能改别人的书）。
+    const pub = await publisherScope();
+    const src = requester && pub && requester === pub ? await fetchSrcBook(slug) : null;
+    if (!src) {
+      res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
+      return;
+    }
+    meta = {
+      slug,
+      scope: requester,
+      author: String(src?.author ?? "").slice(0, 20),
+      createdAt: Date.now(),
+      thread: [],
+    };
+    await writeBookMeta(meta);
+    console.log(`[revise] storage-owner claimed unregistered book slug=${slug} scope=${requester}`);
+  }
+  if (meta.scope && meta.scope !== requester) {
     res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
     return;
   }
@@ -742,14 +823,29 @@ async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug
     res.writeHead(400, json).end(JSON.stringify({ error: "bad slug" }));
     return;
   }
-  const meta = await readBookMeta(slug);
-  if (!meta) {
-    res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
-    return;
-  }
   const scope = await fetchScope(req.headers.authorization);
   if (!scope) {
     res.writeHead(401, json).end(JSON.stringify({ error: "bad token" }));
+    return;
+  }
+  const meta = await readBookMeta(slug);
+  if (!meta) {
+    // 未登记的书：发布账号本人可看（存储层所有权，对话线为空）；其他人 404。
+    const pub = await publisherScope();
+    const src = pub && scope === pub ? await fetchSrcBook(slug) : null;
+    if (!src) {
+      res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
+      return;
+    }
+    res.writeHead(200, json).end(
+      JSON.stringify({
+        slug,
+        author: String(src?.author ?? ""),
+        createdAt: 0,
+        running: false,
+        thread: [],
+      }),
+    );
     return;
   }
   if (meta.scope && meta.scope !== scope) {
