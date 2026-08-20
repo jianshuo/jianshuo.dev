@@ -8,6 +8,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -193,9 +194,97 @@ async function getSessionMessages(id: string) {
 // 的「断线即中止」相反——app 提交完种子就可以关掉。
 // 认证不走 Caddy basic_auth（Caddyfile 对此路径豁免）：客户端带 VoiceDrop 用户
 // bearer（anon_*/session JWT），这里拿它去 jianshuo.dev whoami 验真——app 里零内置密钥。
-const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80);
-const REVISE_MAX_TURNS = Number(process.env.REVISE_MAX_TURNS ?? 50);
+//
+// 引擎（2026-08-20 起）：写书/修书跑 OpenAI Codex CLI（`codex exec --json`，与
+// codex.jianshuo.dev 同款，走 ChatGPT 订阅）——lab 网页聊天仍是 Claude，只有书换引擎。
+// 凭据是 claude-agent 自己的独立登录链 CODEX_HOME=$HOME/.codex（沙箱可写区内；
+// 绝不与 /opt/codex-agent 或 paint 共链——refresh token 轮换互踢，见记忆
+// codex-subscription-auth-chains）。重登：
+//   ssh root@VPS 'sudo -u claude-agent HOME=/opt/claude-agent codex login --device-auth'
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
+const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
+const CODEX_HOME = process.env.CODEX_HOME ?? join(process.env.HOME ?? homedir(), ".codex");
+const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
+const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
+
+const SKILLS_DIR = join(process.env.HOME ?? homedir(), ".claude", "skills");
+
+// codex 是单代理循环，没有 Claude 的 skill 装载/并行 subagent/Workflow——skill 里
+// 这三样都要在 prompt 里翻译成「自己读文件 + 自己分步扮演角色」。
+const CODEX_BOOK_PREAMBLE =
+  `你是跑在服务器上的自动写书代理（可跑 bash、读写文件、联网）。\n` +
+  `先完整阅读 ${SKILLS_DIR}/wjs-voicedrop-writing-book/SKILL.md 并严格照做；` +
+  `按它第 0 步选定书的类型后，把对应写作 skill 的 SKILL.md（同在 ${SKILLS_DIR}/ 下）也完整读进来再动笔。\n` +
+  `你没有并行子代理，也没有 Workflow——skill 里说 spawn 写手/评审 subagent 的地方，一律由你自己分步串行扮演：` +
+  `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
+  `不过就照 must_fix 重写（最多 3 轮），过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
+  `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。`;
+
+type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: string };
+
+// 跑一次 codex exec 到结束。事件解析与 codex-agent 的 translate() 同源（实机 fixture
+// 校准过）：thread.started 拿线程号，item.completed/agent_message 的最后一条是给
+// 主人看的答复，turn.failed/error 记错误。三坑防线：flags 在子命令后紧跟（无 resume）、
+// --skip-git-repo-check（workspace 不是 git repo）、stdin 必须 ignore（否则等 EOF 挂住）。
+function runCodexExec(prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+  return new Promise((resolve) => {
+    const args = ["exec", "--json", "-s", "danger-full-access", "-C", WORKSPACE, "--skip-git-repo-check"];
+    if (BOOK_CODEX_MODEL) args.push("-m", BOOK_CODEX_MODEL);
+    args.push(prompt);
+    const child = spawn(CODEX_BIN, args, {
+      cwd: WORKSPACE,
+      env: { ...process.env, CODEX_HOME },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let threadId = "";
+    let reply = "";
+    let error = "";
+    let stderrTail = "";
+    let buf = "";
+    const timer = setTimeout(() => {
+      error = error || `书没写完就超时了（${Math.round(BOOK_TIMEOUT_MS / 60000)} 分钟兜底）`;
+      child.kill("SIGKILL");
+    }, BOOK_TIMEOUT_MS);
+    timer.unref?.();
+    child.stdout.on("data", (c) => {
+      buf += c;
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        let ev: any;
+        try {
+          ev = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const type = String(ev?.type ?? "");
+        const tid = ev?.thread_id ?? ev?.session_id;
+        if (!threadId && tid && (type === "thread.started" || type === "session.created")) {
+          threadId = String(tid);
+          onThread?.(threadId);
+        }
+        if (type === "item.completed" && ev.item?.type === "agent_message" && ev.item.text)
+          reply = String(ev.item.text);
+        if (type === "turn.failed" || type === "error")
+          error = String(ev?.error?.message ?? ev?.message ?? "turn failed");
+      }
+    });
+    child.stderr.on("data", (c) => {
+      stderrTail = (stderrTail + c).slice(-2000);
+    });
+    child.on("error", (e: any) => {
+      clearTimeout(timer);
+      resolve({ ok: false, threadId, reply, error: String(e?.message ?? e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const ok = code === 0 && !!reply;
+      resolve({ ok, threadId, reply, error: ok ? "" : error || stderrTail.trim() || `codex exit ${code}` });
+    });
+  });
+}
 
 // --- 书的登记簿（bookmeta）：每本书一份 JSON，主人 + 持久对话线 ---
 //
@@ -203,8 +292,9 @@ const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/age
 // entry = { ts, kind: "create"|"revise", instruction, sessionId?, status:
 //           "running"|"done"|"failed", reply?, error? }
 // 这是「谁能修这本书」的准入真源（scope = 创建时扣费的账户），也是 App 里
-// 「修改这本书」页面读的那条永久对话历史。sessionId 指向 SDK 落盘的
-// .claude/projects/**/<sessionId>.jsonl 完整过程（lab 网页 /api/sessions/<id> 可看）。
+// 「修改这本书」页面读的那条永久对话历史。sessionId：2026-08-20 换引擎后是
+// codex 线程号（VPS 上 CODEX_HOME/sessions/ 下有完整过程；`codex exec resume <id>`
+// 可续）；老条目仍是 Claude session id（lab 网页 /api/sessions/<id> 可回看）。
 const BOOKMETA_DIR = process.env.BOOKMETA_DIR ?? join(__dirname, "..", "bookmeta");
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -331,35 +421,22 @@ function runBookJob(seed: string, scope: string, author: string) {
   const byline = author
     ? `作者署名「${author}」——book.json 的 author 字段用这个名字，封面/页脚照此署名。`
     : `提交者没有留名字——book.json 不写 author 字段，全书不署名（不要默认署任何人名）。`;
-  const q = query({
-    prompt:
-      `用 wjs-voicedrop-writing-book skill 写一本书。${byline}\n` +
-      `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
-      `种子：\n${seed}`,
-    options: {
-      cwd: WORKSPACE,
-      model: MODEL,
-      maxTurns: BOOK_MAX_TURNS,
-      permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-    },
-  });
+  const prompt =
+    `${CODEX_BOOK_PREAMBLE}\n\n` +
+    `任务：写一本书。${byline}\n` +
+    `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
+    `种子：\n${seed}`;
   (async () => {
     let sessionId = "";
     let ok = false;
     let reply = "";
     try {
-      for await (const msg of q as AsyncIterable<any>) {
-        if (msg.type === "system" && msg.subtype === "init" && msg.session_id) sessionId = msg.session_id;
-        if (msg.type === "result") {
-          ok = msg.subtype === "success";
-          reply = typeof msg.result === "string" ? msg.result : "";
-          console.log(
-            `[book] done scope=${scope} turns=${msg.num_turns} cost=${msg.total_cost_usd}` +
-              (ok ? "" : ` ERROR=${msg.subtype}`),
-          );
-        }
-      }
+      const out = await runCodexExec(prompt, (id) => {
+        sessionId = id;
+      });
+      ok = out.ok;
+      reply = out.reply;
+      console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
     } catch (e) {
       console.error("[book] job failed", e);
     }
@@ -394,42 +471,29 @@ function runBookJob(seed: string, scope: string, author: string) {
   })();
 }
 
-// 修书 job：不 resume 写书旧 session（子 agent 的正文本来就不在主对话里，背着整段
-// 历史只多花钱）——每次修改都是全新 session，以工作目录/线上成书这些「文件」为真源。
+// 修书 job：不 resume 写书旧线程（背着整段历史只多花钱）——每次修改都是全新
+// codex exec，以工作目录/线上成书这些「文件」为真源。
 function runReviseJob(slug: string, scope: string, author: string, instruction: string, entryTs: number) {
   console.log(`[revise] start slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author ? `这本书署名「${author}」，改动不要动署名。` : "这本书不署名，保持不署名。";
-  const q = query({
-    prompt:
-      `用 wjs-voicedrop-writing-book skill 的「修书模式」修改一本已出版的书。\n` +
-      `slug：${slug}\n${byline}\n` +
-      `书的主人提出的修改指令：\n${instruction}\n\n` +
-      `要求：只改与指令相关的章节/目录/封面，其余一律不动；改完把受影响的页面重新发布；` +
-      `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。`,
-    options: {
-      cwd: WORKSPACE,
-      model: MODEL,
-      maxTurns: REVISE_MAX_TURNS,
-      permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-    },
-  });
+  const prompt =
+    `${CODEX_BOOK_PREAMBLE}\n\n` +
+    `任务：按 skill 的「修书模式」修改一本已出版的书。\n` +
+    `slug：${slug}\n${byline}\n` +
+    `书的主人提出的修改指令：\n${instruction}\n\n` +
+    `要求：只改与指令相关的章节/目录/封面，其余一律不动；改完把受影响的页面重新发布；` +
+    `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。`;
   (async () => {
     try {
-      for await (const msg of q as AsyncIterable<any>) {
-        if (msg.type === "system" && msg.subtype === "init" && msg.session_id)
-          await patchThreadEntry(slug, entryTs, { sessionId: msg.session_id });
-        if (msg.type === "result") {
-          const ok = msg.subtype === "success";
-          const reply = typeof msg.result === "string" ? msg.result.trim() : "";
-          await patchThreadEntry(slug, entryTs, {
-            status: ok ? "done" : "failed",
-            ...(reply ? { reply: reply.slice(0, 4000) } : {}),
-            ...(ok ? {} : { error: String(msg.subtype) }),
-          });
-          console.log(`[revise] done slug=${slug} turns=${msg.num_turns} cost=${msg.total_cost_usd}` + (ok ? "" : ` ERROR=${msg.subtype}`));
-        }
-      }
+      const out = await runCodexExec(prompt, (id) => {
+        patchThreadEntry(slug, entryTs, { sessionId: id }).catch(() => {});
+      });
+      await patchThreadEntry(slug, entryTs, {
+        status: out.ok ? "done" : "failed",
+        ...(out.reply ? { reply: out.reply.trim().slice(0, 4000) } : {}),
+        ...(out.ok ? {} : { error: out.error }),
+      });
+      console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
     } catch (e: any) {
       console.error("[revise] job failed", e);
       await patchThreadEntry(slug, entryTs, { status: "failed", error: String(e?.message ?? e) }).catch(() => {});
