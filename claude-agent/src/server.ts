@@ -29,6 +29,10 @@ const MAX_RESULT_CHARS = 8000;
 const PROJECTS_DIR = join(process.env.HOME ?? homedir(), ".claude", "projects");
 const SESSION_ID_RE = /^[a-f0-9-]{36}$/;
 
+// 写书引擎（codex）的独立凭据链与会话目录——声明放这里是因为下面的会话列表也要读它。
+const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
+const CODEX_HOME = process.env.CODEX_HOME ?? join(process.env.HOME ?? homedir(), ".codex");
+
 const INDEX_HTML = await readFile(join(__dirname, "..", "public", "index.html"), "utf8");
 
 // A persistent service must survive a single bad query. The SDK fires internal
@@ -115,7 +119,7 @@ async function listSessions() {
   try {
     dirs = await readdir(PROJECTS_DIR);
   } catch {
-    return [];
+    dirs = [];
   }
   const out: any[] = [];
   for (const d of dirs) {
@@ -134,14 +138,167 @@ async function listSessions() {
       }
     }
   }
+  for (const p of await listCodexRollouts()) {
+    try {
+      out.push(await summarizeCodex(p));
+    } catch {
+      /* skip unreadable */
+    }
+  }
   return out.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 200);
+}
+
+// --- codex（写书引擎）的会话：也能在侧栏列出、点开回看 ---
+//
+// codex exec 把每单完整过程落在 CODEX_HOME/sessions/YYYY/MM/DD/rollout-<时刻>-<线程号>.jsonl。
+// 这里把它翻译成与 Claude transcript 相同的消息结构（user 气泡 + assistant 的
+// text/tool 卡片），前端零改动。只读回看——续聊会被 /api/chat 拒绝（引擎不同）。
+const CODEX_SESSIONS_DIR = join(CODEX_HOME, "sessions");
+
+async function listCodexRollouts(): Promise<string[]> {
+  const out: string[] = [];
+  let years: string[];
+  try {
+    years = await readdir(CODEX_SESSIONS_DIR);
+  } catch {
+    return out;
+  }
+  for (const y of years)
+    for (const m of await readdir(join(CODEX_SESSIONS_DIR, y)).catch(() => [] as string[]))
+      for (const f of await readdir(join(CODEX_SESSIONS_DIR, y, m)).catch(() => [] as string[])) {
+        // 一层是天（目录），底下才是文件
+        const day = join(CODEX_SESSIONS_DIR, y, m, f);
+        for (const g of await readdir(day).catch(() => [] as string[]))
+          if (g.endsWith(".jsonl")) out.push(join(day, g));
+      }
+  return out;
+}
+
+function codexIdOfPath(p: string): string {
+  return p.slice(-42, -6); // rollout-<时刻>-<36位线程号>.jsonl
+}
+
+async function findCodexRollout(id: string): Promise<string | null> {
+  if (!SESSION_ID_RE.test(id)) return null;
+  for (const p of await listCodexRollouts()) if (codexIdOfPath(p) === id) return p;
+  return null;
+}
+
+// 侧栏摘要：标题取第一条 user_message；写书 prompt 前面是长长的引擎说明，
+// 从「任务：」起才是人话——标题从那里截。
+async function summarizeCodex(path: string) {
+  const raw = await readFile(path, "utf8");
+  let title = "";
+  let turns = 0;
+  for (const ln of raw.split("\n")) {
+    if (!ln.trim()) continue;
+    let o: any;
+    try {
+      o = JSON.parse(ln);
+    } catch {
+      continue;
+    }
+    if (o.type === "event_msg" && o.payload?.type === "user_message") {
+      turns++;
+      if (!title) {
+        const t = String(o.payload.message ?? "").trim();
+        const i = t.indexOf("任务：");
+        title = i >= 0 ? t.slice(i) : t;
+      }
+    }
+  }
+  const st = await stat(path);
+  return {
+    id: codexIdOfPath(path),
+    title: "📖 " + (title.slice(0, 78) || "(无标题)"),
+    updatedAt: st.mtimeMs,
+    turns,
+    running: false,
+    engine: "codex",
+  };
+}
+
+// 回放：翻译成 getSessionMessages 一样的形状。文字走 event_msg（user_message/
+// agent_message），工具卡片走 response_item（function_call/custom_tool_call/
+// web_search_call），输出按 call_id 回填；reasoning 是加密的，跳过。
+async function getCodexSessionMessages(path: string) {
+  const raw = await readFile(path, "utf8");
+  const msgs: any[] = [];
+  let cur: any = null;
+  const toolIndex: Record<string, any> = {};
+  const push = (item: any) => {
+    if (!cur) {
+      cur = { role: "assistant", items: [] };
+      msgs.push(cur);
+    }
+    cur.items.push(item);
+  };
+  for (const ln of raw.split("\n")) {
+    if (!ln.trim()) continue;
+    let o: any;
+    try {
+      o = JSON.parse(ln);
+    } catch {
+      continue;
+    }
+    const p = o.payload ?? {};
+    if (o.type === "event_msg") {
+      if (p.type === "user_message") {
+        const t = String(p.message ?? "").trim();
+        if (t) {
+          msgs.push({ role: "user", text: t });
+          cur = null;
+        }
+      } else if (p.type === "agent_message" && p.message) {
+        push({ type: "text", text: String(p.message) });
+      }
+    } else if (o.type === "response_item") {
+      if (p.type === "function_call") {
+        let input: any = {};
+        try {
+          input = JSON.parse(p.arguments ?? "{}");
+        } catch {
+          input = { arguments: p.arguments };
+        }
+        const item = { type: "tool", id: p.call_id, name: p.name ?? "tool", input, result: null, isError: false };
+        push(item);
+        if (p.call_id) toolIndex[p.call_id] = item;
+      } else if (p.type === "custom_tool_call") {
+        const item = {
+          type: "tool",
+          id: p.call_id,
+          name: p.name ?? "tool",
+          input: { input: String(p.input ?? "") },
+          result: null,
+          isError: false,
+        };
+        push(item);
+        if (p.call_id) toolIndex[p.call_id] = item;
+      } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+        if (p.call_id && toolIndex[p.call_id]) toolIndex[p.call_id].result = renderToolResult(p.output);
+      } else if (p.type === "web_search_call") {
+        push({
+          type: "tool",
+          id: p.id,
+          name: "web_search",
+          input: { query: p.action?.query ?? "" },
+          result: String(p.status ?? ""),
+          isError: false,
+        });
+      }
+    }
+  }
+  return msgs;
 }
 
 // Replay a transcript into the same shape the live UI renders: one assistant
 // bubble per human turn, with text + tool cards (results attached) interleaved.
 async function getSessionMessages(id: string) {
   const path = await findTranscript(id);
-  if (!path) return null;
+  if (!path) {
+    const cp = await findCodexRollout(id);
+    return cp ? getCodexSessionMessages(cp) : null;
+  }
   const raw = await readFile(path, "utf8");
   const msgs: any[] = [];
   let cur: any = null;
@@ -202,8 +359,6 @@ async function getSessionMessages(id: string) {
 // codex-subscription-auth-chains）。重登：
 //   ssh root@VPS 'sudo -u claude-agent HOME=/opt/claude-agent codex login --device-auth'
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
-const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
-const CODEX_HOME = process.env.CODEX_HOME ?? join(process.env.HOME ?? homedir(), ".codex");
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
 
@@ -814,6 +969,11 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, payload: an
     sseReject(res, "该会话已有任务在运行，可先停止或等它完成");
     return;
   }
+  // codex（写书引擎）的会话只能回看——引擎不同，Claude 这边 resume 不了
+  if (sessionId && !(await findTranscript(sessionId)) && (await findCodexRollout(sessionId))) {
+    sseReject(res, "这是写书引擎（ChatGPT）的会话，只能回看，不能在这里续聊");
+    return;
+  }
   if (activeRunCount() >= MAX_CONCURRENT_RUNS) {
     sseReject(res, `同时最多运行 ${MAX_CONCURRENT_RUNS} 个任务，稍后再试`);
     return;
@@ -864,11 +1024,12 @@ const server = createServer((req, res) => {
     if (req.method === "DELETE") {
       findTranscript(id)
         .then(async (p) => {
-          if (!p) {
+          const target = p ?? (await findCodexRollout(id));
+          if (!target) {
             res.writeHead(404).end("not found");
             return;
           }
-          await unlink(p);
+          await unlink(target);
           res.writeHead(200).end("ok");
         })
         .catch((err) => res.writeHead(500).end(String(err?.message ?? err)));
