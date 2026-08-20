@@ -571,7 +571,7 @@ async function publisherScope(): Promise<string> {
   return cachedPublisherScope;
 }
 
-// 线上 _src 源稿镜像的 book.json——书存在与否、署名是什么，以线上为准。
+// 线上 _src 源稿镜像的 book.json（取署名用；老书没有 _src，返回 null 不算书不存在）。
 async function fetchSrcBook(slug: string): Promise<any | null> {
   try {
     const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/_src/book.json`);
@@ -579,6 +579,16 @@ async function fetchSrcBook(slug: string): Promise<any | null> {
     return await r.json();
   } catch {
     return null;
+  }
+}
+
+// 书存在与否以公开目录页为准——_src 是 2026-08-15 才有的，老书只有 index.html。
+async function bookExistsOnline(slug: string): Promise<boolean> {
+  try {
+    const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/index.html`, { method: "HEAD" });
+    return r.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -775,11 +785,11 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
     // 没登记主人的书（登记簿上线前的老书/历史事故）：存储层所有权兜底——请求者
     // 就是发布账号本人时放行并当场补登记；其他人仍 404（否则任何人都能改别人的书）。
     const pub = await publisherScope();
-    const src = requester && pub && requester === pub ? await fetchSrcBook(slug) : null;
-    if (!src) {
+    if (!requester || !pub || requester !== pub || !(await bookExistsOnline(slug))) {
       res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
       return;
     }
+    const src = await fetchSrcBook(slug);
     meta = {
       slug,
       scope: requester,
@@ -832,11 +842,11 @@ async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug
   if (!meta) {
     // 未登记的书：发布账号本人可看（存储层所有权，对话线为空）；其他人 404。
     const pub = await publisherScope();
-    const src = pub && scope === pub ? await fetchSrcBook(slug) : null;
-    if (!src) {
+    if (!pub || scope !== pub || !(await bookExistsOnline(slug))) {
       res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
       return;
     }
+    const src = await fetchSrcBook(slug);
     res.writeHead(200, json).end(
       JSON.stringify({
         slug,
