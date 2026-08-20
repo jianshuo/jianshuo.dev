@@ -827,6 +827,14 @@ export class LinkBroker {
 const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { "content-type": "application/json" } });
 const r1 = (n) => Math.round(n * 10) / 10;
 const r2 = (n) => Math.round(n * 100) / 100;
+// 账户 key 的唯一合法形态是 anonScopeFromToken 产出的 "users/<id>/"。管理端 grant
+// 曾把裸 id 原样入账，钱进了任何 token 都解析不到的孤儿账户（2026-08-20 事故）。
+const normSub = (s) => {
+  s = String(s || "").trim().replace(/^\/+|\/+$/g, "");
+  if (!s) return "";
+  if (!s.startsWith("users/")) s = "users/" + s;
+  return s + "/";
+};
 
 export async function handleUsageRoute(url, request, env) {
   if (!url.pathname.startsWith("/agent/usage/")) return null;
@@ -919,12 +927,13 @@ export async function handleUsageRoute(url, request, env) {
   if (url.pathname === "/agent/usage/grant" && request.method === "POST") {
     if (!isAdmin) return J({ error: "unauthorized" }, 401);
     const b = await request.json().catch(() => ({}));
-    if (!b.user_sub || !Number.isFinite(b.suanli)) return J({ error: "bad-request" }, 400);
+    const sub = normSub(b.user_sub);
+    if (!sub || !Number.isFinite(b.suanli)) return J({ error: "bad-request" }, 400);
     const now = Date.now();
     const days = Number.isFinite(b.expire_days) ? b.expire_days : CAMPAIGN_EXPIRE_DAYS;
     const expiresAt = now + days * DAY_MS;
-    await grantBucket(env.USAGE, b.user_sub, suanliToUY(b.suanli), "campaign:" + (b.reason || "manual"), expiresAt, now);
-    return J({ ok: true, suanli: b.suanli, cost_yuan: r2(b.suanli / RATE), expires_at: expiresAt });
+    await grantBucket(env.USAGE, sub, suanliToUY(b.suanli), "campaign:" + (b.reason || "manual"), expiresAt, now);
+    return J({ ok: true, user_sub: sub, suanli: b.suanli, cost_yuan: r2(b.suanli / RATE), expires_at: expiresAt });
   }
 
   if (url.pathname === "/agent/usage/grant/batch" && request.method === "POST") {
@@ -934,10 +943,11 @@ export async function handleUsageRoute(url, request, env) {
     const now = Date.now();
     const days = Number.isFinite(b.expire_days) ? b.expire_days : CAMPAIGN_EXPIRE_DAYS;
     const expiresAt = now + days * DAY_MS;
-    let targets = Array.isArray(b.user_subs) ? b.user_subs.filter((s) => typeof s === "string" && s) : null;
+    let targets = Array.isArray(b.user_subs) ? b.user_subs.filter((s) => typeof s === "string" && s).map(normSub).filter(Boolean) : null;
     if ((!targets || targets.length === 0) && b.all === true) {
-      targets = (await allAccounts(env.USAGE, now)).map((a) => a.user_sub);
+      targets = (await allAccounts(env.USAGE, now)).map((a) => normSub(a.user_sub));
     }
+    targets = targets ? [...new Set(targets)] : null;
     if (!targets || targets.length === 0) return J({ error: "bad-request", hint: "user_subs[] or all:true" }, 400);
     const source = "campaign:" + (b.reason || "manual");
     for (const u of targets) {

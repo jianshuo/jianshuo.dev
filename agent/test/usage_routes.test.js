@@ -134,6 +134,35 @@ describe("usage routes", () => {
     expect(row.source).toBe("campaign:spring");
     expect(row.expires_at).toBeGreaterThan(0); // 盖了过期日（90 天后）
   });
+  it("admin grant 归一化裸 id：anon-x → users/anon-x/（2026-08-20 孤儿账户事故回归）", async () => {
+    const env = { USAGE: fakeD1(usageSql()), FILES_TOKEN: "admintok" };
+    const r = await handleUsageRoute(new URL("https://jianshuo.dev/agent/usage/grant"),
+      new Request("https://jianshuo.dev/agent/usage/grant", {
+        method: "POST",
+        headers: { Authorization: "Bearer admintok", "Content-Type": "application/json" },
+        body: JSON.stringify({ user_sub: "anon-27d62bac", suanli: 100 }),
+      }), env);
+    expect(r.status).toBe(200);
+    expect((await r.json()).user_sub).toBe("users/anon-27d62bac/");
+    const row = env.USAGE.prepare("SELECT user_sub FROM bucket WHERE source LIKE 'campaign:%'").first();
+    expect(row.user_sub).toBe("users/anon-27d62bac/");
+    // 裸 id 账户不应存在
+    const bare = env.USAGE.prepare("SELECT COUNT(*) AS n FROM account WHERE user_sub='anon-27d62bac'").first().n;
+    expect(bare).toBe(0);
+  });
+  it("batch grant 归一化并去重：裸 id 与 users/ 形态视为同一账户", async () => {
+    const env = { USAGE: fakeD1(usageSql()), FILES_TOKEN: "admintok" };
+    const r = await handleUsageRoute(new URL("https://jianshuo.dev/agent/usage/grant/batch"),
+      new Request("https://jianshuo.dev/agent/usage/grant/batch", {
+        method: "POST",
+        headers: { Authorization: "Bearer admintok", "Content-Type": "application/json" },
+        body: JSON.stringify({ user_subs: ["anon-a", "users/anon-a/", "anon-b"], suanli: 500, reason: "promo" }),
+      }), env);
+    expect(r.status).toBe(200);
+    expect((await r.json()).count).toBe(2);
+    const subs = env.USAGE.prepare("SELECT user_sub FROM bucket WHERE source='campaign:promo'").all().results.map((x) => x.user_sub).sort();
+    expect(subs).toEqual(["users/anon-a/", "users/anon-b/"]);
+  });
   it("batch grant fans out to explicit user_subs", async () => {
     const env = { USAGE: fakeD1(usageSql()), FILES_TOKEN: "admintok" };
     const r = await handleUsageRoute(new URL("https://jianshuo.dev/agent/usage/grant/batch"),
