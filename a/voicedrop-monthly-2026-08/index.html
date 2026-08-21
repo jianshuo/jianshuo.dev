@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoiceDrop 运行月报 · 2026-07-22 ~ 08-21</title>
+<style>
+  :root{
+    color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb;
+    --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --baseline:#c3c2b7; --ring:rgba(11,11,11,0.10);
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+    --good:#006300;
+    --seq250:#86b6ef; --seq350:#5598e7; --seq450:#2a78d6; --seq600:#184f95;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--page); color:var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    line-height:1.7; padding:40px 20px 80px;
+  }
+  .wrap{max-width:1080px; margin:0 auto;}
+  header h1{font-size:28px; font-weight:700; letter-spacing:0.5px;}
+  header .sub{color:var(--ink2); margin-top:6px; font-size:14px;}
+  header .sub b{color:var(--ink);}
+  section{margin-top:44px;}
+  h2{font-size:19px; font-weight:700; margin-bottom:14px; padding-left:10px; border-left:4px solid var(--s1);}
+  .tiles{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:14px;}
+  .tile{background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:16px 18px;}
+  .tile .label{font-size:13px; color:var(--ink2);}
+  .tile .value{font-size:30px; font-weight:700; margin-top:2px;}
+  .tile .value small{font-size:15px; font-weight:500; color:var(--ink2);}
+  .tile .delta{font-size:12.5px; margin-top:2px; color:var(--muted);}
+  .tile .delta .up{color:var(--good); font-weight:600;}
+  .tile .delta .down{color:#d03b3b; font-weight:600;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr;}}
+  .card{background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:18px 18px 10px; overflow:hidden;}
+  .card h3{font-size:15px; font-weight:600; margin-bottom:2px;}
+  .card .note{font-size:12.5px; color:var(--muted); margin-bottom:8px;}
+  .chart{position:relative;}
+  .chart svg{display:block; width:100%; height:auto;}
+  .tooltip{
+    position:absolute; pointer-events:none; background:#fff; border:1px solid var(--ring);
+    border-radius:8px; padding:6px 10px; font-size:12.5px; color:var(--ink);
+    box-shadow:0 4px 14px rgba(0,0,0,0.10); white-space:nowrap; display:none; z-index:5;
+  }
+  .tooltip b{font-variant-numeric:tabular-nums;}
+  table{width:100%; border-collapse:collapse; font-size:13.5px; background:var(--surface);}
+  .tablecard{padding-bottom:18px;}
+  th{color:var(--ink2); font-weight:600; text-align:left; padding:8px 10px; border-bottom:1.5px solid var(--baseline); font-size:12.5px;}
+  td{padding:7px 10px; border-bottom:1px solid var(--grid); font-variant-numeric:tabular-nums;}
+  td.num,th.num{text-align:right;}
+  tr:last-child td{border-bottom:none;}
+  .bar-inline{display:inline-block; height:10px; border-radius:0 4px 4px 0; background:var(--s1); vertical-align:middle; margin-right:8px;}
+  .legend{display:flex; gap:16px; font-size:12.5px; color:var(--ink2); margin-bottom:6px;}
+  .legend .sw{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px;}
+  .insights{background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:22px 26px;}
+  .insights li{margin:10px 0 10px 1.2em; color:var(--ink); font-size:14.5px;}
+  .insights li b{color:var(--ink);}
+  .insights li .dim{color:var(--ink2);}
+  footer{margin-top:56px; color:var(--muted); font-size:12.5px; text-align:center;}
+  a{color:var(--s1);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>🎙️ VoiceDrop 运行月报</h1>
+  <div class="sub">统计窗口：<b>2026-07-22 ~ 2026-08-21</b>（滚动 30 天，北京时间）· 环比对象为上一个 30 天 · 数据源：D1 voicedrop-core / voicedrop-usage / voicedrop-reco + Cloudflare Workers Analytics · 生成于 2026-08-21</div>
+</header>
+
+<section>
+  <h2>核心指标</h2>
+  <div class="tiles" id="tiles"></div>
+</section>
+
+<section>
+  <h2>活跃度</h2>
+  <div class="grid2">
+    <div class="card"><h3>每日挖出文章数</h3><div class="note">本月 732 篇 · 日均 23.6 篇</div><div class="chart" id="c-articles"></div></div>
+    <div class="card"><h3>每日活跃作者数</h3><div class="note">当天有文章产出的独立用户</div><div class="chart" id="c-authors"></div></div>
+    <div class="card"><h3>每日上传录音数</h3><div class="note">本月 937 段，306 位用户</div><div class="chart" id="c-recordings"></div></div>
+    <div class="card"><h3>每日消费用户数</h3><div class="note">当天有算力消费（ASR / 挖矿 / 改稿等）的独立用户 · 日均 23.4 人</div><div class="chart" id="c-spenders"></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>算力经济</h2>
+  <div class="grid2">
+    <div class="card"><h3>每日算力消耗（元等值）</h3><div class="note">本月 ¥1,749.5 · 环比 +99%，8/13 起「写书」拉高消耗</div><div class="chart" id="c-spend"></div></div>
+    <div class="card tablecard"><h3>消耗构成（30 天）</h3><div class="note">按功能拆分</div><table id="t-spend"></table></div>
+    <div class="card tablecard"><h3>算力发放（30 天）</h3><div class="note">共发放 ¥17,159，其中注册赠送占 39%</div><table id="t-grant"></table></div>
+    <div class="card tablecard"><h3>Top 消费用户（30 天）</h3><div class="note">头部用户消耗占比高，第一名占全月 28%</div><table id="t-spenders"></table></div>
+  </div>
+</section>
+
+<section>
+  <h2>使用漏斗（30 天）</h2>
+  <div class="card"><div class="note" style="margin-top:0">按功能触达的独立用户数，从最宽的入口到最深的分享</div><div class="chart" id="c-funnel"></div></div>
+</section>
+
+<section>
+  <h2>社区与传播</h2>
+  <div class="grid2">
+    <div class="card"><h3>社区每日互动次数</h3><div class="note">浏览 + 读完 + 点赞 · 本月 3,568 次，409 位独立用户</div><div class="chart" id="c-engage"></div></div>
+    <div class="card"><h3>社区新帖每日</h3><div class="note">本月 98 帖，29 位作者</div><div class="chart" id="c-posts"></div></div>
+    <div class="card tablecard"><h3>社区互动构成</h3><table id="t-engage"></table></div>
+    <div class="card tablecard"><h3>Top 作者（30 天文章数）</h3><table id="t-authors"></table></div>
+  </div>
+</section>
+
+<section>
+  <h2>平台流量（Cloudflare Workers）</h2>
+  <div class="card">
+    <div class="legend"><span><span class="sw" style="background:var(--s1)"></span>voicedrop-agent（主 API）</span><span><span class="sw" style="background:var(--s2)"></span>voicedrop-reco（社区推荐）</span></div>
+    <div class="note">30 天合计：agent 86,280 次请求（317 次错误，0.37%）· reco 11,357 次请求（1 次错误）</div>
+    <div class="chart" id="c-workers"></div>
+  </div>
+</section>
+
+<section>
+  <h2>观察与解读</h2>
+  <div class="insights"><ul>
+    <li><b>「写书」成了算力消耗的绝对大头。</b><span class="dim">30 天里 25 位用户写了 78 本书，消耗 ¥1,085，占全部消耗的 62%；加上修书 ¥24，写书线合计约 63%。全月算力消耗环比翻倍（¥878 → ¥1,750），但消费笔数反而从 8,133 降到 4,678——单笔变重了，典型的从「高频小额」转向「低频大额」。</span></li>
+    <li><b>参与面明显变宽，人均深度变浅。</b><span class="dim">月活消费用户 327 → 350（+7%），产出文章的作者数 114 → 218（几乎翻倍），但文章总数 775 → 732（-5.5%）。新用户多是浅尝：录一段、挖一篇。</span></li>
+    <li><b>匿名是常态：1,325 个账户里只有 108 个登录过</b><span class="dim">（Apple 59 / 微信 53）。30 天新增 761 个账户，只新增 54 个登录用户——转化率 7%。想做留存和跨设备，登录转化是最大的杠杆。</span></li>
+    <li><b>漏斗：ASR 322 人 → 挖矿 222 人 → 改稿 145 人 → 分享社区 29 人。</b><span class="dim">录音到挖矿的转化 69% 很健康；挖矿到改稿 65%；但只有 13% 的改稿用户走到分享，社区还是少数人的舞台。</span></li>
+    <li><b>邀请体系刚起量。</b><span class="dim">30 天新建 372 个邀请码，109 位新用户通过邀请注册（占新增 14%），邀请人拿到 ¥1,068 奖励。落地页归因（refhits）8/19 才上线，两天 34 次点击、24 个独立指纹——下月才有完整数据。</span></li>
+    <li><b>收入基本为零，靠免费额度驱动。</b><span class="dim">30 天生产环境只有 1 笔 ¥19.9 订阅（当前有效订阅 1 个）；同期发放免费算力 ¥17,159（注册赠送 ¥6,617 + 手动赠送 ¥8,130 + 邀请 ¥2,123 + 投币 ¥490）。发放/消耗比约 10:1，商业化还没开始。</span></li>
+    <li><b>系统很稳。</b><span class="dim">主 API 错误率 0.37%，社区服务 30 天只有 1 次错误；本月文章零屏蔽、零空稿。</span></li>
+  </ul></div>
+</section>
+
+<footer>数据由 Claude 从 Cloudflare D1 / Workers Analytics 直接查询生成 · <a href="/a/">更多报告</a></footer>
+</div>
+
+<script>
+const DATA = {"generated_at":1787292354694,"window":{"d30":1784700354694,"d7":1786687554694,"d1":1787205954694},"core":{"totals":[{"users":108,"articles":1917,"recordings":1848,"invites":395,"article_authors":381,"reports":2,"push_tokens":243}],"active":[{"dau":5,"wau":15,"mau":59}],"new_users_daily":[{"d":"2026-07-22","n":1},{"d":"2026-07-23","n":2},{"d":"2026-07-25","n":1},{"d":"2026-07-26","n":1},{"d":"2026-07-27","n":2},{"d":"2026-07-28","n":3},{"d":"2026-07-29","n":4},{"d":"2026-07-31","n":3},{"d":"2026-08-01","n":3},{"d":"2026-08-02","n":1},{"d":"2026-08-03","n":2},{"d":"2026-08-04","n":3},{"d":"2026-08-05","n":1},{"d":"2026-08-06","n":4},{"d":"2026-08-07","n":2},{"d":"2026-08-08","n":1},{"d":"2026-08-09","n":1},{"d":"2026-08-11","n":1},{"d":"2026-08-12","n":3},{"d":"2026-08-13","n":2},{"d":"2026-08-14","n":2},{"d":"2026-08-15","n":1},{"d":"2026-08-16","n":5},{"d":"2026-08-17","n":1},{"d":"2026-08-19","n":2},{"d":"2026-08-21","n":2}],"new_users_30d":[{"n":54}],"new_users_prev30d":[{"n":54}],"providers":[{"provider":"apple","n":59},{"provider":"wechat","n":53}],"articles_30d":[{"n":732,"users":218}],"articles_prev30d":[{"n":775,"users":114}],"articles_daily":[{"d":"2026-07-22","n":9,"users":5},{"d":"2026-07-23","n":32,"users":24},{"d":"2026-07-24","n":19,"users":12},{"d":"2026-07-25","n":35,"users":14},{"d":"2026-07-26","n":17,"users":10},{"d":"2026-07-27","n":26,"users":15},{"d":"2026-07-28","n":22,"users":15},{"d":"2026-07-29","n":21,"users":15},{"d":"2026-07-30","n":20,"users":12},{"d":"2026-07-31","n":36,"users":25},{"d":"2026-08-01","n":45,"users":16},{"d":"2026-08-02","n":22,"users":11},{"d":"2026-08-03","n":23,"users":15},{"d":"2026-08-04","n":27,"users":13},{"d":"2026-08-05","n":14,"users":12},{"d":"2026-08-06","n":34,"users":26},{"d":"2026-08-07","n":47,"users":29},{"d":"2026-08-08","n":21,"users":17},{"d":"2026-08-09","n":14,"users":14},{"d":"2026-08-10","n":31,"users":17},{"d":"2026-08-11","n":23,"users":11},{"d":"2026-08-12","n":37,"users":29},{"d":"2026-08-13","n":23,"users":15},{"d":"2026-08-14","n":13,"users":11},{"d":"2026-08-15","n":16,"users":13},{"d":"2026-08-16","n":31,"users":24},{"d":"2026-08-17","n":14,"users":9},{"d":"2026-08-18","n":19,"users":12},{"d":"2026-08-19","n":19,"users":16},{"d":"2026-08-20","n":14,"users":12},{"d":"2026-08-21","n":8,"users":8}],"top_authors_30d":[{"user_sub":"users/anon-ae209ac53499d51d513425503bd134b0/","n":74,"name":"微信用户"},{"user_sub":"users/anon-8ce917e01a52d939327f34cae5e5eae3/","n":36,"name":"何一涛"},{"user_sub":"users/anon-f88c9795ea856bc6e6ab492d5aeb5a76/","n":34,"name":""},{"user_sub":"users/anon-7b4abe9073c645e4a41ec2bb2b7526c8/","n":20,"name":""},{"user_sub":"users/anon-49c7ebcbb623f524cbb05e642aa2656f/","n":19,"name":""},{"user_sub":"users/anon-f950db1647f49e52924720c8c4bf5dd5/","n":16,"name":"微信用户"},{"user_sub":"users/anon-0fbfe322b00fd5a2937df12282a4697b/","n":14,"name":"微信用户"},{"user_sub":"users/anon-187e7786c267f1ba90366a0bf3b52302/","n":14,"name":"你猜"},{"user_sub":"users/anon-607da5e33bb5c058f3ed7c736080adc0/","n":14,"name":""},{"user_sub":"users/anon-e46488978bb4d089c7bf3fb7da4dab33/","n":13,"name":""},{"user_sub":"users/anon-7b443564476e00dba1c63392175cb92b/","n":11,"name":""},{"user_sub":"users/anon-c864b2709bfcffccf943778d6341849f/","n":11,"name":"XZ Z"},{"user_sub":"users/anon-aa97ca5e098ebb47377ddf941c33338e/","n":10,"name":""},{"user_sub":"users/anon-2c2a407de2f94b5f3fbac9356cacbae1/","n":9,"name":""},{"user_sub":"users/anon-8daa69bf7d1ecf4ad1f7af665dab4cff/","n":9,"name":"Chen Chanchan"}],"articles_flags_30d":[{"empty":0,"blocked":0}],"recordings_30d":[{"n":937,"users":306}],"recordings_prev30d":[{"n":890}],"recordings_daily":[{"d":"2026-07-22","n":22},{"d":"2026-07-23","n":31},{"d":"2026-07-24","n":22},{"d":"2026-07-25","n":38},{"d":"2026-07-26","n":19},{"d":"2026-07-27","n":39},{"d":"2026-07-28","n":29},{"d":"2026-07-29","n":40},{"d":"2026-07-30","n":24},{"d":"2026-07-31","n":61},{"d":"2026-08-01","n":55},{"d":"2026-08-02","n":27},{"d":"2026-08-03","n":22},{"d":"2026-08-04","n":36},{"d":"2026-08-05","n":25},{"d":"2026-08-06","n":48},{"d":"2026-08-07","n":46},{"d":"2026-08-08","n":21},{"d":"2026-08-09","n":20},{"d":"2026-08-10","n":34},{"d":"2026-08-11","n":28},{"d":"2026-08-12","n":52},{"d":"2026-08-13","n":30},{"d":"2026-08-14","n":19},{"d":"2026-08-15","n":19},{"d":"2026-08-16","n":35},{"d":"2026-08-17","n":20},{"d":"2026-08-18","n":22},{"d":"2026-08-19","n":26},{"d":"2026-08-20","n":21},{"d":"2026-08-21","n":6}],"invites_30d":[{"n":372}],"refhits_30d":[{"n":34,"fps":24}],"refhits_daily":[{"d":"2026-08-19","n":10},{"d":"2026-08-20","n":14},{"d":"2026-08-21","n":10}],"share_imports":[{"total":282,"codes":50}],"prompt_shares":[{"n":169}]},"usage":{"totals":[{"accounts":1325,"granted":30977480840,"spent":2627275404,"balance":28350203744}],"ledger_30d_by_reason":[{"kind":"grant","reason":"signup","n":761,"uy":6617391172,"users":761},{"kind":"grant","reason":"campaign:manual","n":4,"uy":5652173914,"users":4},{"kind":"grant","reason":"campaign:admin-gift","n":7,"uy":1521739128,"users":7},{"kind":"spend","reason":"book","n":78,"uy":1085217354,"users":25},{"kind":"grant","reason":"referral_author","n":110,"uy":1068343929,"users":20},{"kind":"grant","reason":"referral_new","n":109,"uy":1054858980,"users":109},{"kind":"grant","reason":"campaign:manual-gift","n":2,"uy":869565218,"users":2},{"kind":"grant","reason":"feed_author","n":209,"uy":392298918,"users":32},{"kind":"spend","reason":"edit","n":2016,"uy":268551115,"users":145},{"kind":"spend","reason":"mine","n":1084,"uy":260016070,"users":222},{"kind":"grant","reason":"feed_curator","n":209,"uy":98074648,"users":28},{"kind":"grant","reason":"campaign:manual-topup","n":1,"uy":86956522,"users":1},{"kind":"spend","reason":"asr","n":1145,"uy":52078743,"users":322},{"kind":"spend","reason":"realtime","n":46,"uy":35841674,"users":26},{"kind":"grant","reason":"subscription","n":3,"uy":26086956,"users":2},{"kind":"spend","reason":"book-revise","n":14,"uy":24347820,"users":2},{"kind":"spend","reason":"image-edit","n":227,"uy":17765247,"users":30},{"kind":"spend","reason":"style-extract","n":14,"uy":4879215,"users":10},{"kind":"spend","reason":"xhs-pack","n":3,"uy":533639,"users":3},{"kind":"spend","reason":"xhs-tags","n":51,"uy":272967,"users":23},{"kind":"grant","reason":"campaign:normalize-verify","n":1,"uy":43478,"users":1}],"ledger_daily":[{"d":"2026-07-22","spend_uy":10005453,"grant_uy":274866270,"spenders":11},{"d":"2026-07-23","spend_uy":35399136,"grant_uy":1160683816,"spenders":49},{"d":"2026-07-24","spend_uy":23759861,"grant_uy":131520771,"spenders":18},{"d":"2026-07-25","spend_uy":21034991,"grant_uy":152373551,"spenders":21},{"d":"2026-07-26","spend_uy":10922381,"grant_uy":93072087,"spenders":13},{"d":"2026-07-27","spend_uy":10861005,"grant_uy":184742514,"spenders":23},{"d":"2026-07-28","spend_uy":14268245,"grant_uy":293310626,"spenders":21},{"d":"2026-07-29","spend_uy":16619170,"grant_uy":193706988,"spenders":23},{"d":"2026-07-30","spend_uy":20645531,"grant_uy":92761666,"spenders":18},{"d":"2026-07-31","spend_uy":26892328,"grant_uy":607781524,"spenders":37},{"d":"2026-08-01","spend_uy":33372612,"grant_uy":1769325034,"spenders":23},{"d":"2026-08-02","spend_uy":16558679,"grant_uy":154477920,"spenders":18},{"d":"2026-08-03","spend_uy":28468956,"grant_uy":155665686,"spenders":17},{"d":"2026-08-04","spend_uy":22493575,"grant_uy":326079051,"spenders":20},{"d":"2026-08-05","spend_uy":8773170,"grant_uy":353032214,"spenders":19},{"d":"2026-08-06","spend_uy":30192829,"grant_uy":432789107,"spenders":37},{"d":"2026-08-07","spend_uy":57899553,"grant_uy":270782966,"spenders":36},{"d":"2026-08-08","spend_uy":12551306,"grant_uy":119219164,"spenders":19},{"d":"2026-08-09","spend_uy":10953194,"grant_uy":86956520,"spenders":22},{"d":"2026-08-10","spend_uy":28273714,"grant_uy":199734635,"spenders":20},{"d":"2026-08-11","spend_uy":34276224,"grant_uy":318721245,"spenders":15},{"d":"2026-08-12","spend_uy":96029812,"grant_uy":814301780,"spenders":48},{"d":"2026-08-13","spend_uy":172385925,"grant_uy":247368363,"spenders":30},{"d":"2026-08-14","spend_uy":114517384,"grant_uy":317924545,"spenders":21},{"d":"2026-08-15","spend_uy":251758885,"grant_uy":1036826789,"spenders":20},{"d":"2026-08-16","spend_uy":148550022,"grant_uy":5071512827,"spenders":36},{"d":"2026-08-17","spend_uy":110183480,"grant_uy":275827815,"spenders":14},{"d":"2026-08-18","spend_uy":70419337,"grant_uy":309779013,"spenders":17},{"d":"2026-08-19","spend_uy":65201540,"grant_uy":631935271,"spenders":25},{"d":"2026-08-20","spend_uy":209555928,"grant_uy":1263210494,"spenders":21},{"d":"2026-08-21","spend_uy":36679618,"grant_uy":47242611,"spenders":14}],"spend_30d":[{"n":4678,"uy":1749503844,"users":350}],"spend_prev30d":[{"n":8133,"uy":877771560,"users":327}],"top_spenders_30d":[{"user_sub":"users/anon-ae209ac53499d51d513425503bd134b0/","uy":494321670,"n":515},{"user_sub":"users/anon-8daa69bf7d1ecf4ad1f7af665dab4cff/","uy":138111617,"n":67},{"user_sub":"users/anon-aa97ca5e098ebb47377ddf941c33338e/","uy":71359243,"n":93},{"user_sub":"users/anon-452fc556a726c79da04099d7d50f5637/","uy":69700107,"n":10},{"user_sub":"users/anon-bd1c098485e1c1ba863c7eed15607a8b/","uy":64005470,"n":76},{"user_sub":"users/anon-15a15a8f8fd17971f93556bdb75e400d/","uy":56971124,"n":174},{"user_sub":"users/anon-d6998199ce5ae6ac541214e296a8a2b4/","uy":55758540,"n":7},{"user_sub":"users/anon-27d62bac5d9336dbe3bb3342df0674d2/","uy":55652172,"n":4},{"user_sub":"users/anon-78e9c10ff94ebcc112ebb186a9a3f1cf/","uy":53287622,"n":208},{"user_sub":"users/anon-f950db1647f49e52924720c8c4bf5dd5/","uy":40762306,"n":94},{"user_sub":"users/anon-64858106e6a0ad36ea92c66da1cd0221/","uy":27931246,"n":60},{"user_sub":"users/anon-f88c9795ea856bc6e6ab492d5aeb5a76/","uy":27924537,"n":73},{"user_sub":"users/anon-04486f6f1e42aff5c180b64f5cea31cf/","uy":24274237,"n":13},{"user_sub":"users/anon-c2499b547a7d1f492eea609556c83178/","uy":19060987,"n":35},{"user_sub":"users/anon-cf85443547b47c28d25970f19b3cda59/","uy":15957076,"n":44}],"iap_30d":[{"product_id":"com.wangjianshuo.VoiceDrop.sub.monthly_19_9","environment":"Production","n":1},{"product_id":"com.wangjianshuo.VoiceDrop.sub.monthly_19_9","environment":"Sandbox","n":2}],"iap_subs":[{"status":"active","n":2,"active_now":1}],"mint_30d":[{"kind":"feed","n":209,"coins":423500000,"benef_uy":392298918,"actors":28},{"kind":"referral","n":110,"coins":1980000000,"benef_uy":1068343929,"actors":110}]},"reco":{"posts_total":[{"n":268,"hidden":2}],"posts_30d":[{"n":98,"owners":29}],"posts_daily":[{"d":"2026-07-22","n":4},{"d":"2026-07-23","n":4},{"d":"2026-07-24","n":7},{"d":"2026-07-25","n":3},{"d":"2026-07-26","n":3},{"d":"2026-07-27","n":4},{"d":"2026-07-28","n":4},{"d":"2026-07-29","n":4},{"d":"2026-07-30","n":2},{"d":"2026-07-31","n":5},{"d":"2026-08-01","n":1},{"d":"2026-08-02","n":2},{"d":"2026-08-03","n":3},{"d":"2026-08-04","n":3},{"d":"2026-08-05","n":3},{"d":"2026-08-06","n":5},{"d":"2026-08-07","n":4},{"d":"2026-08-08","n":2},{"d":"2026-08-09","n":2},{"d":"2026-08-10","n":1},{"d":"2026-08-11","n":2},{"d":"2026-08-12","n":3},{"d":"2026-08-13","n":3},{"d":"2026-08-14","n":2},{"d":"2026-08-15","n":3},{"d":"2026-08-16","n":6},{"d":"2026-08-17","n":4},{"d":"2026-08-18","n":2},{"d":"2026-08-19","n":2},{"d":"2026-08-20","n":3},{"d":"2026-08-21","n":2}],"posts_kind_30d":[{"kind":"article","n":98}],"engagement_30d":[{"action":"finish","n":990,"users":181},{"action":"like","n":235,"users":95},{"action":"view","n":2343,"users":409}],"engagement_daily":[{"d":"2026-07-22","n":111,"users":14},{"d":"2026-07-23","n":330,"users":63},{"d":"2026-07-24","n":144,"users":19},{"d":"2026-07-25","n":107,"users":22},{"d":"2026-07-26","n":37,"users":11},{"d":"2026-07-27","n":70,"users":17},{"d":"2026-07-28","n":113,"users":22},{"d":"2026-07-29","n":138,"users":28},{"d":"2026-07-30","n":106,"users":23},{"d":"2026-07-31","n":271,"users":47},{"d":"2026-08-01","n":58,"users":12},{"d":"2026-08-02","n":70,"users":13},{"d":"2026-08-03","n":38,"users":13},{"d":"2026-08-04","n":215,"users":21},{"d":"2026-08-05","n":97,"users":24},{"d":"2026-08-06","n":170,"users":29},{"d":"2026-08-07","n":82,"users":15},{"d":"2026-08-08","n":43,"users":12},{"d":"2026-08-09","n":61,"users":14},{"d":"2026-08-10","n":83,"users":16},{"d":"2026-08-11","n":72,"users":17},{"d":"2026-08-12","n":320,"users":53},{"d":"2026-08-13","n":112,"users":21},{"d":"2026-08-14","n":115,"users":17},{"d":"2026-08-15","n":91,"users":19},{"d":"2026-08-16","n":149,"users":28},{"d":"2026-08-17","n":76,"users":19},{"d":"2026-08-18","n":70,"users":11},{"d":"2026-08-19","n":154,"users":30},{"d":"2026-08-20","n":32,"users":10},{"d":"2026-08-21","n":33,"users":7}]},"workers_daily":[{"d":"2026-07-22","reco":645,"agent":6591},{"d":"2026-07-23","reco":484,"agent":4945},{"d":"2026-07-24","reco":254,"agent":3530},{"d":"2026-07-25","reco":188,"agent":2650},{"d":"2026-07-26","agent":1517,"reco":144},{"d":"2026-07-27","reco":397,"agent":3278},{"d":"2026-07-28","reco":252,"agent":1959},{"d":"2026-07-29","reco":276,"agent":1759},{"d":"2026-07-30","reco":486,"agent":2605},{"d":"2026-07-31","agent":4526,"reco":1151},{"d":"2026-08-01","agent":2293,"reco":195},{"d":"2026-08-02","reco":118,"agent":1822},{"d":"2026-08-03","agent":1719,"reco":262},{"d":"2026-08-04","agent":3040,"reco":871},{"d":"2026-08-05","reco":355,"agent":1576},{"d":"2026-08-06","agent":3503,"reco":754},{"d":"2026-08-07","agent":2639,"reco":202},{"d":"2026-08-08","agent":1183,"reco":84},{"d":"2026-08-09","agent":1935,"reco":387},{"d":"2026-08-10","reco":213,"agent":2563},{"d":"2026-08-11","reco":253,"agent":2126},{"d":"2026-08-12","agent":5151,"reco":970},{"d":"2026-08-13","reco":260,"agent":2338},{"d":"2026-08-14","agent":2528,"reco":399},{"d":"2026-08-15","agent":2883,"reco":179},{"d":"2026-08-16","agent":3017,"reco":276},{"d":"2026-08-17","agent":2783,"reco":328},{"d":"2026-08-18","agent":2401,"reco":208},{"d":"2026-08-19","agent":4090,"reco":546},{"d":"2026-08-20","reco":185,"agent":2813},{"d":"2026-08-21","reco":35,"agent":517}]};
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString('en-US');
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function tooltipFor(container){
+  const tip = document.createElement('div');
+  tip.className = 'tooltip';
+  container.appendChild(tip);
+  return tip;
+}
+
+// generic daily chart: bars or line, single series
+function dailyChart(elId, rows, {color='--s1', kind='bar', fmtVal=fmt, label=''}={}){
+  const el = $(elId), W=480, H=170, padL=34, padR=6, padT=10, padB=22;
+  const max = Math.max(...rows.map(r=>r.v));
+  const niceMax = max<=10?10:Math.ceil(max/ (max>100?50: max>40?20:10))*(max>100?50: max>40?20:10);
+  const iw = W-padL-padR, ih = H-padT-padB;
+  const x = i => padL + iw*(i+0.5)/rows.length;
+  const y = v => padT + ih*(1 - v/niceMax);
+  const col = css(color);
+  let g = '';
+  // gridlines: 3
+  for(let k=1;k<=3;k++){
+    const gy = padT + ih*(1-k/3), gv = Math.round(niceMax*k/3);
+    g += `<line x1="${padL}" y1="${gy}" x2="${W-padR}" y2="${gy}" stroke="${css('--grid')}" stroke-width="1"/>`;
+    g += `<text x="${padL-6}" y="${gy+4}" text-anchor="end" font-size="10" fill="${css('--muted')}">${gv}</text>`;
+  }
+  g += `<line x1="${padL}" y1="${padT+ih}" x2="${W-padR}" y2="${padT+ih}" stroke="${css('--baseline')}" stroke-width="1"/>`;
+  // x labels: every ~6th
+  rows.forEach((r,i)=>{ if(i%6===0||i===rows.length-1) g += `<text x="${x(i)}" y="${H-6}" text-anchor="middle" font-size="10" fill="${css('--muted')}">${r.d.slice(5)}</text>`; });
+  if(kind==='bar'){
+    const bw = Math.min(11, iw/rows.length-2);
+    rows.forEach((r,i)=>{
+      const by=y(r.v), bh=padT+ih-by;
+      g += `<path data-i="${i}" d="M${x(i)-bw/2},${padT+ih} L${x(i)-bw/2},${by+3} Q${x(i)-bw/2},${by} ${x(i)-bw/2+3},${by} L${x(i)+bw/2-3},${by} Q${x(i)+bw/2},${by} ${x(i)+bw/2},${by+3} L${x(i)+bw/2},${padT+ih} Z" fill="${col}"/>`;
+    });
+  }else{
+    const pts = rows.map((r,i)=>`${x(i)},${y(r.v)}`).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    rows.forEach((r,i)=>{ g += `<circle data-i="${i}" cx="${x(i)}" cy="${y(r.v)}" r="2.4" fill="${col}"/>`; });
+  }
+  // hover hit zones
+  rows.forEach((r,i)=>{
+    g += `<rect class="hit" data-i="${i}" x="${padL+iw*i/rows.length}" y="${padT}" width="${iw/rows.length}" height="${ih}" fill="transparent"/>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  const tip = tooltipFor(el);
+  const svg = el.querySelector('svg');
+  el.querySelectorAll('.hit').forEach(h=>{
+    h.addEventListener('mousemove', e=>{
+      const i=+h.dataset.i, r=rows[i];
+      tip.style.display='block';
+      tip.innerHTML = `${r.d}<br>${label}<b> ${fmtVal(r.v)}</b>`;
+      const rect = el.getBoundingClientRect();
+      let tx=e.clientX-rect.left+12, ty=e.clientY-rect.top-10;
+      if(tx>rect.width-130) tx-=150;
+      tip.style.left=tx+'px'; tip.style.top=ty+'px';
+    });
+    h.addEventListener('mouseleave', ()=> tip.style.display='none');
+  });
+}
+
+// two-series line
+function twoLine(elId, rows, keys, colors, labels){
+  const el=$(elId), W=980, H=200, padL=44, padR=10, padT=10, padB=22;
+  const max=Math.max(...rows.flatMap(r=>keys.map(k=>r[k]||0)));
+  const niceMax=Math.ceil(max/1000)*1000;
+  const iw=W-padL-padR, ih=H-padT-padB;
+  const x=i=>padL+iw*(i+0.5)/rows.length, y=v=>padT+ih*(1-v/niceMax);
+  let g='';
+  for(let k=1;k<=3;k++){
+    const gy=padT+ih*(1-k/3), gv=Math.round(niceMax*k/3);
+    g+=`<line x1="${padL}" y1="${gy}" x2="${W-padR}" y2="${gy}" stroke="${css('--grid')}"/>`;
+    g+=`<text x="${padL-6}" y="${gy+4}" text-anchor="end" font-size="11" fill="${css('--muted')}">${fmt(gv)}</text>`;
+  }
+  g+=`<line x1="${padL}" y1="${padT+ih}" x2="${W-padR}" y2="${padT+ih}" stroke="${css('--baseline')}"/>`;
+  rows.forEach((r,i)=>{ if(i%4===0||i===rows.length-1) g+=`<text x="${x(i)}" y="${H-5}" text-anchor="middle" font-size="10.5" fill="${css('--muted')}">${r.d.slice(5)}</text>`; });
+  keys.forEach((k,ki)=>{
+    const col=css(colors[ki]);
+    g+=`<polyline points="${rows.map((r,i)=>`${x(i)},${y(r[k]||0)}`).join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>`;
+  });
+  rows.forEach((r,i)=>{ g+=`<rect class="hit" data-i="${i}" x="${padL+iw*i/rows.length}" y="${padT}" width="${iw/rows.length}" height="${ih}" fill="transparent"/>`; });
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+  const tip=tooltipFor(el);
+  el.querySelectorAll('.hit').forEach(h=>{
+    h.addEventListener('mousemove', e=>{
+      const i=+h.dataset.i, r=rows[i];
+      tip.style.display='block';
+      tip.innerHTML=`${r.d}<br>`+keys.map((k,ki)=>`${labels[ki]}<b> ${fmt(r[k]||0)}</b>`).join('<br>');
+      const rect=el.getBoundingClientRect();
+      let tx=e.clientX-rect.left+12;
+      if(tx>rect.width-160) tx-=180;
+      tip.style.left=tx+'px'; tip.style.top=(e.clientY-rect.top-14)+'px';
+    });
+    h.addEventListener('mouseleave', ()=>tip.style.display='none');
+  });
+}
+
+// ---------- tiles ----------
+const tiles = [
+  {label:'总账户数（含匿名）', value:'1,325', delta:'30 天新增 <span class="up">+761</span>'},
+  {label:'登录用户', value:'108', delta:'Apple 59 · 微信 53 · 本月 +54'},
+  {label:'月活消费用户 MAU', value:'350', delta:'环比 327 <span class="up">+7%</span> · 日均活跃 23'},
+  {label:'新挖文章（30 天）', value:'732<small> 篇</small>', delta:'218 位作者 · 环比 775 <span class="down">−5.5%</span>'},
+  {label:'上传录音（30 天）', value:'937<small> 段</small>', delta:'306 位用户 · 环比 890 <span class="up">+5.3%</span>'},
+  {label:'算力消耗（30 天）', value:'¥1,750', delta:'环比 ¥878 <span class="up">+99%</span>'},
+  {label:'写书（30 天）', value:'78<small> 本</small>', delta:'25 位用户 · 消耗 ¥1,085（占 62%）'},
+  {label:'社区互动（30 天）', value:'3,568<small> 次</small>', delta:'浏览 2,343 · 读完 990 · 点赞 235'},
+  {label:'邀请注册（30 天）', value:'109<small> 人</small>', delta:'占新增账户 14% · 新建邀请码 372'},
+  {label:'订阅收入（30 天）', value:'¥19.9', delta:'生产环境 1 笔 · 当前有效订阅 1'},
+  {label:'API 请求（30 天）', value:'97.6<small> k</small>', delta:'主 API 错误率 0.37%'},
+  {label:'累计文章 / 录音', value:'1,917 / 1,848', delta:'累计分享导入 282 次 · Prompt 分享 169'},
+];
+$('tiles').innerHTML = tiles.map(t=>`<div class="tile"><div class="label">${t.label}</div><div class="value">${t.value}</div><div class="delta">${t.delta}</div></div>`).join('');
+
+// ---------- charts ----------
+dailyChart('c-articles', DATA.core.articles_daily.map(r=>({d:r.d,v:r.n})), {color:'--s1', kind:'bar', label:'文章'});
+dailyChart('c-authors', DATA.core.articles_daily.map(r=>({d:r.d,v:r.users})), {color:'--s3', kind:'line', label:'作者'});
+dailyChart('c-recordings', DATA.core.recordings_daily.map(r=>({d:r.d,v:r.n})), {color:'--s2', kind:'bar', label:'录音'});
+dailyChart('c-spenders', DATA.usage.ledger_daily.map(r=>({d:r.d,v:r.spenders})), {color:'--s1', kind:'line', label:'消费用户'});
+dailyChart('c-spend', DATA.usage.ledger_daily.map(r=>({d:r.d,v:Math.round(r.spend_uy/1e6*10)/10})), {color:'--s1', kind:'bar', label:'消耗 ¥', fmtVal:v=>'¥'+v});
+dailyChart('c-engage', DATA.reco.engagement_daily.map(r=>({d:r.d,v:r.n})), {color:'--s1', kind:'bar', label:'互动'});
+dailyChart('c-posts', DATA.reco.posts_daily.map(r=>({d:r.d,v:r.n})), {color:'--s3', kind:'bar', label:'新帖'});
+twoLine('c-workers', DATA.workers_daily, ['agent','reco'], ['--s1','--s2'], ['agent','reco']);
+
+// funnel (ordinal sequential ramp)
+(function(){
+  const steps=[
+    {name:'语音转写 ASR', v:322},
+    {name:'挖矿成文', v:222},
+    {name:'口述改稿', v:145},
+    {name:'分享到社区', v:29},
+  ];
+  const cols=['--seq250','--seq350','--seq450','--seq600'];
+  const W=980, rowH=44, padL=120, padR=90;
+  const iw=W-padL-padR, max=steps[0].v;
+  let g='';
+  steps.forEach((s,i)=>{
+    const w=Math.max(6, iw*s.v/max), y0=i*rowH+8;
+    g+=`<text x="${padL-10}" y="${y0+20}" text-anchor="end" font-size="13" fill="${css('--ink2')}">${s.name}</text>`;
+    g+=`<path d="M${padL},${y0} L${padL+w-4},${y0} Q${padL+w},${y0} ${padL+w},${y0+4} L${padL+w},${y0+24} Q${padL+w},${y0+28} ${padL+w-4},${y0+28} L${padL},${y0+28} Z" fill="${css(cols[i])}"/>`;
+    const pct = i===0?'':' · 上一步的 '+Math.round(100*s.v/steps[i-1].v)+'%';
+    g+=`<text x="${padL+w+8}" y="${y0+19}" font-size="13" fill="${css('--ink')}" font-weight="600">${s.v} 人</text>`;
+    if(i>0) g+=`<text x="${padL+w+62}" y="${y0+19}" font-size="12" fill="${css('--muted')}">${pct}</text>`;
+  });
+  $('c-funnel').innerHTML=`<svg viewBox="0 0 ${W} ${steps.length*rowH+12}">${g}</svg>`;
+})();
+
+// ---------- tables ----------
+const spendRows = DATA.usage.ledger_30d_by_reason.filter(r=>r.kind==='spend');
+const spendNames = {book:'写书', edit:'口述改稿', mine:'录音挖矿', asr:'语音转写', realtime:'实时采访', 'book-revise':'修书', 'image-edit':'配图生成/编辑', 'style-extract':'文风蒸馏', 'xhs-pack':'小红书打包', 'xhs-tags':'小红书标签'};
+const spendMax = Math.max(...spendRows.map(r=>r.uy));
+$('t-spend').innerHTML = '<tr><th>功能</th><th class="num">次数</th><th class="num">用户</th><th class="num">消耗</th></tr>' +
+  spendRows.map(r=>`<tr><td><span class="bar-inline" style="width:${Math.max(3,60*r.uy/spendMax)}px"></span>${spendNames[r.reason]||r.reason}</td><td class="num">${fmt(r.n)}</td><td class="num">${fmt(r.users)}</td><td class="num">¥${(r.uy/1e6).toLocaleString('en-US',{maximumFractionDigits:1})}</td></tr>`).join('');
+
+const grantGroups = [
+  {name:'注册赠送', uy:6617391172, n:'761 人'},
+  {name:'手动赠送（活动）', uy:5652173914+1521739128+869565218+86956522+43478, n:'15 笔'},
+  {name:'邀请奖励（邀请人）', uy:1068343929, n:'20 人 / 110 笔'},
+  {name:'邀请奖励（新用户）', uy:1054858980, n:'109 人'},
+  {name:'社区投币（作者+策展）', uy:392298918+98074648, n:'418 笔'},
+  {name:'订阅充值', uy:26086956, n:'2 人 / 3 笔'},
+];
+const gMax=Math.max(...grantGroups.map(r=>r.uy));
+$('t-grant').innerHTML = '<tr><th>来源</th><th class="num">规模</th><th class="num">金额</th></tr>' +
+  grantGroups.map(r=>`<tr><td><span class="bar-inline" style="background:var(--s3);width:${Math.max(3,60*r.uy/gMax)}px"></span>${r.name}</td><td class="num">${r.n}</td><td class="num">¥${(r.uy/1e6).toLocaleString('en-US',{maximumFractionDigits:0})}</td></tr>`).join('');
+
+const shortId = s => s.replace('users/anon-','').slice(0,8);
+$('t-spenders').innerHTML = '<tr><th>用户</th><th class="num">笔数</th><th class="num">消耗</th></tr>' +
+  DATA.usage.top_spenders_30d.slice(0,10).map(r=>`<tr><td>${shortId(r.user_sub)}</td><td class="num">${fmt(r.n)}</td><td class="num">¥${(r.uy/1e6).toLocaleString('en-US',{maximumFractionDigits:1})}</td></tr>`).join('');
+
+$('t-authors').innerHTML = '<tr><th>用户</th><th>昵称</th><th class="num">文章</th></tr>' +
+  DATA.core.top_authors_30d.slice(0,10).map(r=>`<tr><td>${shortId(r.user_sub)}</td><td>${r.name||'<span style="color:var(--muted)">未登录</span>'}</td><td class="num">${r.n}</td></tr>`).join('');
+
+const engNames={view:'浏览', finish:'读完', like:'点赞'};
+$('t-engage').innerHTML = '<tr><th>行为</th><th class="num">次数</th><th class="num">独立用户</th></tr>' +
+  DATA.reco.engagement_30d.sort((a,b)=>b.n-a.n).map(r=>`<tr><td>${engNames[r.action]||r.action}</td><td class="num">${fmt(r.n)}</td><td class="num">${fmt(r.users)}</td></tr>`).join('');
+</script>
+</body>
+</html>
