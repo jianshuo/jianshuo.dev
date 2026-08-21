@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预算 · 王建硕的预算系统</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📒</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F5F0; --surface:#FFFFFF; --ink:#2B2A26; --muted:#8A857A;
+  --line:#E7E3D9; --hairline:#EFECE4;
+  --brand:#1E5F51;
+  --plan:#4E7EC2; --actual:#C07A28;
+  --over:#B3403A; --saved:#1E7A4F;
+  --plan-tint:#E4ECF7; --actual-tint:#F6E9D8;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.5;padding:0 16px 80px}
+.serif{font-family:"Noto Serif SC","Songti SC","STSong",serif}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.wrap{max-width:1280px;margin:0 auto}
+
+/* ── header ── */
+header{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;padding:34px 4px 18px}
+header h1{font-family:"Noto Serif SC","Songti SC",serif;font-weight:900;font-size:1.9rem;letter-spacing:.06em}
+header h1 .en{font-size:.85rem;color:var(--muted);letter-spacing:.28em;font-weight:600;margin-left:10px}
+.headtools{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+select,button{font:inherit;color:var(--ink)}
+select{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.btn{padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:var(--surface);cursor:pointer;font-size:.88rem;transition:border-color .15s}
+.btn:hover{border-color:var(--brand);color:var(--brand)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:#17493e;color:#fff}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+
+/* ── ledger hero ── */
+.hero{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden;display:grid;grid-template-columns:minmax(280px,1.1fr) 2fr;box-shadow:0 1px 0 rgba(43,42,38,.03)}
+.hero .balance{padding:28px 30px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;background:linear-gradient(160deg,#FDFCF9,#F6F3EB)}
+.hero .balance .label{font-size:.82rem;color:var(--muted);letter-spacing:.18em}
+.hero .balance .big{font-family:"Noto Serif SC","Songti SC",serif;font-weight:900;font-size:clamp(2rem,4.2vw,3.2rem);letter-spacing:-.01em;margin-top:2px}
+.hero .balance .sub{font-size:.85rem;color:var(--muted);margin-top:6px}
+.hero .ledgerlines{padding:20px 28px;display:grid;grid-template-columns:1fr 1fr;gap:0 34px;align-content:center}
+.lrow{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px dashed var(--hairline)}
+.lrow:nth-last-child(-n+2){border-bottom:none}
+.lrow .k{font-size:.85rem;color:var(--muted);min-width:5.5em}
+.lrow .v{font-size:1.06rem;font-weight:650;margin-left:auto}
+.lrow .pct{font-size:.78rem;color:var(--muted);min-width:3.4em;text-align:right}
+.dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:2px;vertical-align:0}
+.dot.plan{background:var(--plan)} .dot.actual{background:var(--actual)}
+.pos{color:var(--saved)} .neg{color:var(--over)}
+
+/* ── charts ── */
+.charts{display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-top:16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px 14px}
+.panel .phead{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.panel h2{font-size:.95rem;font-weight:700}
+.legend{display:flex;gap:14px;font-size:.78rem;color:var(--muted);margin-left:auto}
+.legend span{display:flex;align-items:center;gap:5px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:none;background:transparent;padding:4px 12px;font-size:.8rem;cursor:pointer;color:var(--muted)}
+.seg button.on{background:var(--ink);color:#fff}
+.chartbox{overflow-x:auto}
+.chartbox svg{display:block;width:100%;height:auto}
+#tooltip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;font-size:.78rem;line-height:1.6;padding:7px 11px;border-radius:8px;opacity:0;transition:opacity .12s;z-index:50;max-width:260px}
+
+/* ── mode tabs ── */
+.modes{display:flex;align-items:center;gap:10px;margin:26px 4px 12px;flex-wrap:wrap}
+.tabs{display:flex;background:#EDEAE2;border-radius:11px;padding:3px}
+.tabs button{border:none;background:transparent;padding:7px 18px;border-radius:8px;font-size:.9rem;cursor:pointer;color:var(--muted);font-weight:600}
+.tabs button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(43,42,38,.12)}
+.modes .hint{font-size:.8rem;color:var(--muted)}
+
+/* ── ledger tables ── */
+.book{background:var(--surface);border:1px solid var(--line);border-radius:16px;margin-top:14px;overflow:hidden}
+.book .bhead{display:flex;align-items:baseline;gap:10px;padding:14px 20px 0}
+.book .bhead h2{font-family:"Noto Serif SC","Songti SC",serif;font-weight:900;font-size:1.1rem;letter-spacing:.12em}
+.book .bhead .sum{font-size:.85rem;color:var(--muted);margin-left:auto}
+.tscroll{overflow-x:auto;padding:8px 8px 4px}
+table{border-collapse:collapse;width:100%;min-width:1180px}
+th,td{font-size:.84rem;padding:0;border-bottom:1px solid var(--hairline);white-space:nowrap}
+thead th{color:var(--muted);font-weight:600;font-size:.78rem;padding:8px 6px;text-align:right;border-bottom:1px solid var(--line)}
+thead th.name{text-align:left;padding-left:12px}
+td.name{position:sticky;left:0;background:var(--surface);padding:0 8px 0 12px;font-weight:600;min-width:118px;max-width:170px;overflow:hidden;text-overflow:ellipsis;z-index:2}
+tr:hover td{background:#FBFAF6}
+tr:hover td.name{background:#FBFAF6}
+td.cell{text-align:right;min-width:72px}
+td.cell input{width:100%;border:none;background:transparent;font:inherit;text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;color:var(--ink);border-radius:6px}
+td.cell input:focus{outline:2px solid var(--brand);outline-offset:-2px;background:#fff}
+td.cell input::placeholder{color:#D8D4C9}
+td.ro{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums}
+td.rowtotal,th.rowtotal{text-align:right;padding:7px 12px 7px 6px;font-weight:700;font-variant-numeric:tabular-nums;border-left:1px solid var(--line);background:#FBFAF5}
+td.ops{width:96px;text-align:right;padding-right:10px}
+td.ops button{border:none;background:transparent;cursor:pointer;font-size:.78rem;color:var(--muted);padding:3px 5px;border-radius:6px;opacity:0;transition:opacity .12s}
+tr:hover td.ops button{opacity:1}
+td.ops button:hover{color:var(--brand);background:#F0EDE5}
+td.ops button.del:hover{color:var(--over)}
+tr.totalrow td{border-top:1px solid var(--line);border-bottom:none;font-weight:700;padding-top:8px;padding-bottom:10px;background:#FBFAF5}
+tr.totalrow td.name{background:#FBFAF5}
+tr.addrow td{border-bottom:none;padding:6px 12px 12px}
+tr.addrow button{border:1px dashed var(--line);background:transparent;border-radius:8px;padding:5px 14px;font-size:.82rem;color:var(--muted);cursor:pointer}
+tr.addrow button:hover{color:var(--brand);border-color:var(--brand)}
+th.mcur{color:var(--brand)}
+td.diffcell{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums}
+
+/* ── footer ── */
+footer{margin:34px 4px 0;font-size:.8rem;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap}
+footer a{color:var(--brand)}
+
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr}
+  .hero .balance{border-right:none;border-bottom:1px solid var(--line)}
+  .hero .ledgerlines{grid-template-columns:1fr}
+  .lrow:nth-last-child(-n+2){border-bottom:1px dashed var(--hairline)}
+  .lrow:last-child{border-bottom:none}
+  .charts{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){
+  *{transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>预 算<span class="en">BUDGET</span></h1>
+  <div class="headtools">
+    <select id="bookSel" aria-label="选择预算表"></select>
+    <button class="btn" id="newBook">＋ 新建预算表</button>
+    <button class="btn" id="renameBook">重命名</button>
+    <button class="btn" id="delBook">删除</button>
+    <span style="width:10px"></span>
+    <button class="btn" id="exportJson">备份 JSON</button>
+    <button class="btn" id="importJson">导入</button>
+    <button class="btn" id="exportCsv">导出 CSV</button>
+    <input type="file" id="fileInput" accept=".json" style="display:none">
+  </div>
+</header>
+
+<section class="hero" id="hero"></section>
+
+<section class="charts">
+  <div class="panel">
+    <div class="phead">
+      <h2 id="mchartTitle">月度支出</h2>
+      <div class="seg" id="chartSeg">
+        <button data-t="out" class="on">支出</button>
+        <button data-t="in">收入</button>
+      </div>
+      <div class="legend"><span><i class="dot plan"></i>预算</span><span><i class="dot actual"></i>实际</span></div>
+    </div>
+    <div class="chartbox" id="monthChart"></div>
+  </div>
+  <div class="panel">
+    <div class="phead">
+      <h2 id="cchartTitle">支出科目 · 全年</h2>
+      <div class="legend"><span><i class="dot plan"></i>预算</span><span><i class="dot actual"></i>实际</span></div>
+    </div>
+    <div class="chartbox" id="catChart"></div>
+  </div>
+</section>
+
+<div class="modes">
+  <div class="tabs" id="modeTabs">
+    <button data-m="plan" class="on">编预算</button>
+    <button data-m="actual">记实际</button>
+    <button data-m="diff">看差异</button>
+  </div>
+  <span class="hint" id="modeHint"></span>
+</div>
+
+<section class="book" id="inBook"></section>
+<section class="book" id="outBook"></section>
+
+<footer>
+  <span>📒 数据只保存在本机浏览器（localStorage），不上传任何服务器。换电脑请用「备份 JSON」→「导入」。</span>
+  <span>金额单位：元。输入支持「1.2万」写法。</span>
+</footer>
+
+</div>
+<div id="tooltip" role="presentation"></div>
+
+<script>
+'use strict';
+const LS='wjs-budget-v1';
+const MONTHS=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+const uid=()=>Math.random().toString(36).slice(2,10);
+const $=s=>document.querySelector(s);
+
+/* ── state ── */
+let state=load();
+let mode='plan';          // plan | actual | diff
+let chartType='out';      // out | in
+
+function seedCats(){
+  const mk=(name,type)=>({id:uid(),name,type,plan:Array(12).fill(0),actual:Array(12).fill(0)});
+  return [
+    mk('主营收入','in'), mk('其他收入','in'),
+    mk('人员工资','out'), mk('房租物业','out'), mk('软件与订阅','out'), mk('设备采购','out'),
+    mk('差旅交通','out'), mk('市场推广','out'), mk('税费','out'), mk('其他支出','out'),
+  ];
+}
+function newBook(name,year){ return {id:uid(),name,year,cats:seedCats()}; }
+function load(){
+  try{
+    const raw=localStorage.getItem(LS);
+    if(raw){ const s=JSON.parse(raw); if(s&&s.books&&s.books.length) return s; }
+  }catch(e){}
+  const b=newBook('2027 年度预算',2027);
+  return {books:[b],active:b.id};
+}
+function save(){ try{ localStorage.setItem(LS,JSON.stringify(state)); }catch(e){} }
+function book(){ return state.books.find(b=>b.id===state.active)||state.books[0]; }
+
+/* ── numbers ── */
+function parseNum(s){
+  if(s==null) return 0;
+  s=String(s).trim().replace(/,/g,'').replace(/，/g,'');
+  if(!s) return 0;
+  let mul=1;
+  if(/[万w]$/i.test(s)){ mul=10000; s=s.slice(0,-1); }
+  const n=parseFloat(s);
+  return isFinite(n)? n*mul : 0;
+}
+function fmt(n){
+  if(!isFinite(n)) return '0';
+  const r=Math.round(n);
+  return r.toLocaleString('en-US');
+}
+function fmtSign(n){ return (n>0?'+':'')+fmt(n); }
+function fmtWan(n){
+  const a=Math.abs(n);
+  if(a>=100000000) return (n/100000000).toFixed(2).replace(/\.?0+$/,'')+' 亿';
+  if(a>=10000) return (n/10000).toFixed(1).replace(/\.0$/,'')+' 万';
+  return fmt(n);
+}
+
+/* ── aggregates ── */
+const sum=a=>a.reduce((x,y)=>x+y,0);
+function cats(type){ return book().cats.filter(c=>c.type===type); }
+function monthTotal(type,field,m){ return sum(cats(type).map(c=>c[field][m]||0)); }
+function annual(type,field){ return sum(cats(type).map(c=>sum(c[field]))); }
+
+/* ── render: hero ── */
+function renderHero(){
+  const pIn=annual('in','plan'), pOut=annual('out','plan');
+  const aIn=annual('in','actual'), aOut=annual('out','actual');
+  const bal=pIn-pOut, abal=aIn-aOut;
+  const pct=(a,p)=>p>0? Math.round(a/p*100)+'%' : '–';
+  $('#hero').innerHTML=`
+    <div class="balance">
+      <div class="label">${esc(book().name)} · 全年预算结余</div>
+      <div class="big num ${bal<0?'neg':''}">¥ ${fmt(bal)}</div>
+      <div class="sub num">实际结余（已录入月份累计）：<b class="${abal<0?'neg':'pos'}">¥ ${fmt(abal)}</b></div>
+    </div>
+    <div class="ledgerlines num">
+      <div class="lrow"><span class="k"><i class="dot plan"></i>收入预算</span><span class="v">¥ ${fmt(pIn)}</span><span class="pct"></span></div>
+      <div class="lrow"><span class="k"><i class="dot actual"></i>收入实际</span><span class="v">¥ ${fmt(aIn)}</span><span class="pct">${pct(aIn,pIn)}</span></div>
+      <div class="lrow"><span class="k"><i class="dot plan"></i>支出预算</span><span class="v">¥ ${fmt(pOut)}</span><span class="pct"></span></div>
+      <div class="lrow"><span class="k"><i class="dot actual"></i>支出实际</span><span class="v ${aOut>pOut&&pOut>0?'neg':''}">¥ ${fmt(aOut)}</span><span class="pct">${pct(aOut,pOut)}</span></div>
+    </div>`;
+}
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* ── render: charts ── */
+const tt=$('#tooltip');
+function showTT(html,x,y){ tt.innerHTML=html; tt.style.opacity=1; tt.style.left=Math.min(x+14,innerWidth-260)+'px'; tt.style.top=(y+14)+'px'; }
+function hideTT(){ tt.style.opacity=0; }
+
+function renderMonthChart(){
+  const t=chartType;
+  $('#mchartTitle').textContent = t==='out'?'月度支出':'月度收入';
+  const plan=MONTHS.map((_,m)=>monthTotal(t,'plan',m));
+  const act =MONTHS.map((_,m)=>monthTotal(t,'actual',m));
+  const max=Math.max(...plan,...act,1);
+  const W=720,H=230,padL=8,padB=24,padT=14;
+  const bw=(W-padL*2)/12;
+  let bars='';
+  for(let m=0;m<12;m++){
+    const x0=padL+m*bw;
+    const hP=(H-padB-padT)*plan[m]/max, hA=(H-padB-padT)*act[m]/max;
+    const w=Math.min(16,(bw-14)/2);
+    bars+=`<g class="mg" data-m="${m}">
+      <rect x="${x0+bw/2-w-2}" y="${H-padB-hP}" width="${w}" height="${Math.max(hP,plan[m]>0?2:0)}" rx="3" fill="var(--plan)"/>
+      <rect x="${x0+bw/2+2}" y="${H-padB-hA}" width="${w}" height="${Math.max(hA,act[m]>0?2:0)}" rx="3" fill="var(--actual)"/>
+      <rect x="${x0}" y="0" width="${bw}" height="${H}" fill="transparent" class="hit"/>
+      <text x="${x0+bw/2}" y="${H-7}" text-anchor="middle" font-size="11" fill="var(--muted)">${m+1}月</text>
+    </g>`;
+  }
+  $('#monthChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" aria-label="月度${t==='out'?'支出':'收入'}：预算与实际">
+    <line x1="${padL}" y1="${H-padB}" x2="${W-padL}" y2="${H-padB}" stroke="var(--line)"/>
+    ${bars}</svg>`;
+  $('#monthChart').querySelectorAll('.mg').forEach(g=>{
+    const m=+g.dataset.m;
+    g.addEventListener('mousemove',e=>showTT(
+      `<b>${book().year} 年 ${m+1} 月${t==='out'?'支出':'收入'}</b><br>预算 ¥ ${fmt(plan[m])}<br>实际 ¥ ${fmt(act[m])}`,e.clientX,e.clientY));
+    g.addEventListener('mouseleave',hideTT);
+  });
+}
+
+function renderCatChart(){
+  const t=chartType;
+  $('#cchartTitle').textContent=(t==='out'?'支出':'收入')+'科目 · 全年';
+  const rows=cats(t).map(c=>({name:c.name,p:sum(c.plan),a:sum(c.actual)}))
+    .filter(r=>r.p>0||r.a>0).sort((x,y)=>y.p-x.p||y.a-x.a).slice(0,9);
+  if(!rows.length){ $('#catChart').innerHTML=`<div style="color:var(--muted);font-size:.85rem;padding:30px 4px">还没有数字。在下面的表格里填上预算，这里就会出现科目对比。</div>`; return; }
+  const max=Math.max(...rows.map(r=>Math.max(r.p,r.a)),1);
+  const W=440,rh=44,H=rows.length*rh+6,labW=96,valW=70,bw=W-labW-valW;
+  let g='';
+  rows.forEach((r,i)=>{
+    const y=i*rh+6;
+    const wp=bw*r.p/max, wa=bw*r.a/max;
+    g+=`<g class="cg" data-i="${i}">
+      <text x="${labW-8}" y="${y+18}" text-anchor="end" font-size="12" fill="var(--ink)">${esc(r.name)}</text>
+      <rect x="${labW}" y="${y+4}" width="${Math.max(wp,r.p>0?2:0)}" height="12" rx="3" fill="var(--plan)"/>
+      <rect x="${labW}" y="${y+19}" width="${Math.max(wa,r.a>0?2:0)}" height="12" rx="3" fill="var(--actual)"/>
+      <text x="${labW+Math.max(wp,wa)+6}" y="${y+21}" font-size="11" fill="var(--muted)">${fmtWan(r.p)}</text>
+      <rect x="0" y="${y}" width="${W}" height="${rh-4}" fill="transparent"/>
+    </g>`;
+  });
+  $('#catChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" aria-label="${t==='out'?'支出':'收入'}科目全年预算与实际">${g}</svg>`;
+  $('#catChart').querySelectorAll('.cg').forEach(el=>{
+    const r=rows[+el.dataset.i];
+    el.addEventListener('mousemove',e=>showTT(`<b>${esc(r.name)}</b><br>预算 ¥ ${fmt(r.p)}<br>实际 ¥ ${fmt(r.a)}${r.p>0?`<br>执行 ${Math.round(r.a/r.p*100)}%`:''}`,e.clientX,e.clientY));
+    el.addEventListener('mouseleave',hideTT);
+  });
+}
+
+/* ── render: ledger tables ── */
+function renderTable(type){
+  const el=type==='in'? $('#inBook') : $('#outBook');
+  const list=cats(type);
+  const field=mode==='actual'?'actual':'plan';
+  const curM=(new Date().getFullYear()===+book().year)? new Date().getMonth() : -1;
+  const title=type==='in'?'收 入':'支 出';
+  const aTot=annual(type,'actual'), pTot=annual(type,'plan');
+  /* 差异模式：只对「记过实际数」的月份算差异，未发生的月份不标红 */
+  const rec=MONTHS.map((_,m)=> monthTotal('in','actual',m)+monthTotal('out','actual',m) > 0);
+  const recDiff=c=>MONTHS.reduce((s,_,m)=> rec[m]? s+(c.actual[m]||0)-(c.plan[m]||0) : s, 0);
+
+  let head=`<tr><th class="name">科目</th>`;
+  for(let m=0;m<12;m++) head+=`<th class="${m===curM?'mcur':''}">${MONTHS[m]}</th>`;
+  head+=`<th class="rowtotal">全年</th><th></th></tr>`;
+
+  let rows='';
+  list.forEach(c=>{
+    rows+=`<tr data-id="${c.id}"><td class="name" title="点击重命名"><span class="cname" style="cursor:pointer">${esc(c.name)}</span></td>`;
+    for(let m=0;m<12;m++){
+      if(mode==='diff'){
+        const d=(c.actual[m]||0)-(c.plan[m]||0);
+        const bad = type==='out'? d>0 : d<0;
+        rows+= !rec[m]? `<td class="diffcell" style="color:#D8D4C9">·</td>`
+          : `<td class="diffcell" style="color:${d===0?'var(--muted)':bad?'var(--over)':'var(--saved)'}">${d===0?'·':fmtSign(d)}</td>`;
+      }else{
+        const v=c[field][m]||0;
+        rows+=`<td class="cell"><input inputmode="decimal" data-m="${m}" value="${v?fmt(v):''}" placeholder="·" aria-label="${esc(c.name)} ${MONTHS[m]}${mode==='actual'?'实际':'预算'}"></td>`;
+      }
+    }
+    if(mode==='diff'){
+      const d=recDiff(c);
+      const bad = type==='out'? d>0 : d<0;
+      rows+=`<td class="rowtotal" style="color:${d===0?'var(--muted)':bad?'var(--over)':'var(--saved)'}">${d===0?'·':fmtSign(d)}</td><td class="ops"></td>`;
+    }else{
+      rows+=`<td class="rowtotal">${fmt(sum(c[field]))}</td>
+      <td class="ops">
+        <button class="spread" title="输入全年总额，均摊到 12 个月">均摊</button>
+        <button class="fill" title="把 1 月的数复制到全年">照抄</button>
+        <button class="del" title="删除科目">✕</button>
+      </td>`;
+    }
+    rows+=`</tr>`;
+  });
+
+  let totals=`<tr class="totalrow"><td class="name">合计</td>`;
+  for(let m=0;m<12;m++){
+    if(mode==='diff'){
+      const d=monthTotal(type,'actual',m)-monthTotal(type,'plan',m);
+      const bad=type==='out'? d>0 : d<0;
+      totals+= !rec[m]? `<td class="ro" style="color:#D8D4C9">·</td>`
+        : `<td class="ro" style="color:${d===0?'var(--muted)':bad?'var(--over)':'var(--saved)'}">${d===0?'·':fmtSign(d)}</td>`;
+    }else{
+      totals+=`<td class="ro">${fmt(monthTotal(type,field,m))}</td>`;
+    }
+  }
+  totals+=`<td class="rowtotal">${mode==='diff'? fmtSign(sum(list.map(recDiff))) : fmt(annual(type,field))}</td><td></td></tr>`;
+
+  const add=mode==='diff'?'':`<tr class="addrow"><td colspan="15"><button class="addcat">＋ 添加${type==='in'?'收入':'支出'}科目</button></td></tr>`;
+
+  el.innerHTML=`
+    <div class="bhead"><h2 class="serif">${title}</h2>
+      <span class="sum num">预算 ¥ ${fmt(pTot)} · 实际 ¥ ${fmt(aTot)}</span></div>
+    <div class="tscroll"><table>
+      <thead>${head}</thead><tbody>${rows}${totals}${add}</tbody>
+    </table></div>`;
+
+  /* events */
+  el.querySelectorAll('tr[data-id]').forEach(tr=>{
+    const c=book().cats.find(x=>x.id===tr.dataset.id);
+    tr.querySelectorAll('input[data-m]').forEach(inp=>{
+      inp.addEventListener('change',()=>{
+        c[field][+inp.dataset.m]=parseNum(inp.value);
+        save(); renderAll();
+      });
+      inp.addEventListener('focus',()=>inp.select());
+      inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } });
+    });
+    const nameEl=tr.querySelector('.cname');
+    if(nameEl) nameEl.addEventListener('click',()=>{
+      const n=prompt('科目名称：',c.name);
+      if(n&&n.trim()){ c.name=n.trim(); save(); renderAll(); }
+    });
+    const sp=tr.querySelector('.spread');
+    if(sp) sp.addEventListener('click',()=>{
+      const s=prompt(`「${c.name}」全年${mode==='actual'?'实际':'预算'}总额（将均摊到 12 个月，支持“120万”写法）：`);
+      if(s===null) return;
+      const total=parseNum(s); const per=Math.round(total/12);
+      c[field]=Array(12).fill(per);
+      c[field][11]=Math.round(total)-per*11;   /* 尾差放 12 月 */
+      save(); renderAll();
+    });
+    const fl=tr.querySelector('.fill');
+    if(fl) fl.addEventListener('click',()=>{
+      c[field]=Array(12).fill(c[field][0]||0); save(); renderAll();
+    });
+    const dl=tr.querySelector('.del');
+    if(dl) dl.addEventListener('click',()=>{
+      if(confirm(`删除科目「${c.name}」？该科目全年数字将一起删除。`)){
+        book().cats=book().cats.filter(x=>x.id!==c.id); save(); renderAll();
+      }
+    });
+  });
+  const ac=el.querySelector('.addcat');
+  if(ac) ac.addEventListener('click',()=>{
+    const n=prompt(`新${type==='in'?'收入':'支出'}科目名称：`);
+    if(n&&n.trim()){
+      book().cats.push({id:uid(),name:n.trim(),type,plan:Array(12).fill(0),actual:Array(12).fill(0)});
+      save(); renderAll();
+    }
+  });
+}
+
+/* ── books ── */
+function renderBookSel(){
+  $('#bookSel').innerHTML=state.books.map(b=>`<option value="${b.id}" ${b.id===state.active?'selected':''}>${esc(b.name)}</option>`).join('');
+}
+$('#bookSel').addEventListener('change',e=>{ state.active=e.target.value; save(); renderAll(); });
+$('#newBook').addEventListener('click',()=>{
+  const n=prompt('新预算表名称（例：2027 家庭预算）：');
+  if(!n||!n.trim()) return;
+  const ym=(n.match(/(20\d{2})/)||[])[1];
+  const b=newBook(n.trim(), ym? +ym : new Date().getFullYear()+1);
+  state.books.push(b); state.active=b.id; save(); renderAll();
+});
+$('#renameBook').addEventListener('click',()=>{
+  const n=prompt('预算表名称：',book().name);
+  if(n&&n.trim()){ book().name=n.trim(); const ym=(n.match(/(20\d{2})/)||[])[1]; if(ym) book().year=+ym; save(); renderAll(); }
+});
+$('#delBook').addEventListener('click',()=>{
+  if(state.books.length<=1){ alert('至少保留一个预算表。'); return; }
+  if(confirm(`删除预算表「${book().name}」？此操作不可恢复（建议先备份 JSON）。`)){
+    state.books=state.books.filter(b=>b.id!==state.active);
+    state.active=state.books[0].id; save(); renderAll();
+  }
+});
+
+/* ── import / export ── */
+function download(name,text,type){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+$('#exportJson').addEventListener('click',()=>{
+  download(`budget-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(state,null,2),'application/json');
+});
+$('#importJson').addEventListener('click',()=>$('#fileInput').click());
+$('#fileInput').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const s=JSON.parse(r.result);
+      if(!s||!Array.isArray(s.books)||!s.books.length) throw 0;
+      if(confirm(`导入 ${s.books.length} 个预算表，覆盖当前全部数据？（当前数据建议先备份）`)){
+        state=s; if(!state.books.find(b=>b.id===state.active)) state.active=state.books[0].id;
+        save(); renderAll();
+      }
+    }catch(err){ alert('文件格式不对：需要本系统「备份 JSON」导出的文件。'); }
+    e.target.value='';
+  };
+  r.readAsText(f);
+});
+$('#exportCsv').addEventListener('click',()=>{
+  let csv='﻿类别,科目,口径,'+MONTHS.join(',')+',全年\n';
+  ['in','out'].forEach(t=>{
+    cats(t).forEach(c=>{
+      csv+=`${t==='in'?'收入':'支出'},${c.name},预算,${c.plan.join(',')},${sum(c.plan)}\n`;
+      csv+=`${t==='in'?'收入':'支出'},${c.name},实际,${c.actual.join(',')},${sum(c.actual)}\n`;
+    });
+  });
+  download(`${book().name}.csv`,csv,'text/csv');
+});
+
+/* ── modes / chart toggle ── */
+$('#modeTabs').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  mode=b.dataset.m;
+  document.querySelectorAll('#modeTabs button').forEach(x=>x.classList.toggle('on',x===b));
+  renderAll();
+});
+$('#chartSeg').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  chartType=b.dataset.t;
+  document.querySelectorAll('#chartSeg button').forEach(x=>x.classList.toggle('on',x===b));
+  renderMonthChart(); renderCatChart();
+});
+
+const HINTS={
+  plan:'在格子里填每月预算数；「均摊」可以输全年总额自动摊到 12 个月。',
+  actual:'每个月结束后，把实际发生数记进来，上面的执行进度会自动更新。',
+  diff:'实际 − 预算。红色 = 支出超了 / 收入没到；绿色 = 支出省了 / 收入超额。'
+};
+
+/* ── render all ── */
+function renderAll(){
+  renderBookSel(); renderHero(); renderMonthChart(); renderCatChart();
+  renderTable('in'); renderTable('out');
+  $('#modeHint').textContent=HINTS[mode];
+}
+renderAll();
+</script>
+</body>
+</html>
