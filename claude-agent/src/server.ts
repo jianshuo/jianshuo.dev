@@ -359,6 +359,7 @@ async function getSessionMessages(id: string) {
 // codex-subscription-auth-chains）。重登：
 //   ssh root@VPS 'sudo -u claude-agent HOME=/opt/claude-agent codex login --device-auth'
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
+const BOOK_PUSH_URL = process.env.BOOK_PUSH_URL ?? "https://jianshuo.dev/agent/push/book-done";
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
 
@@ -497,7 +498,7 @@ async function patchThreadEntry(slug: string, ts: number, patch: Partial<ThreadE
 // prompt 让 agent 写进 book.json；收尾时拿 jobId 去工作目录里反查 slug。
 // 扫两处：WORKSPACE（修书/新版写书的耐久工作目录）和 /tmp（旧约定；PrivateTmp
 // 下与本进程同命名空间，job 刚结束时还在）。
-async function findSlugByJobId(jobId: string): Promise<string | null> {
+async function findBookByJobId(jobId: string): Promise<{ dir: string; book: any } | null> {
   for (const root of [WORKSPACE, "/tmp"]) {
     let dirs: string[];
     try {
@@ -508,13 +509,18 @@ async function findSlugByJobId(jobId: string): Promise<string | null> {
     for (const d of dirs) {
       try {
         const j = JSON.parse(await readFile(join(root, d, "book.json"), "utf8"));
-        if (j?.jobId === jobId && typeof j?.slug === "string" && SLUG_RE.test(j.slug)) return j.slug;
+        if (j?.jobId === jobId && typeof j?.slug === "string" && SLUG_RE.test(j.slug))
+          return { dir: join(root, d), book: j };
       } catch {
         /* not a book dir */
       }
     }
   }
   return null;
+}
+
+async function findSlugByJobId(jobId: string): Promise<string | null> {
+  return (await findBookByJobId(jobId))?.book.slug ?? null;
 }
 
 // 认证 = 计费（2026-08-10 起，替代早前的「须有成文文章 + 每日限额」门槛）：
@@ -537,6 +543,23 @@ async function chargeBook(
     return { status: r.status, body };
   } catch {
     return { status: 502, body: { error: "charge unreachable" } };
+  }
+}
+
+// 书写好了给主人发 APNs（2026-08-23）：worker /agent/push/book-done 用同一枚用户
+// bearer 认人——lab 不存推送凭据，token 是谁的就推给谁。尽力而为，失败只留日志，
+// 绝不影响主流程。
+async function notifyBookDone(auth: string | undefined, slug: string, title: string) {
+  if (!auth?.startsWith("Bearer ")) return;
+  try {
+    const r = await fetch(BOOK_PUSH_URL, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, title }),
+    });
+    console.log(`[book] push slug=${slug} status=${r.status}`);
+  } catch (e) {
+    console.error("[book] push failed", e);
   }
 }
 
@@ -609,7 +632,7 @@ async function fetchAuthorName(auth: string | undefined): Promise<string> {
   }
 }
 
-function runBookJob(seed: string, scope: string, author: string) {
+function runBookJob(seed: string, scope: string, author: string, auth?: string) {
   const jobId = randomUUID();
   const startedAt = Date.now();
   console.log(`[book] start scope=${scope} author=${author || "-"} job=${jobId} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
@@ -628,10 +651,23 @@ function runBookJob(seed: string, scope: string, author: string) {
   let earlySlug = "";
   const reg = setInterval(async () => {
     try {
-      const slug = await findSlugByJobId(jobId);
-      if (!slug) return;
+      const hit = await findBookByJobId(jobId);
+      if (!hit) return;
       clearInterval(reg);
+      const slug: string = hit.book.slug;
       earlySlug = slug;
+      // 绘本缺省不上架（2026-08-23）：type=childrens 且建筑师没写 hidden → 补
+      // "hidden": true（skill 已要求写，这里是确定性兜底）。只在创建期注入，老绘本
+      // 修书不受影响；build.mjs 每次发布都从盘上重读 book.json，注入不会被冲掉。
+      if (hit.book?.type === "childrens" && !("hidden" in hit.book)) {
+        try {
+          hit.book.hidden = true;
+          await writeFile(join(hit.dir, "book.json"), JSON.stringify(hit.book, null, 2) + "\n");
+          console.log(`[book] childrens default hidden slug=${slug}`);
+        } catch (e) {
+          console.error("[book] hidden inject failed", e);
+        }
+      }
       const meta = (await readBookMeta(slug)) ?? { slug, scope, author, createdAt: startedAt, thread: [] };
       if (!meta.thread.some((e) => e.ts === startedAt)) {
         meta.thread.push({
@@ -688,6 +724,11 @@ function runBookJob(seed: string, scope: string, author: string) {
           await writeBookMeta(m);
         }
         console.log(`[book] registered slug=${slug} scope=${scope} session=${sessionId}`);
+        // 写成了才推；失败不推用户（钱的事人工处理，别用推送吓人）。
+        if (ok) {
+          const title = String((await findBookByJobId(jobId))?.book?.title ?? "");
+          await notifyBookDone(auth, slug, title);
+        }
       } else {
         await mkdir(BOOKMETA_DIR, { recursive: true });
         await writeFile(
@@ -754,7 +795,7 @@ async function handleBook(req: IncomingMessage, res: ServerResponse, payload: an
   const author =
     String(payload?.author ?? "").trim().slice(0, 20) ||
     (await fetchAuthorName(req.headers.authorization));
-  runBookJob(seed, String(charge.body.scope ?? ""), author);
+  runBookJob(seed, String(charge.body.scope ?? ""), author, req.headers.authorization);
   res.writeHead(202, json).end(JSON.stringify({ ok: true, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }));
 }
 

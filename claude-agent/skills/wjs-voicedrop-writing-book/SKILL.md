@@ -99,6 +99,7 @@ reviews/01.json      # 第 1 章的评审意见（留痕，便于重写）
 ```
 
 `status`：`planned`（待写）/ `writing`（在写）/ `done`（过审已发）。目录页据此显示，只有 `done` 的章节可点开。
+顶层还可写 `"hidden": true`——书不上书架（index 的 HTML/JSON 都不出），但文件照发、直链可看。**绘本（`type: "childrens"`）创建时缺省必须带 `"hidden": true`**（服务端也会兜底补），主人验收后修书去掉即上架；其他类型缺省不写。
 `title`/`subtitle`/`meta`/`tagline`/`tint`/`dark`/`introTeaser` 的**气质与措辞由所选写作 skill 决定**——科普书是费曼式、绘本是童趣、小说是文学感；`build.mjs` 只在你没写这些字段时按 `type` 兜一个中性缺省。
 
 ---

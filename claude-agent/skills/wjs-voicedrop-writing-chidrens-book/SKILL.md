@@ -34,7 +34,7 @@ description: 「写一本书」时绘本 / 图画书的写法模块——读者�
   <figure><img src="p01.png"><figcaption></figcaption></figure>
   <p>小熊醒来了，天还灰灰的。</p>
   ```
-- `book.json`：`type: "childrens"`，`tagline` 建议留空或 `"一本图画书"`，`meta` 写年龄段（如 `"适合 3–6 岁 · 亲子共读"`），`tint/dark` 用明亮温暖的色。
+- `book.json`：`type: "childrens"`，`tagline` 建议留空或 `"一本图画书"`，`meta` 写年龄段（如 `"适合 3–6 岁 · 亲子共读"`），`tint/dark` 用明亮温暖的色。**顶层必须写 `"hidden": true`**——绘本缺省不上架（书架不出，直链可看），主人验收满意后修书去掉这行才上架。
 
 ---
 

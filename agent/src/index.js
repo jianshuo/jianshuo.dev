@@ -837,7 +837,8 @@ const normSub = (s) => {
 };
 
 export async function handleUsageRoute(url, request, env) {
-  if (!url.pathname.startsWith("/agent/usage/")) return null;
+  // /agent/push/book-done 也归这里管：和 book-charge 同一套 bearer→scope 鉴权。
+  if (!url.pathname.startsWith("/agent/usage/") && url.pathname !== "/agent/push/book-done") return null;
   try {
   const tok = bearerToken(request);
   const isAdmin = env.FILES_TOKEN && tok === env.FILES_TOKEN;
@@ -878,6 +879,25 @@ export async function handleUsageRoute(url, request, env) {
     await debit(env.USAGE, scope, costUY, reason, meta, now);
     const after = await balanceUY(env.USAGE, scope, now);
     return J({ ok: true, scope, charged_suanli: priceSuanli, suanli: r1(uyToSuanli(after)) });
+  }
+
+  // 书写好了 → 给主人发 APNs（lab 写书收尾时转发用户 bearer 调这里，2026-08-23）。
+  // 谁的 token 就推给谁——lab 上不存推送凭据，APNs 密钥只留在 worker。
+  // link 用 voicedrop.cn 直链而不是 voicedrop://books：绘本缺省 hidden 不上书架，
+  // 跳书架会找不到书；直链走 App 内 Safari，hidden 也能看。
+  if (url.pathname === "/agent/push/book-done" && request.method === "POST") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    const b = await request.json().catch(() => ({}));
+    const slug = String(b.slug || "");
+    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) return J({ error: "bad slug" }, 400);
+    const title = String(b.title || "").slice(0, 80);
+    await sendPush(env, scope, {
+      title: "书写好了",
+      body: title ? `《${title}》已经出炉，点开看看` : "你的书已经出炉，点开看看",
+      link: `https://voicedrop.cn/books/${slug}/`,
+    });
+    return J({ ok: true });
   }
 
   if (url.pathname === "/agent/usage/ledger" && request.method === "GET") {
