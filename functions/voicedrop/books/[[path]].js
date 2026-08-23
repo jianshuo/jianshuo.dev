@@ -400,11 +400,14 @@ async function collectBooks(env, viewerScope = '') {
   // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
-  const books = await Promise.all(shown.map(async ({ slug, hidden }) => {
+  const books = (await Promise.all(shown.map(async ({ slug, hidden }) => {
     let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
-      if (obj) {
+      // 没有 index.html 的目录不是书——失败/流产的写书任务只留下 _src 登记的
+      // 空壳（2026-08-24 曾有三本幽灵书以 slug 当书名混上书架），一律不上架。
+      if (!obj) return null;
+      {
         const html = await obj.text();
         const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
         if (m && m[1].trim()) title = m[1].trim();
@@ -432,7 +435,7 @@ async function collectBooks(env, viewerScope = '') {
     const [c, c2] = colorOf(slug);
     return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt,
              ...(hidden ? { hidden: true } : {}) };
-  }));
+  }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
   return books;
