@@ -467,6 +467,19 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
     env.ANTHROPIC_BASE_URL = BOOK_ANTHROPIC_BASE_URL;
     env.ANTHROPIC_API_KEY = BOOK_ANTHROPIC_API_KEY;
     delete env.CLAUDE_CODE_OAUTH_TOKEN; // 订阅 token 在场会抢道，明确让位给兼容端点
+    // 第三方端点只认自家模型名：把 Claude Code 内部各档位（含子任务的 haiku 档）
+    // 全部映射到同一个模型，否则内部小任务会拿 claude-* 模型名打 Kimi 端点报错。
+    env.ANTHROPIC_MODEL = BOOK_CLAUDE_MODEL;
+    env.ANTHROPIC_DEFAULT_FABLE_MODEL = BOOK_CLAUDE_MODEL;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = BOOK_CLAUDE_MODEL;
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = BOOK_CLAUDE_MODEL;
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = BOOK_CLAUDE_MODEL;
+    env.CLAUDE_CODE_SUBAGENT_MODEL = BOOK_CLAUDE_MODEL;
+    env.CLAUDE_CODE_EFFORT_LEVEL = process.env.BOOK_CLAUDE_EFFORT ?? "high";
+    if (process.env.BOOK_CLAUDE_CONTEXT) {
+      env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.BOOK_CLAUDE_CONTEXT;
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = process.env.BOOK_CLAUDE_CONTEXT;
+    }
   }
   const q = query({
     prompt,
