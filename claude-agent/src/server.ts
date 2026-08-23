@@ -224,7 +224,7 @@ async function codexTaskTitle(t: string): Promise<string | null> {
   const who = author ? ` · ${author}` : "";
   if (/任务：按 skill 的「修书模式」/.test(t)) {
     const slug = /slug：([a-z0-9-]+)/.exec(t)?.[1] ?? "";
-    const instr = clean(/修改指令：\s*([\s\S]{1,120})/.exec(t)?.[1] ?? "").slice(0, 30);
+    const instr = clean(/修改指令：\s*([\s\S]*?)(?:\n\s*\n|要求：|$)/.exec(t)?.[1] ?? "").slice(0, 30);
     let name = slug;
     if (slug) {
       try {
