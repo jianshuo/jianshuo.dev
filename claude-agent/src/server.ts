@@ -7,7 +7,7 @@
  * itself only listens on localhost and trusts Caddy.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -442,6 +442,11 @@ const BOOK_CLAUDE_MODEL = process.env.BOOK_CLAUDE_MODEL || MODEL;
 const BOOK_ANTHROPIC_BASE_URL = process.env.BOOK_ANTHROPIC_BASE_URL ?? "";
 const BOOK_ANTHROPIC_API_KEY = process.env.BOOK_ANTHROPIC_API_KEY ?? "";
 const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80); // 仅 claude 腿（codex 腿无轮数概念）
+// claude 腿的 cwd：独立目录=独立 Claude Code 项目=零 auto-memory。不能用 WORKSPACE
+// 当 cwd——那个项目积累的记忆笔记（含《江泽民传》等书的内容）会自动注入请求，
+// Kimi 风控直接 400 high risk（2026-08-24 二分定位实锤）。书文件仍落 WORKSPACE
+// （提示词里给绝对路径），本目录只是进程落脚点。
+const BOOK_RUN_DIR = process.env.BOOK_RUN_DIR ?? join(__dirname, "..", "bookrun");
 
 const SKILLS_DIR = join(process.env.HOME ?? homedir(), ".claude", "skills");
 
@@ -462,6 +467,15 @@ type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: strin
 // 串行扮演写手/评审，引擎无关），会话落 ~/.claude/projects（lab 侧栏可回看）。
 // 2026-08-20 前的老实现的复活版 + 按次 env 注入（Kimi 兼容端点）。
 async function runClaudeExec(prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+  await mkdir(BOOK_RUN_DIR, { recursive: true });
+  // 每单清空本项目的 auto-memory：书的真源在 skill 与 _src，不需要跨单记忆；
+  // 让它积累书内容迟早再次触发 Kimi 风控（workspace 项目就是前车之鉴）。
+  const memDir = join(
+    process.env.HOME ?? homedir(), ".claude", "projects", BOOK_RUN_DIR.replace(/\//g, "-"), "memory",
+  );
+  await rm(memDir, { recursive: true, force: true }).catch(() => {});
+  // skill 里说的「工作目录 book-<slug>」按绝对路径落 WORKSPACE——cwd 只是落脚点。
+  prompt = `${prompt}\n\n补充：你的当前目录不是书库根目录；skill 里说的「工作目录 book-<slug>」一律用绝对路径 ${WORKSPACE}/book-<slug>。`;
   const env: Record<string, string | undefined> = { ...process.env };
   if (BOOK_ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = BOOK_ANTHROPIC_BASE_URL;
@@ -484,7 +498,7 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
   const q = query({
     prompt,
     options: {
-      cwd: WORKSPACE,
+      cwd: BOOK_RUN_DIR,
       model: BOOK_CLAUDE_MODEL,
       maxTurns: BOOK_MAX_TURNS,
       permissionMode: "bypassPermissions",
@@ -693,7 +707,7 @@ async function patchThreadEntry(slug: string, ts: number, patch: Partial<ThreadE
 // 扫两处：WORKSPACE（修书/新版写书的耐久工作目录）和 /tmp（旧约定；PrivateTmp
 // 下与本进程同命名空间，job 刚结束时还在）。
 async function findBookByJobId(jobId: string): Promise<{ dir: string; book: any } | null> {
-  for (const root of [WORKSPACE, "/tmp"]) {
+  for (const root of [WORKSPACE, BOOK_RUN_DIR, "/tmp"]) {
     let dirs: string[];
     try {
       dirs = await readdir(root);
