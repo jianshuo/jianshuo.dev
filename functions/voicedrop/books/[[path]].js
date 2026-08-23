@@ -248,9 +248,10 @@ function audioWidget(slug, stem) {
 }
 
 // ---------- 整本书打印视图（PDF 渲染源）----------
-// 结构：封面页（tint 底、书名/副题/署名）→ 导读（如有）→ 各章（每章起新页）。
-// 只取每章 <article> 正文（导航件/播放器不进 PDF）；<base> 指向 pages.dev，
-// 相对图片路径在 Browser Rendering 里也能加载（1042 规避）。
+// 保真原则（2026-08-23 v2）：**原样复用章节页自带的 <style>**（build.mjs 那套淡雅
+// 界面——纸底、衬线标题、accent 色、引用块），PDF 和网页同一套字体颜色；只叠加
+// 分页规则。每章取「meta 行 + 标题 + <article> 正文」，导航件/播放器/页脚不进。
+// <base> 指向 pages.dev：相对图片路径在 Browser Rendering 里可加载（1042 规避）。
 async function printView(env, slug) {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return notFound();
   let book = null;
@@ -259,82 +260,77 @@ async function printView(env, slug) {
     if (o) book = JSON.parse(await o.text());
   } catch {}
 
-  const grab = async (file) => {
+  const page = async (file) => {
     const o = await env.FILES.get(`${PUBLISHER}${slug}/${file}`);
-    if (!o) return null;
-    const html = await o.text();
-    const m = /<article[^>]*>([\s\S]*?)<\/article>/i.exec(html);
-    return m ? m[1] : null;
+    return o ? await o.text() : null;
   };
+  const pick = (html, re) => (re.exec(html) || [])[0] || '';
+  const grabArticle = (html) => pick(html, /<article[^>]*>[\s\S]*?<\/article>/i);
 
   // 章节清单：book.json 优先；老书（无 _src）扫 R2 里的 NN.html
-  let chapters = [];
+  let files = [];
   let title = String(book?.title ?? '');
   if (book?.chapters?.length) {
-    chapters = book.chapters
-      .filter((c) => c.status === 'done')
-      .map((c) => ({ no: c.no, title: c.title, file: `${String(c.no).padStart(2, '0')}.html` }));
+    files = book.chapters.filter((c) => c.status === 'done').map((c) => `${String(c.no).padStart(2, '0')}.html`);
   } else {
     const listed = await env.FILES.list({ prefix: `${PUBLISHER}${slug}/`, limit: 200 });
-    chapters = (listed.objects || [])
+    files = (listed.objects || [])
       .map((o) => o.key.slice(`${PUBLISHER}${slug}/`.length))
       .filter((f) => /^\d\d\.html$/.test(f))
-      .sort()
-      .map((f) => ({ no: parseInt(f, 10), title: '', file: f }));
-    if (!title) {
-      const idx = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
-      if (idx) title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(await idx.text())?.[1] || slug).split('·')[0].trim();
-    }
+      .sort();
   }
-  if (!chapters.length) return notFound();
+  if (!files.length) return notFound();
+
+  // 逐章取原页面片段；站点 CSS 从第一张有效章节页原样搬来
+  let siteCss = '';
+  const sections = [];
+  for (const f of files) {
+    const html = await page(f);
+    if (!html) continue;
+    if (!siteCss) siteCss = pick(html, /<style>[\s\S]*?<\/style>/i);
+    const body = pick(html, /<p class="meta">[\s\S]*?<\/p>/i) + pick(html, /<h1[^>]*>[\s\S]*?<\/h1>/i) + grabArticle(html);
+    if (body) sections.push(`<section class="chapter">${body}</section>`);
+  }
+  if (!sections.length) return notFound();
+  const introHtml = await page('intro.html');
+  const intro = introHtml
+    ? pick(introHtml, /<h1[^>]*>[\s\S]*?<\/h1>/i) + pick(introHtml, /<p class="sub">[\s\S]*?<\/p>/i) + grabArticle(introHtml)
+    : '';
+  if (!title) {
+    const idx = await page('index.html');
+    if (idx) title = ((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(idx) || [])[1] || slug).split('·')[0].trim();
+  }
+  if (!siteCss) siteCss = '<style>body{font-family:-apple-system,"PingFang SC",sans-serif;color:#2A2521;line-height:1.85}</style>';
 
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const tint = book?.tint || '#f2efe6';
-  const dark = book?.dark || '#2f6d7a';
-  const intro = await grab('intro.html');
-
-  const parts = [];
-  for (const c of chapters) {
-    const body = await grab(c.file);
-    if (body == null) continue;
-    parts.push(`<section class="chapter">${c.title ? `<h1>${esc(c.title)}</h1>` : ''}${body}</section>`);
-  }
-
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <base href="https://jianshuo-dev.pages.dev/voicedrop/books/${encodeURIComponent(slug)}/">
 <title>${esc(title || slug)}</title>
+${siteCss}
 <style>
-  @page { size: A4; margin: 18mm 16mm; }
-  * { box-sizing: border-box; }
-  body { margin: 0; color: #2A2521; background: #fff;
-    font: 16px/1.95 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
-  .cover { page-break-after: always; text-align: center; padding: 220px 40px 0;
-    background: ${esc(tint)}; min-height: 960px; }
-  .cover h1 { font-size: 40px; line-height: 1.4; color: ${esc(dark)}; margin: 0 0 18px; }
-  .cover .sub { font-size: 18px; color: #5a544a; margin: 0 0 40px; }
-  .cover .author { font-size: 15px; color: #7a7264; }
-  .cover .tag { font-size: 12px; color: #A89E8E; margin-top: 100px; }
+  /* 打印叠加：只管分页与纸面，观感全部沿用上面的站点样式 */
+  @page { size: A4; margin: 16mm 14mm; }
+  body { background: var(--paper, #FAF6EF); min-height: auto; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0; }
   .chapter { page-break-before: always; }
-  .chapter:first-of-type { page-break-before: auto; }
-  h1 { font-size: 26px; line-height: 1.5; color: ${esc(dark)}; }
-  h2 { font-size: 20px; } h3 { font-size: 17px; }
+  .cover { page-break-after: always; text-align: center; padding-top: 290px; min-height: 900px; }
+  .cover h1 { font-size: 40px; }
+  .cover .sub { font-size: 17px; margin-top: 14px; }
+  .cover .author { margin-top: 34px; color: var(--ink-soft, #7a7264); font-size: 15px; }
+  .cover .tag { margin-top: 120px; color: var(--ink-soft, #7a7264); font-size: 12.5px; }
   h1, h2, h3 { page-break-after: avoid; }
-  img { max-width: 100%; height: auto; border-radius: 8px; page-break-inside: avoid; }
-  blockquote { margin: 1em 0; padding: 2px 18px; border-left: 3px solid ${esc(dark)};
-    color: #5a544a; page-break-inside: avoid; }
-  .plain { background: #f7f4ec; border-radius: 10px; padding: 12px 16px; page-break-inside: avoid; }
-  table { border-collapse: collapse; width: 100%; } td, th { border: 1px solid #ddd6c8; padding: 6px 10px; }
-  pre { background: #f7f4ec; padding: 12px; border-radius: 8px; overflow-x: hidden; white-space: pre-wrap; }
-</style></head><body>
+  article img, article figure, article blockquote, .plain { page-break-inside: avoid; }
+</style></head><body><div class="wrap">
 <div class="cover">
   <h1>${esc(title || slug)}</h1>
   ${book?.subtitle ? `<p class="sub">${esc(book.subtitle)}</p>` : ''}
   ${book?.author ? `<p class="author">${esc(book.author)}</p>` : ''}
   ${book?.tagline || book?.meta ? `<p class="tag">${esc(book.tagline || book.meta)}</p>` : ''}
 </div>
-${intro ? `<section class="chapter"><h1>导读</h1>${intro}</section>` : ''}
-${parts.join('\n')}
-</body></html>`;
+${intro ? `<section class="chapter">${intro}</section>` : ''}
+${sections.join('\n')}
+<div class="foot">${esc(title || slug)}${book?.author ? ' · ' + esc(book.author) : ''}</div>
+</div></body></html>`;
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
