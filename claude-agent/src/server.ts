@@ -505,7 +505,13 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
       if (msg.type === "result") {
         ok = msg.subtype === "success";
         reply = typeof msg.result === "string" ? msg.result : "";
-        if (!ok) error = String(msg.subtype ?? "error");
+        // CLI 正常退出但第一轮就是 API 错误（401/无效 key 等）时 subtype 仍是
+        // success——按文本识别，别把认证失败当成书写完了（2026-08-24 自检踩到）。
+        if (ok && /Failed to authenticate|API Error: \d{3}/i.test(reply.slice(0, 300))) {
+          ok = false;
+          error = reply.slice(0, 200);
+        }
+        if (!ok && !error) error = String(msg.subtype ?? "error");
         console.log(
           `[book] claude-engine done model=${BOOK_CLAUDE_MODEL} turns=${msg.num_turns} cost=${msg.total_cost_usd ?? "-"}` +
             (ok ? "" : ` ERROR=${error}`),
