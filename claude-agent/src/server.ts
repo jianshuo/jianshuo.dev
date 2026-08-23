@@ -214,11 +214,44 @@ async function findCodexRollout(id: string): Promise<string | null> {
 
 // 侧栏摘要：标题取第一条 user_message；写书 prompt 前面是长长的引擎说明，
 // 从「任务：」起才是人话——标题从那里截。
+// 侧栏摘要的结构化解析：从写书/修书 prompt 提取「新写/修改 +《书名》+ 作者 +
+// 内容一句」。书名：新写单拿 prompt 里的 jobId 反查工作目录 book.json；修书单
+// 拿 slug 查 workspace/book-<slug>/book.json（查不到就退回 slug）。解析不出的
+// 会话（非写书 prompt）返回 null，退回旧的「任务：」截断。
+async function codexTaskTitle(t: string): Promise<string | null> {
+  const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+  const author = /署名「([^」]{1,20})」/.exec(t)?.[1] ?? "";
+  const who = author ? ` · ${author}` : "";
+  if (/任务：按 skill 的「修书模式」/.test(t)) {
+    const slug = /slug：([a-z0-9-]+)/.exec(t)?.[1] ?? "";
+    const instr = clean(/修改指令：\s*([\s\S]{1,120})/.exec(t)?.[1] ?? "").slice(0, 30);
+    let name = slug;
+    if (slug) {
+      try {
+        name = String(JSON.parse(await readFile(join(WORKSPACE, `book-${slug}`, "book.json"), "utf8")).title || slug);
+      } catch {}
+    }
+    return `修改《${name}》${who}${instr ? " · " + instr : ""}`;
+  }
+  if (/任务：写一本书/.test(t)) {
+    const jobId = /jobId=「([0-9a-f-]{10,40})」/.exec(t)?.[1] ?? "";
+    const seed = clean(/种子：\s*([\s\S]{1,160})/.exec(t)?.[1] ?? "").slice(0, 36);
+    let name = "";
+    if (jobId) {
+      try {
+        name = String((await findBookByJobId(jobId))?.book?.title ?? "");
+      } catch {}
+    }
+    return `新写${name ? `《${name}》` : ""}${who}${seed ? " · " + seed : ""}`;
+  }
+  return null;
+}
+
 async function summarizeCodex(path: string) {
   const st = await stat(path);
   const hit = summaryCache.get(path);
   if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
-  let title = "";
+  let firstUser = "";
   let turns = 0;
   for await (const ln of jsonlLines(path)) {
     let o: any;
@@ -229,12 +262,13 @@ async function summarizeCodex(path: string) {
     }
     if (o.type === "event_msg" && o.payload?.type === "user_message") {
       turns++;
-      if (!title) {
-        const t = String(o.payload.message ?? "").trim();
-        const i = t.indexOf("任务：");
-        title = i >= 0 ? t.slice(i) : t;
-      }
+      if (!firstUser) firstUser = String(o.payload.message ?? "").trim();
     }
+  }
+  let title = (await codexTaskTitle(firstUser)) ?? "";
+  if (!title) {
+    const i = firstUser.indexOf("任务：");
+    title = i >= 0 ? firstUser.slice(i) : firstUser;
   }
   const value = {
     id: codexIdOfPath(path),
