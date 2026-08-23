@@ -432,6 +432,17 @@ const BOOK_PUSH_URL = process.env.BOOK_PUSH_URL ?? "https://jianshuo.dev/agent/p
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
 
+// --- 写书引擎开关（2026-08-24，为省 ChatGPT quota 加的第二条腿）---
+// BOOK_ENGINE=codex（默认，ChatGPT 订阅）| claude（Claude Agent SDK 腿）。
+// claude 腿不配 BOOK_ANTHROPIC_* 时吃 lab 自己的 Claude 订阅 OAuth；配了则按次
+// 注入 ANTHROPIC_BASE_URL/API_KEY——Kimi 等 Anthropic 兼容端点（订阅/按量都行），
+// 只作用于写书子进程，聊天路径的凭据与模型完全不受影响。
+const BOOK_ENGINE = (process.env.BOOK_ENGINE ?? "codex").toLowerCase();
+const BOOK_CLAUDE_MODEL = process.env.BOOK_CLAUDE_MODEL || MODEL;
+const BOOK_ANTHROPIC_BASE_URL = process.env.BOOK_ANTHROPIC_BASE_URL ?? "";
+const BOOK_ANTHROPIC_API_KEY = process.env.BOOK_ANTHROPIC_API_KEY ?? "";
+const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80); // 仅 claude 腿（codex 腿无轮数概念）
+
 const SKILLS_DIR = join(process.env.HOME ?? homedir(), ".claude", "skills");
 
 // codex 是单代理循环，没有 Claude 的 skill 装载/并行 subagent/Workflow——skill 里
@@ -446,6 +457,57 @@ const CODEX_BOOK_PREAMBLE =
   `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。`;
 
 type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: string };
+
+// claude 腿：与 runCodexExec 同一契约。复用同一份写书 preamble（读 skill 文件、
+// 串行扮演写手/评审，引擎无关），会话落 ~/.claude/projects（lab 侧栏可回看）。
+// 2026-08-20 前的老实现的复活版 + 按次 env 注入（Kimi 兼容端点）。
+async function runClaudeExec(prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  if (BOOK_ANTHROPIC_BASE_URL) {
+    env.ANTHROPIC_BASE_URL = BOOK_ANTHROPIC_BASE_URL;
+    env.ANTHROPIC_API_KEY = BOOK_ANTHROPIC_API_KEY;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN; // 订阅 token 在场会抢道，明确让位给兼容端点
+  }
+  const q = query({
+    prompt,
+    options: {
+      cwd: WORKSPACE,
+      model: BOOK_CLAUDE_MODEL,
+      maxTurns: BOOK_MAX_TURNS,
+      permissionMode: "bypassPermissions",
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      env,
+    },
+  });
+  let threadId = "";
+  let ok = false;
+  let reply = "";
+  let error = "";
+  try {
+    for await (const msg of q as AsyncIterable<any>) {
+      if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
+        threadId = msg.session_id;
+        onThread?.(threadId);
+      }
+      if (msg.type === "result") {
+        ok = msg.subtype === "success";
+        reply = typeof msg.result === "string" ? msg.result : "";
+        if (!ok) error = String(msg.subtype ?? "error");
+        console.log(
+          `[book] claude-engine done model=${BOOK_CLAUDE_MODEL} turns=${msg.num_turns} cost=${msg.total_cost_usd ?? "-"}` +
+            (ok ? "" : ` ERROR=${error}`),
+        );
+      }
+    }
+  } catch (e: any) {
+    error = String(e?.message ?? e);
+  }
+  return { ok, threadId, reply, error: ok ? "" : error || "no result" };
+}
+
+// 引擎分发：两条腿同一契约，runBookJob / runReviseJob 调这里。
+const runBookEngine = (prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> =>
+  BOOK_ENGINE === "claude" ? runClaudeExec(prompt, onThread) : runCodexExec(prompt, onThread);
 
 // 跑一次 codex exec 到结束。事件解析与 codex-agent 的 translate() 同源（实机 fixture
 // 校准过）：thread.started 拿线程号，item.completed/agent_message 的最后一条是给
@@ -807,7 +869,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
     let ok = false;
     let reply = "";
     try {
-      const out = await runCodexExec(prompt, (id) => {
+      const out = await runBookEngine(prompt, (id) => {
         sessionId = id;
       });
       ok = out.ok;
@@ -875,7 +937,7 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
     `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。`;
   (async () => {
     try {
-      const out = await runCodexExec(prompt, (id) => {
+      const out = await runBookEngine(prompt, (id) => {
         patchThreadEntry(slug, entryTs, { sessionId: id }).catch(() => {});
       });
       await patchThreadEntry(slug, entryTs, {
