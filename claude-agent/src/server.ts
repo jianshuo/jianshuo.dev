@@ -8,6 +8,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -90,12 +91,38 @@ async function findTranscript(id: string): Promise<string | null> {
   return null;
 }
 
+// 大文件防线（2026-08-23）：一个 121MB 的 codex rollout 曾把旧的「readFile 整读 +
+// split("\n")」打爆 node 堆（FATAL heap OOM → core-dump → systemd 重启 → 连带杀死
+// 正在跑的写书 codex 子进程，嘟嘟和小考拉那单就是这么死的）。所有 jsonl 读取一律
+// 流式逐行：内存占用与文件大小无关；单行超 2MB 丢弃（超大 tool 输出，渲染不了）。
+async function* jsonlLines(path: string, maxLineChars = 2 * 1024 * 1024): AsyncGenerator<string> {
+  const stream = createReadStream(path, { encoding: "utf8", highWaterMark: 1 << 20 });
+  let carry = "";
+  let dropping = false;
+  for await (const chunk of stream as unknown as AsyncIterable<string>) {
+    carry += chunk;
+    let i: number;
+    while ((i = carry.indexOf("\n")) >= 0) {
+      const line = carry.slice(0, i);
+      carry = carry.slice(i + 1);
+      if (dropping) { dropping = false; continue; } // 被丢弃超长行的尾巴
+      if (line.trim() && line.length <= maxLineChars) yield line;
+    }
+    if (carry.length > maxLineChars) { carry = ""; dropping = true; }
+  }
+  if (!dropping && carry.trim() && carry.length <= maxLineChars) yield carry;
+}
+// 侧栏每次刷新都要扫全部会话文件——按 (mtime,size) 缓存摘要，扫描只花一次。
+const summaryCache = new Map<string, { mtimeMs: number; size: number; value: any }>();
+
 async function summarize(path: string, id: string) {
-  const raw = await readFile(path, "utf8");
+  const st = await stat(path);
+  const hit = summaryCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size)
+    return { ...hit.value, running: isRunning(id) };
   let title = "";
   let turns = 0;
-  for (const ln of raw.split("\n")) {
-    if (!ln.trim()) continue;
+  for await (const ln of jsonlLines(path)) {
     let o: any;
     try {
       o = JSON.parse(ln);
@@ -110,8 +137,9 @@ async function summarize(path: string, id: string) {
       }
     }
   }
-  const st = await stat(path);
-  return { id, title: title.slice(0, 80) || "(无标题)", updatedAt: st.mtimeMs, turns, running: isRunning(id) };
+  const value = { id, title: title.slice(0, 80) || "(无标题)", updatedAt: st.mtimeMs, turns };
+  summaryCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, value });
+  return { ...value, running: isRunning(id) };
 }
 
 async function listSessions() {
@@ -187,11 +215,12 @@ async function findCodexRollout(id: string): Promise<string | null> {
 // 侧栏摘要：标题取第一条 user_message；写书 prompt 前面是长长的引擎说明，
 // 从「任务：」起才是人话——标题从那里截。
 async function summarizeCodex(path: string) {
-  const raw = await readFile(path, "utf8");
+  const st = await stat(path);
+  const hit = summaryCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
   let title = "";
   let turns = 0;
-  for (const ln of raw.split("\n")) {
-    if (!ln.trim()) continue;
+  for await (const ln of jsonlLines(path)) {
     let o: any;
     try {
       o = JSON.parse(ln);
@@ -207,8 +236,7 @@ async function summarizeCodex(path: string) {
       }
     }
   }
-  const st = await stat(path);
-  return {
+  const value = {
     id: codexIdOfPath(path),
     title: "📖 " + (title.slice(0, 78) || "(无标题)"),
     updatedAt: st.mtimeMs,
@@ -216,13 +244,14 @@ async function summarizeCodex(path: string) {
     running: false,
     engine: "codex",
   };
+  summaryCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, value });
+  return value;
 }
 
 // 回放：翻译成 getSessionMessages 一样的形状。文字走 event_msg（user_message/
 // agent_message），工具卡片走 response_item（function_call/custom_tool_call/
 // web_search_call），输出按 call_id 回填；reasoning 是加密的，跳过。
 async function getCodexSessionMessages(path: string) {
-  const raw = await readFile(path, "utf8");
   const msgs: any[] = [];
   let cur: any = null;
   const toolIndex: Record<string, any> = {};
@@ -233,8 +262,7 @@ async function getCodexSessionMessages(path: string) {
     }
     cur.items.push(item);
   };
-  for (const ln of raw.split("\n")) {
-    if (!ln.trim()) continue;
+  for await (const ln of jsonlLines(path)) {
     let o: any;
     try {
       o = JSON.parse(ln);
@@ -299,12 +327,10 @@ async function getSessionMessages(id: string) {
     const cp = await findCodexRollout(id);
     return cp ? getCodexSessionMessages(cp) : null;
   }
-  const raw = await readFile(path, "utf8");
   const msgs: any[] = [];
   let cur: any = null;
   const toolIndex: Record<string, any> = {};
-  for (const ln of raw.split("\n")) {
-    if (!ln.trim()) continue;
+  for await (const ln of jsonlLines(path)) {
     let o: any;
     try {
       o = JSON.parse(ln);
