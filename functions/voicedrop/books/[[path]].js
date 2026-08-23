@@ -8,6 +8,7 @@
 // 唯一数据源是写书 cloud agent 的 scope（users/<PUBLISHER>/books/）：agent 用
 // 自己的用户 token 走 PUT /files/api/upload/books/<slug>/<file>，upload 路由把
 // key 锁进调用者 scope，agent 拿不到也不该拿 FILES_TOKEN，所以公开路由迁就写端。
+import { bearerToken, verifySession, anonScopeFromToken } from '../../lib/auth.js';
 // key 钉死在该 scope 的 books/ 尾段下，桶里其他东西（articles/、WECHAT.json…）
 // 够不着，所以不需要 photo 那样的文件类型白名单。
 //
@@ -76,7 +77,7 @@ export async function onRequest({ request, env, params }) {
   // 索引页：/books 或 /books/（?format=json 给 App 吃结构化数据）
   if (!rel) {
     const wantJSON = new URL(request.url).searchParams.get('format') === 'json';
-    return wantJSON ? indexJSON(env) : index(env);
+    return wantJSON ? indexJSON(env, request) : index(env);
   }
 
   // 整本书打印视图（/books/<slug>/print）：封面+导读+全部章节拼一页、分页 CSS、
@@ -368,7 +369,7 @@ const splitTitle = (t) => {
 /// 书架数据：一个 delimiter listing 拿书的文件夹（delimitedPrefixes），再逐本读
 /// <slug>/index.html 的 <title> 当书名。必须 cursor 翻页：R2 的 delimited list 按
 /// 「扫过的 key 数」截断，不是按返回的前缀数（admin/llm 页曾因此冻在 2026-07-13）。
-async function collectBooks(env) {
+async function collectBooks(env, viewerScope = '') {
   const slugs = [];
   let cursor;
   do {
@@ -378,13 +379,19 @@ async function collectBooks(env) {
   } while (cursor);
 
   // 不上架的书：book.json 里写 "hidden": true（build.mjs 会镜像到 _src/book.json），
-  // 文件仍在 R2（直链可开），但不出现在书架 index（HTML 和 JSON 都不出）。
+  // 文件仍在 R2（直链可开），公开书架不出。**主人例外（2026-08-23）**：JSON 接口
+  // 带登录态且 book.json 的 owner == 请求者 scope 时仍列出、条目标 hidden——App
+  // 书架给自己的隐藏书贴「隐藏」角标；别人依旧看不见。
   const visible = await Promise.all(slugs.map(async (slug) => {
     try {
       const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
-      if (o && JSON.parse(await o.text()).hidden === true) return null;
+      if (o) {
+        const b = JSON.parse(await o.text());
+        if (b.hidden === true)
+          return viewerScope && b.owner === viewerScope ? { slug, hidden: true } : null;
+      }
     } catch {}
-    return slug;
+    return { slug, hidden: false };
   }));
   const shown = visible.filter(Boolean);
 
@@ -393,7 +400,7 @@ async function collectBooks(env) {
   // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
-  const books = await Promise.all(shown.map(async (slug) => {
+  const books = await Promise.all(shown.map(async ({ slug, hidden }) => {
     let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
@@ -423,7 +430,8 @@ async function collectBooks(env) {
     } catch {}
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt };
+    return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt,
+             ...(hidden ? { hidden: true } : {}) };
   }));
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
@@ -432,12 +440,27 @@ async function collectBooks(env) {
 
 /// JSON 索引（iOS 图书馆）。cover / chapters / createdAt 已在 collectBooks 里
 /// 随全量列举一并算好，这里直接吐。
-async function indexJSON(env) {
-  const books = await collectBooks(env);
+async function indexJSON(env, request) {
+  // 登录态（可选）：带 bearer 时把「自己的 hidden 书」也列出（条目带 hidden:true），
+  // App 书架据此贴「隐藏」角标。带个人内容的响应 no-store——绝不进共享缓存
+  // （CF 边缘 / EdgeOne 都不许把带登录态的书单缓存到别人头上）。
+  let scope = '';
+  const tok = bearerToken(request);
+  if (tok) {
+    try {
+      if (env.SESSION_SECRET) {
+        const s = await verifySession(tok, env.SESSION_SECRET);
+        if (s) scope = s.scope;
+      }
+      if (!scope) scope = (await anonScopeFromToken(tok)) || '';
+    } catch {}
+  }
+  const books = await collectBooks(env, scope);
   return new Response(JSON.stringify({ books }), {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'public, max-age=60',
+      'Cache-Control': scope ? 'no-store' : 'public, max-age=60',
+      ...(scope ? { Vary: 'Authorization' } : {}),
       'Access-Control-Allow-Origin': '*',
     },
   });
