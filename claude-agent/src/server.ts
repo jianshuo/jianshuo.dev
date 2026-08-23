@@ -442,16 +442,21 @@ function runCodexExec(prompt: string, onThread?: (id: string) => void): Promise<
   });
 }
 
-// --- 书的登记簿（bookmeta）：每本书一份 JSON，主人 + 持久对话线 ---
+// --- 书的登记簿：产权在 book.json（owner 字段），对话线在 R2 _src/bookmeta.json ---
 //
-// bookmeta/<slug>.json = { slug, scope, author, createdAt, thread: [entry…] }
-// entry = { ts, kind: "create"|"revise", instruction, sessionId?, status:
-//           "running"|"done"|"failed", reply?, error? }
-// 这是「谁能修这本书」的准入真源（scope = 创建时扣费的账户），也是 App 里
-// 「修改这本书」页面读的那条永久对话历史。sessionId：2026-08-20 换引擎后是
-// codex 线程号（VPS 上 CODEX_HOME/sessions/ 下有完整过程；`codex exec resume <id>`
-// 可续）；老条目仍是 Claude session id（lab 网页 /api/sessions/<id> 可回看）。
+// 2026-08-23 起 bookmeta 不再以 VPS 本地文件为真源（VPS 重装会丢）：
+//   - 产权：book.json 顶层 "owner"（= 创建时扣费账户的 scope，公开信息，与 photo
+//     URL 同级）。写书时建筑师直接写 + 30s 轮询确定性兜底注入，build.mjs 随发布
+//     镜像到 R2 _src/book.json —— R2 即真源，天然持久。
+//   - 对话线：R2 books/<slug>/_src/bookmeta.json = { slug, scope, author,
+//     createdAt, thread: [entry…] }，entry = { ts, kind: "create"|"revise",
+//     instruction, sessionId?, status: "running"|"done"|"failed", reply?, error? }。
+//     由 lab 独占读写（与 codex 并发改 book.json 互不打架），走 files API 上传
+//     （发布账号 token），读走公开 URL 带时间戳穿透 5 分钟边缘缓存。
+//   - 本地 bookmeta/ 目录只剩两个用途：老条目的读回退（读到即懒迁移上 R2）和
+//     _unmatched 落档。sessionId：codex 线程号（CODEX_HOME/sessions/ 可续）。
 const BOOKMETA_DIR = process.env.BOOKMETA_DIR ?? join(__dirname, "..", "bookmeta");
+const FILES_API = "https://jianshuo.dev/files/api";
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 type ThreadEntry = {
@@ -468,19 +473,58 @@ type BookMeta = { slug: string; scope: string; author: string; createdAt: number
 function metaPath(slug: string): string {
   return join(BOOKMETA_DIR, slug + ".json");
 }
-async function readBookMeta(slug: string): Promise<BookMeta | null> {
+// 发布账号 token（与 build.mjs 同源 ~/.config/voicedrop/credentials）——上传对话线用。
+let cachedPublisherToken = "";
+async function publisherToken(): Promise<string> {
+  if (cachedPublisherToken) return cachedPublisherToken;
   try {
-    return JSON.parse(await readFile(metaPath(slug), "utf8"));
+    const j = JSON.parse(
+      await readFile(join(process.env.HOME ?? homedir(), ".config", "voicedrop", "credentials"), "utf8"),
+    );
+    cachedPublisherToken = String(j?.token ?? "");
+  } catch {
+    /* 下次再试 */
+  }
+  return cachedPublisherToken;
+}
+async function readBookMeta(slug: string): Promise<BookMeta | null> {
+  // R2 为真源；?_= 穿透书页路由的 5 分钟边缘缓存（App 轮询 history 要看到实时进度）。
+  try {
+    const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/_src/bookmeta.json?_=${Date.now()}`);
+    if (r.ok) return await r.json();
+  } catch {
+    /* 网络抖动 → 走本地回退 */
+  }
+  // 本地老条目：读到即懒迁移上 R2（迁移失败不影响本次返回）。
+  try {
+    const legacy = JSON.parse(await readFile(metaPath(slug), "utf8"));
+    writeBookMeta(legacy).catch(() => {});
+    return legacy;
   } catch {
     return null;
   }
 }
 // 单进程低频写，串行化一下防「读-改-写」互相覆盖（create 收尾与 revise 并发时）。
+// 上传失败回落本地文件——宁可暂留 VPS 也绝不丢条目（下次 readBookMeta 会再懒迁移）。
 let metaWriteChain: Promise<unknown> = Promise.resolve();
 function writeBookMeta(meta: BookMeta): Promise<void> {
   const p = metaWriteChain.then(async () => {
-    await mkdir(BOOKMETA_DIR, { recursive: true });
-    await writeFile(metaPath(meta.slug), JSON.stringify(meta, null, 2) + "\n");
+    const body = JSON.stringify(meta, null, 2) + "\n";
+    try {
+      const tok = await publisherToken();
+      if (!tok) throw new Error("no publisher token");
+      const r = await fetch(`${FILES_API}/upload/books/${meta.slug}/_src/bookmeta.json`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+        body,
+      });
+      if (!r.ok) throw new Error(`upload ${r.status}`);
+      await unlink(metaPath(meta.slug)).catch(() => {}); // R2 落定后清掉本地旧件，防回退读到陈旧线
+    } catch (e) {
+      console.error(`[bookmeta] R2 upload failed slug=${meta.slug}:`, e instanceof Error ? e.message : e);
+      await mkdir(BOOKMETA_DIR, { recursive: true });
+      await writeFile(metaPath(meta.slug), body);
+    }
   });
   metaWriteChain = p.catch(() => {});
   return p as Promise<void>;
@@ -643,6 +687,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
     `${CODEX_BOOK_PREAMBLE}\n\n` +
     `任务：写一本书。${byline}\n` +
     `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
+    (scope ? `这本书的产权归属 owner=「${scope}」——建 book.json 时把它原样写进顶层 "owner" 字段（谁能在线修改这本书以此为准）。\n` : "") +
     `种子：\n${seed}`;
   let sessionId = "";
   // 边跑边登记：slug 一出现（建筑师落 book.json，约 1 分钟内）就先写 bookmeta
@@ -656,16 +701,20 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       clearInterval(reg);
       const slug: string = hit.book.slug;
       earlySlug = slug;
-      // 绘本缺省不上架（2026-08-23）：type=childrens 且建筑师没写 hidden → 补
-      // "hidden": true（skill 已要求写，这里是确定性兜底）。只在创建期注入，老绘本
-      // 修书不受影响；build.mjs 每次发布都从盘上重读 book.json，注入不会被冲掉。
-      if (hit.book?.type === "childrens" && !("hidden" in hit.book)) {
+      // 确定性兜底注入（skill 已要求写，这里保证一定有；只在创建期，修书不受影响；
+      // build.mjs 每次发布都从盘上重读 book.json，注入不会被冲掉）：
+      //   - 绘本缺省不上架：type=childrens 没写 hidden → 补 "hidden": true；
+      //   - 产权：没写 owner → 补 "owner" = 下单人 scope（公开信息，与 photo URL
+      //     同级；R2 里的 book.json 即产权真源，VPS 重装不丢）。
+      let inject = false;
+      if (hit.book?.type === "childrens" && !("hidden" in hit.book)) { hit.book.hidden = true; inject = true; }
+      if (scope && !hit.book.owner) { hit.book.owner = scope; inject = true; }
+      if (inject) {
         try {
-          hit.book.hidden = true;
           await writeFile(join(hit.dir, "book.json"), JSON.stringify(hit.book, null, 2) + "\n");
-          console.log(`[book] childrens default hidden slug=${slug}`);
+          console.log(`[book] injected defaults slug=${slug} hidden=${hit.book.hidden === true} owner=${hit.book.owner}`);
         } catch (e) {
-          console.error("[book] hidden inject failed", e);
+          console.error("[book] default inject failed", e);
         }
       }
       const meta = (await readBookMeta(slug)) ?? { slug, scope, author, createdAt: startedAt, thread: [] };
@@ -821,29 +870,38 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
     return;
   }
   const requester = String(probe.body.scope ?? "");
+  // 产权（2026-08-23 起）：book.json 顶层 owner 为真源（R2 持久，公开信息）；没有
+  // owner 的老书退回对话线登记的 scope；两者皆无 → 只有发布账号本人按存储层所有权
+  // 放行（其他人 404，否则任何人都能改别人的书）。放行后补建对话线。
+  const srcBook = await fetchSrcBook(slug);
   let meta = await readBookMeta(slug);
-  if (!meta) {
-    // 没登记主人的书（登记簿上线前的老书/历史事故）：存储层所有权兜底——请求者
-    // 就是发布账号本人时放行并当场补登记；其他人仍 404（否则任何人都能改别人的书）。
+  const owner = String(srcBook?.owner ?? "") || String(meta?.scope ?? "");
+  if (owner) {
+    if (owner !== requester) {
+      res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
+      return;
+    }
+  } else {
     const pub = await publisherScope();
     if (!requester || !pub || requester !== pub || !(await bookExistsOnline(slug))) {
       res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
       return;
     }
-    const src = await fetchSrcBook(slug);
+  }
+  if (!meta) {
+    if (!owner && !(await bookExistsOnline(slug))) {
+      res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
+      return;
+    }
     meta = {
       slug,
-      scope: requester,
-      author: String(src?.author ?? "").slice(0, 20),
+      scope: owner || requester,
+      author: String(srcBook?.author ?? "").slice(0, 20),
       createdAt: Date.now(),
       thread: [],
     };
     await writeBookMeta(meta);
-    console.log(`[revise] storage-owner claimed unregistered book slug=${slug} scope=${requester}`);
-  }
-  if (meta.scope && meta.scope !== requester) {
-    res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
-    return;
+    console.log(`[revise] registered thread slug=${slug} scope=${meta.scope}`);
   }
   if (meta.thread.some((e) => e.status === "running")) {
     res.writeHead(409, json).end(JSON.stringify({ error: "busy" }));
@@ -879,28 +937,31 @@ async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug
     res.writeHead(401, json).end(JSON.stringify({ error: "bad token" }));
     return;
   }
+  const srcBook = await fetchSrcBook(slug);
   const meta = await readBookMeta(slug);
-  if (!meta) {
-    // 未登记的书：发布账号本人可看（存储层所有权，对话线为空）；其他人 404。
+  // 产权：book.json owner 优先，退回对话线 scope，两者皆无则仅发布账号本人可看。
+  const owner = String(srcBook?.owner ?? "") || String(meta?.scope ?? "");
+  if (owner && owner !== scope) {
+    res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
+    return;
+  }
+  if (!owner) {
     const pub = await publisherScope();
     if (!pub || scope !== pub || !(await bookExistsOnline(slug))) {
       res.writeHead(404, json).end(JSON.stringify({ error: "no-book" }));
       return;
     }
-    const src = await fetchSrcBook(slug);
+  }
+  if (!meta) {
     res.writeHead(200, json).end(
       JSON.stringify({
         slug,
-        author: String(src?.author ?? ""),
+        author: String(srcBook?.author ?? ""),
         createdAt: 0,
         running: false,
         thread: [],
       }),
     );
-    return;
-  }
-  if (meta.scope && meta.scope !== scope) {
-    res.writeHead(403, json).end(JSON.stringify({ error: "not-owner" }));
     return;
   }
   res.writeHead(200, json).end(

@@ -80,6 +80,7 @@ reviews/01.json      # 第 1 章的评审意见（留痕，便于重写）
 ```json
 {
   "jobId": "（调用任务里给的 jobId，原样抄进来——服务端登记簿靠它对号，漏了这本书就没有主人）",
+  "owner": "（调用任务里给的 owner scope，原样抄进来——产权真源，谁能在线修改这本书以此为准；服务端也会兜底补）",
   "type": "explainary",                    // explainary | childrens | novel，决定通用文案（页脚/默认副标注）；缺省当 explainary
   "slug": "entropy",                       // 决定 books/<slug>/ 文件夹与 /voicedrop/books/<slug>/ 路径；小写、连字符、别撞已有的
   "title": "熵：为什么一切都在变乱",
