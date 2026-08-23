@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "agents": "latest"
   },
   "devDependencies": {

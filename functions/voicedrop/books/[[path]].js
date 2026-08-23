@@ -79,6 +79,11 @@ export async function onRequest({ request, env, params }) {
     return wantJSON ? indexJSON(env) : index(env);
   }
 
+  // 整本书打印视图（/books/<slug>/print）：封面+导读+全部章节拼一页、分页 CSS、
+  // 无导航件——worker 的 Browser Rendering 用它渲染 PDF（走 pages.dev 域名绕 1042）。
+  const pr = /^([^/]+)\/print$/.exec(rel);
+  if (pr) return printView(env, pr[1]);
+
   const fetchKey = (key) => (request.method === 'HEAD' ? env.FILES.head(key) : env.FILES.get(key));
   let obj = await fetchKey(PUBLISHER + rel);
   // 目录路径（/books/<slug> 或 /books/<slug>/，[[path]] 不保留尾斜杠）→ 补 index.html
@@ -100,6 +105,18 @@ export async function onRequest({ request, env, params }) {
     'Cache-Control': 'public, max-age=300',
     'Access-Control-Allow-Origin': '*',
   };
+
+  // 目录页（<slug>/index.html）注入「下载 PDF」链接——端点在 agent worker
+  // /agent/books/pdf/<slug>（没有就现生成，有了直接下载）。绝对地址：voicedrop.cn
+  // 的 EdgeOne 反代不认 /agent 路径。
+  const bi = /^([^/]+)\/index\.html$/.exec(rel);
+  if (bi && request.method === 'GET') {
+    let html = await obj.text();
+    const pdfLink = `<div style="text-align:center;margin:26px 0 40px"><a href="https://jianshuo.dev/agent/books/pdf/${encodeURIComponent(bi[1])}" style="font-size:13px;color:#A89E8E;text-decoration:none;border:1px solid rgba(51,48,42,.18);border-radius:20px;padding:8px 18px">⬇ 下载 PDF 版（首次点击需生成约一分钟）</a></div>`;
+    html = html.includes('</body>') ? html.replace('</body>', pdfLink + '</body>') : html + pdfLink;
+    delete headers['Content-Length'];
+    return new Response(html, { headers });
+  }
 
   // 章节页（<slug>/<非index/intro>.html）注入「听本章」播放器，
   // 音频端点见 functions/voicedrop/books/audiobook/[[path]].js。
@@ -228,6 +245,99 @@ function audioWidget(slug, stem) {
   };
 })();
 </script>`;
+}
+
+// ---------- 整本书打印视图（PDF 渲染源）----------
+// 结构：封面页（tint 底、书名/副题/署名）→ 导读（如有）→ 各章（每章起新页）。
+// 只取每章 <article> 正文（导航件/播放器不进 PDF）；<base> 指向 pages.dev，
+// 相对图片路径在 Browser Rendering 里也能加载（1042 规避）。
+async function printView(env, slug) {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return notFound();
+  let book = null;
+  try {
+    const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
+    if (o) book = JSON.parse(await o.text());
+  } catch {}
+
+  const grab = async (file) => {
+    const o = await env.FILES.get(`${PUBLISHER}${slug}/${file}`);
+    if (!o) return null;
+    const html = await o.text();
+    const m = /<article[^>]*>([\s\S]*?)<\/article>/i.exec(html);
+    return m ? m[1] : null;
+  };
+
+  // 章节清单：book.json 优先；老书（无 _src）扫 R2 里的 NN.html
+  let chapters = [];
+  let title = String(book?.title ?? '');
+  if (book?.chapters?.length) {
+    chapters = book.chapters
+      .filter((c) => c.status === 'done')
+      .map((c) => ({ no: c.no, title: c.title, file: `${String(c.no).padStart(2, '0')}.html` }));
+  } else {
+    const listed = await env.FILES.list({ prefix: `${PUBLISHER}${slug}/`, limit: 200 });
+    chapters = (listed.objects || [])
+      .map((o) => o.key.slice(`${PUBLISHER}${slug}/`.length))
+      .filter((f) => /^\d\d\.html$/.test(f))
+      .sort()
+      .map((f) => ({ no: parseInt(f, 10), title: '', file: f }));
+    if (!title) {
+      const idx = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
+      if (idx) title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(await idx.text())?.[1] || slug).split('·')[0].trim();
+    }
+  }
+  if (!chapters.length) return notFound();
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const tint = book?.tint || '#f2efe6';
+  const dark = book?.dark || '#2f6d7a';
+  const intro = await grab('intro.html');
+
+  const parts = [];
+  for (const c of chapters) {
+    const body = await grab(c.file);
+    if (body == null) continue;
+    parts.push(`<section class="chapter">${c.title ? `<h1>${esc(c.title)}</h1>` : ''}${body}</section>`);
+  }
+
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<base href="https://jianshuo-dev.pages.dev/voicedrop/books/${encodeURIComponent(slug)}/">
+<title>${esc(title || slug)}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #2A2521; background: #fff;
+    font: 16px/1.95 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+  .cover { page-break-after: always; text-align: center; padding: 220px 40px 0;
+    background: ${esc(tint)}; min-height: 960px; }
+  .cover h1 { font-size: 40px; line-height: 1.4; color: ${esc(dark)}; margin: 0 0 18px; }
+  .cover .sub { font-size: 18px; color: #5a544a; margin: 0 0 40px; }
+  .cover .author { font-size: 15px; color: #7a7264; }
+  .cover .tag { font-size: 12px; color: #A89E8E; margin-top: 100px; }
+  .chapter { page-break-before: always; }
+  .chapter:first-of-type { page-break-before: auto; }
+  h1 { font-size: 26px; line-height: 1.5; color: ${esc(dark)}; }
+  h2 { font-size: 20px; } h3 { font-size: 17px; }
+  h1, h2, h3 { page-break-after: avoid; }
+  img { max-width: 100%; height: auto; border-radius: 8px; page-break-inside: avoid; }
+  blockquote { margin: 1em 0; padding: 2px 18px; border-left: 3px solid ${esc(dark)};
+    color: #5a544a; page-break-inside: avoid; }
+  .plain { background: #f7f4ec; border-radius: 10px; padding: 12px 16px; page-break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; } td, th { border: 1px solid #ddd6c8; padding: 6px 10px; }
+  pre { background: #f7f4ec; padding: 12px; border-radius: 8px; overflow-x: hidden; white-space: pre-wrap; }
+</style></head><body>
+<div class="cover">
+  <h1>${esc(title || slug)}</h1>
+  ${book?.subtitle ? `<p class="sub">${esc(book.subtitle)}</p>` : ''}
+  ${book?.author ? `<p class="author">${esc(book.author)}</p>` : ''}
+  ${book?.tagline || book?.meta ? `<p class="tag">${esc(book.tagline || book.meta)}</p>` : ''}
+</div>
+${intro ? `<section class="chapter"><h1>导读</h1>${intro}</section>` : ''}
+${parts.join('\n')}
+</body></html>`;
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
 }
 
 function notFound() {

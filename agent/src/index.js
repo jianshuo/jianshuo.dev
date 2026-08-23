@@ -35,6 +35,7 @@ import { handleIapRoute } from "./iap.js";
 import { handleReferralRoutes, publishMintRate } from "./referral.js";
 import { handlePromptShareRoutes, shareStates } from "./prompt-share.js";
 import { handlePromptMarket } from "./prompt-market.js";
+import { handleBookPdf } from "./book-pdf.js";
 import { writeStyleDoc } from "../../functions/lib/style-store.js";
 import { distillStyle, buildStyleIntroArticle, STYLE_INTRO_STEM, corpusChars, MIN_CORPUS_CHARS } from "./style-extract.js";
 import { silentM4aBytes } from "../../functions/lib/silent-m4a.js";
@@ -1639,6 +1640,9 @@ export default {
     { const r = await handlePromptMarket(url, request, env, ctx); if (r) return r; }
 
     { const r = await handleUsageRoute(url, request, env); if (r) return r; }
+
+    // 整本书下载 PDF（现生成/缓存直出）—— src/book-pdf.js
+    { const r = await handleBookPdf(url, request, env); if (r) return r; }
 
     // 苹果订阅（claim / App Store 服务器通知 / 状态）—— src/iap.js
     { const r = await handleIapRoute(url, request, env); if (r) return r; }

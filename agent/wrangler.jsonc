@@ -20,6 +20,8 @@
   "r2_buckets": [
     { "binding": "FILES", "bucket_name": "jianshuo-dev-files" }
   ],
+  // 整本书下载 PDF：Browser Rendering 渲染 /print 视图（src/book-pdf.js）
+  "browser": { "binding": "BROWSER" },
 
   "vars": { "POSTHOG_API_KEY": "phc_AVV3HDTbbLqKXzZeEWw6Y6WYAqiKTz9h6Hc6guqYVMPX" },
   "d1_databases": [
