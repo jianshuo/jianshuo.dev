@@ -147,6 +147,11 @@ function audioWidget(slug, stem) {
   }
 
   // 边合成边播：fetch 流 → SourceBuffer 逐块 append，结束 endOfStream 定格时长。
+  // 背压（2026-08-24 修「首播尾部错乱」）：合成远快于播放，整章一股脑 append 会把
+  // SourceBuffer 配额撑爆（Chromium 实测 ~7.7MB、iOS 更小），appendBuffer 抛
+  // QuotaExceededError——旧代码把已出队的块静默扔掉，尾部就缺块跳接。现在：
+  // ①失败不出队（append 成功才 shift）；②超前播放点 60 秒就停喂，数据留在 JS
+  // 内存队列（无配额），靠 timeupdate 续喂；③配额仍满时清掉已播段再等重试。
   function playStreaming(MS){
     var a=panel('首次播放：边合成边播（此次不能拖动，下次即可）');
     var ms=new MS();
@@ -154,13 +159,27 @@ function audioWidget(slug, stem) {
     a.src=URL.createObjectURL(ms);
     ms.addEventListener('sourceopen',function(){
       var sb=ms.addSourceBuffer('audio/mpeg');
-      var queue=[],done=false,busy=false;
+      var queue=[],done=false,busy=false,AHEAD=60;
+      function ahead(){
+        try{if(sb.buffered.length) return sb.buffered.end(sb.buffered.length-1)-a.currentTime;}catch(e){}
+        return 0;
+      }
       function pump(){
-        if(busy) return;
-        if(queue.length){busy=true;try{sb.appendBuffer(queue.shift());}catch(e){busy=false;}}
+        if(busy||sb.updating) return;
+        if(queue.length){
+          if(ahead()>AHEAD) return;                       // 缓冲够超前了，等 timeupdate 再喂
+          busy=true;
+          try{sb.appendBuffer(queue[0]);queue.shift();}   // 成功才出队，失败块不丢
+          catch(e){
+            busy=false;
+            // 配额满：清掉已播过的段腾地方，updateend 后自动重试
+            try{if(a.currentTime>30){busy=true;sb.remove(0,a.currentTime-15);}}catch(e2){}
+          }
+        }
         else if(done&&ms.readyState==='open'){try{ms.endOfStream();}catch(e){}}
       }
       sb.addEventListener('updateend',function(){busy=false;pump();});
+      a.addEventListener('timeupdate',pump);
       fetch(src).then(function(r){
         if(!r.ok) throw 0;
         var rd=r.body.getReader();
