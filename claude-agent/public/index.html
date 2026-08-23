@@ -147,6 +147,9 @@
       const sendBtn = $("#send"), meta = $("#meta"), sessionsEl = $("#sessions");
       let currentId = localStorage.getItem("agentSession") || null;
       let busy = false;
+      let sessions = [];            // 最近一次 /api/sessions 结果（判断 engine 用）
+      let pollTimer = null;         // codex 会话的 tail -f 轮询
+      let lastSnapshot = "";
 
       const scroll = () => (main.scrollTop = main.scrollHeight);
       const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -206,6 +209,7 @@
       async function loadSessions() {
         let list = [];
         try { list = await (await fetch("/api/sessions")).json(); } catch {}
+        sessions = list;
         sessionsEl.innerHTML = "";
         if (!list.length) { sessionsEl.innerHTML = '<div class="sb-empty">还没有对话</div>'; return; }
         for (const s of list) {
@@ -247,12 +251,39 @@
         meta.textContent = "";
         thread.innerHTML = '<div class="sb-empty">载入中…</div>';
         try {
-          const msgs = await (await fetch("/api/sessions/" + id)).json();
+          const text = await (await fetch("/api/sessions/" + id)).text();
           if (currentId !== id) return; // 载入期间切走了
-          renderHistory(msgs);
+          lastSnapshot = text;
+          renderHistory(JSON.parse(text));
         } catch { thread.innerHTML = '<div class="err">载入失败</div>'; }
         loadSessions();
         tryAttach(id);
+        // codex（写书）会话是磁盘快照，attach 不到直播——轮询跟进，像 tail -f：
+        // 书还在写时页面自动长出新内容，读者贴着底部就一直跟到底。
+        const s = sessions.find((x) => x.id === id);
+        if (s && s.engine === "codex") startPoll(id);
+      }
+
+      function startPoll(id) {
+        stopPoll();
+        pollTimer = setInterval(async () => {
+          if (currentId !== id || document.hidden) return;
+          try {
+            const res = await fetch("/api/sessions/" + id);
+            if (!res.ok) return;
+            const text = await res.text();
+            if (currentId !== id || text === lastSnapshot) return;
+            lastSnapshot = text;
+            const nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 200;
+            renderHistory(JSON.parse(text));
+            if (nearBottom) main.scrollTop = main.scrollHeight;
+            loadSessions();
+          } catch {}
+        }, 12000);
+      }
+      function stopPoll() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        lastSnapshot = "";
       }
 
       function newChat() {
@@ -283,6 +314,7 @@
 
       function detach() {
         if (liveCtl) { liveCtl.abort(); liveCtl = null; }
+        stopPoll();
         setBusy(false);
       }
 

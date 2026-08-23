@@ -251,7 +251,14 @@ async function summarizeCodex(path: string) {
 // 回放：翻译成 getSessionMessages 一样的形状。文字走 event_msg（user_message/
 // agent_message），工具卡片走 response_item（function_call/custom_tool_call/
 // web_search_call），输出按 call_id 回填；reasoning 是加密的，跳过。
+// 回看结果缓存（只留一份）：前端对「写书中」的 codex 会话每 12s 轮询跟进（tail -f），
+// 文件没变时只 stat 不重扫——百 MB 级 rollout 重扫一次要数秒 CPU，别每次白花。
+const codexMsgsCache = new Map<string, { mtimeMs: number; size: number; msgs: any[] }>();
+
 async function getCodexSessionMessages(path: string) {
+  const st = await stat(path);
+  const hit = codexMsgsCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.msgs;
   const msgs: any[] = [];
   let cur: any = null;
   const toolIndex: Record<string, any> = {};
@@ -316,6 +323,8 @@ async function getCodexSessionMessages(path: string) {
       }
     }
   }
+  codexMsgsCache.clear(); // 只留最新一份，防多会话轮流看时内存涨
+  codexMsgsCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, msgs });
   return msgs;
 }
 
