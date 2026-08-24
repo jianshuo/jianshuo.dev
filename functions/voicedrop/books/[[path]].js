@@ -142,7 +142,6 @@ export async function onRequest({ request, env, params }) {
 // 定格时长，播放位置不动。不支持 MSE 的浏览器（老 iOS Safari）兜底为
 // 「先生成显示进度、生成完直接播 R2 缓存」，同样没有跳回问题。
 function audioWidget(slug, stem) {
-  const src = `../audiobook/${encodeURIComponent(slug)}/${encodeURIComponent(stem)}`;
   return `
 <div id="abw" style="position:fixed;right:18px;bottom:18px;z-index:99">
   <button id="abbtn" style="display:flex;align-items:center;gap:8px;border:1px solid rgba(51,48,42,.18);
@@ -151,17 +150,66 @@ function audioWidget(slug, stem) {
 </div>
 <script>
 (function(){
-  var btn=document.getElementById('abbtn'),box=document.getElementById('abw'),src=${JSON.stringify(src)};
+  var btn=document.getElementById('abbtn'),box=document.getElementById('abw');
+  var slug=${JSON.stringify(slug)},stem=${JSON.stringify(stem)};
+  var srcOf=function(s){return '../audiobook/'+encodeURIComponent(slug)+'/'+encodeURIComponent(s);};
+  var a=null,tipEl=null,chapters=null;
+  function setTip(t){if(tipEl)tipEl.textContent=t;}
 
   function panel(tipText){
     box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
       'padding:10px 14px;box-shadow:0 4px 14px rgba(60,45,30,.18);max-width:78vw">'+
       '<div id="abtip" style="font-size:12px;color:#7a7264;margin-bottom:6px"></div>'+
       '<audio id="abaudio" controls style="width:300px;max-width:72vw;display:block"></audio></div>';
-    document.getElementById('abtip').textContent=tipText;
-    var a=document.getElementById('abaudio');
-    a.onerror=function(){document.getElementById('abtip').textContent='加载失败，刷新重试';};
+    tipEl=document.getElementById('abtip');tipEl.textContent=tipText;
+    a=document.getElementById('abaudio');
+    a.onerror=function(){setTip('加载失败，刷新重试');};
+    // 连播（2026-08-24）：一章 ended 自动接下一章。复用同一个 <audio>——首次点击
+    // 已解锁元素，之后换 src + play() 不需要新手势，iOS 锁屏也能一路听到底。
+    a.addEventListener('ended',chainNext);
     return a;
+  }
+
+  // 章节清单（done 升序，_src/book.json）；老书没有 _src → 退化为「编号 +1 试探」。
+  function loadChapters(){
+    if(chapters)return Promise.resolve(chapters);
+    return fetch('../'+encodeURIComponent(slug)+'/_src/book.json').then(function(r){return r.ok?r.json():null;})
+      .then(function(b){
+        chapters=((b&&b.chapters)||[]).filter(function(c){return c.status==='done';})
+          .map(function(c){var n=String(c.no);if(n.length<2)n='0'+n;return {stem:n,title:c.title||('第 '+c.no+' 章')};});
+        return chapters;
+      }).catch(function(){chapters=[];return chapters;});
+  }
+
+  function chainNext(){
+    loadChapters().then(function(chs){
+      var next=null;
+      if(chs.length){
+        for(var i=0;i<chs.length;i++) if(chs[i].stem===stem){ if(i+1<chs.length) next=chs[i+1]; break; }
+      } else {
+        var n=parseInt(stem,10);
+        if(!isNaN(n)){var s=String(n+1);if(s.length<2)s='0'+s;next={stem:s,title:'第 '+(n+1)+' 章'};}
+      }
+      if(!next){setTip('全书播完 🎉');return;}
+      stem=next.stem;
+      playCurrent(next.title);
+    });
+  }
+
+  // 播当前 stem：已缓存直接换 src；未缓存 MSE 边合成边播 / 无 MSE 先生成后播。
+  function playCurrent(title){
+    var label=title?('▶ '+title+' · '):'';
+    fetch(srcOf(stem),{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return false;})
+    .then(function(cached){
+      if(cached){
+        setTip(label+'已生成，可拖动进度');
+        a.src=srcOf(stem);a.play().catch(function(){});
+        return;
+      }
+      var MS=window.ManagedMediaSource||window.MediaSource;
+      if(MS&&MS.isTypeSupported&&MS.isTypeSupported('audio/mpeg')) playStreaming(MS,label);
+      else generateThenPlay(label);
+    });
   }
 
   // 边合成边播：fetch 流 → SourceBuffer 逐块 append，结束 endOfStream 定格时长。
@@ -170,8 +218,8 @@ function audioWidget(slug, stem) {
   // QuotaExceededError——旧代码把已出队的块静默扔掉，尾部就缺块跳接。现在：
   // ①失败不出队（append 成功才 shift）；②超前播放点 60 秒就停喂，数据留在 JS
   // 内存队列（无配额），靠 timeupdate 续喂；③配额仍满时清掉已播段再等重试。
-  function playStreaming(MS){
-    var a=panel('首次播放：边合成边播（此次不能拖动，下次即可）');
+  function playStreaming(MS,label){
+    setTip((label||'')+'首次播放：边合成边播（此次不能拖动，下次即可）');
     var ms=new MS();
     if('disableRemotePlayback' in a) a.disableRemotePlayback=true;  // ManagedMediaSource 要求
     a.src=URL.createObjectURL(ms);
@@ -197,8 +245,8 @@ function audioWidget(slug, stem) {
         else if(done&&ms.readyState==='open'){try{ms.endOfStream();}catch(e){}}
       }
       sb.addEventListener('updateend',function(){busy=false;pump();});
-      a.addEventListener('timeupdate',pump);
-      fetch(src).then(function(r){
+      a.ontimeupdate=pump;   // 属性式：连播多章不累积旧监听器
+      fetch(srcOf(stem)).then(function(r){
         if(!r.ok) throw 0;
         var rd=r.body.getReader();
         (function step(){rd.read().then(function(x){
@@ -211,38 +259,29 @@ function audioWidget(slug, stem) {
   }
 
   // 无 MSE 兜底：先拉完整个流（显示生成进度），生成完直接播 R2 缓存版。
-  function generateThenPlay(){
-    var a=panel('正在生成本章音频…');
-    var tip=document.getElementById('abtip');
-    fetch(src).then(function(r){
+  function generateThenPlay(label){
+    setTip((label||'')+'正在生成本章音频…');
+    fetch(srcOf(stem)).then(function(r){
       if(!r.ok) throw 0;
       var rd=r.body.getReader(),got=0;
       function step(){return rd.read().then(function(x){
         if(x.done) return;
         got+=x.value.length;
-        tip.textContent='正在生成 '+Math.round(got/1024)+' KB…';
+        setTip((label||'')+'正在生成 '+Math.round(got/1024)+' KB…');
         return step();
       });}
       return step();
     }).then(function(){
-      tip.textContent='已生成，可拖动进度';
-      a.src=src;a.play().catch(function(){});
-    }).catch(function(){tip.textContent='生成失败，刷新重试';});
+      setTip((label||'')+'已生成，可拖动进度');
+      a.src=srcOf(stem);a.play().catch(function(){});
+    }).catch(function(){setTip('生成失败，刷新重试');});
   }
 
   btn.onclick=function(){
     btn.disabled=true;btn.textContent='准备中…';
-    fetch(src,{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return false;})
-    .then(function(cached){
-      if(cached){
-        var a=panel('已生成，可拖动进度');
-        a.src=src;a.play().catch(function(){});
-        return;
-      }
-      var MS=window.ManagedMediaSource||window.MediaSource;
-      if(MS&&MS.isTypeSupported&&MS.isTypeSupported('audio/mpeg')) playStreaming(MS);
-      else generateThenPlay();
-    });
+    panel('准备中…');
+    loadChapters();   // 预取章节清单，连播时零等待
+    playCurrent(null);
   };
 })();
 </script>`;
