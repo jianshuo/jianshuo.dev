@@ -1,7 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import worker from "../src/index.js";
 import { fakeD1 } from "./fakes.js";
 import { hmacSign } from "../src/auth.js";
+import { __resetStoreCaches } from "../src/store.js";
+
+beforeEach(() => __resetStoreCaches());   // 进程内缓存别把上个用例的数据带过来
 
 const SECRET = "test-secret";
 function b64url(str) {

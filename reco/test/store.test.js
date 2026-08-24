@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { recordEngagement, countsFor, likedBy } from "../src/store.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import { recordEngagement, countsFor, likedBy, __resetStoreCaches } from "../src/store.js";
 import { fakeD1 } from "./fakes.js";
+
+beforeEach(() => __resetStoreCaches());   // 进程内缓存别把上个用例的数据带过来
 
 describe("recordEngagement", () => {
   it("view 重复只计一次(幂等)", async () => {

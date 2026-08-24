@@ -32,11 +32,12 @@ export function fakeD1(seed = [], posts = []) {
           return { results };
         }
         if (/GROUP BY/.test(sql)) {
-          // counts: WHERE share_id IN (...) GROUP BY share_id, action
+          // counts：全量聚合（2026-08-25 缓存版，无 WHERE）或旧式 share_id IN (...)
+          const hasIn = /WHERE share_id IN/.test(sql);
           const ids = new Set(args);
           const agg = new Map();
           for (const r of rows) {
-            if (!ids.has(r.share_id)) continue;
+            if (hasIn && !ids.has(r.share_id)) continue;
             const k = r.share_id + " " + r.action;
             agg.set(k, (agg.get(k) || 0) + 1);
           }
