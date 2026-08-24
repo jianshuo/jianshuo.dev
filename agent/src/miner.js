@@ -17,7 +17,7 @@ import { writeLlmLog } from "./llmlog.js";
 import { callAnthropic } from "./anthropic.js";
 import { gateDecision, claudeCostUY, asrCostUY } from "./usage.js";
 import { ensureAccount, debit, asrCharged } from "./usage_store.js";
-import { sendPush } from "./push.js";
+import { sendPush, alertAdminThrottled } from "./push.js";
 import { asrCorpus } from "./asr-hotwords.js";
 import { sniffImageType } from "./image-type.js";
 import { hmacSign } from "../../functions/lib/auth.js";
@@ -279,7 +279,20 @@ export class AsrError extends Error {
 // non-in-progress (55xxxxxx, or any unknown code) is treated as retryable — we bias
 // toward never losing a real recording; the ASR_MAX_AGE_MS guard stops a wedged task.
 function isDeterministicAsrCode(code) {
+  // 45000030 = "requested resource not granted"（火山账号欠费/资源授权失效）——
+  // 环境性故障，跟这条音频毫无关系，绝不能标 empty（2026-08-24 曾把 9 条真实
+  // 录音误标为无语音）。按 transient 处理：留 sidecar 下趟重试，等续费后自愈。
+  if (String(code) === "45000030") return false;
   return /^45\d{6}$/.test(String(code));
+}
+
+// 账号级 ASR 故障 → 给管理员发节流告警（2 小时一条），别让转写静默瘫一天。
+async function alertAsrResourceDown(env, code) {
+  await alertAdminThrottled(env, "asr-resource-down", 2 * 60 * 60 * 1000, {
+    title: "火山 ASR 资源授权失效",
+    body: `转写全线失败（code ${code}，requested resource not granted）——去火山控制台查欠费/开通状态`,
+    link: "voicedrop://settings",
+  });
 }
 
 async function asrSubmit(audioUrl, env) {
@@ -306,6 +319,7 @@ async function asrSubmit(audioUrl, env) {
     // Deterministic client error → give up (mark empty). Transient server error /
     // unknown / HTTP failure → throw a plain Error so the caller retries next pass.
     if (isDeterministicAsrCode(code)) throw new AsrError(code);
+    if (String(code) === "45000030") await alertAsrResourceDown(env, code);
     throw new Error(`ASR submit failed (transient) ${code || `http-${resp.status}`}`);
   }
   return { taskId, logId: resp.headers.get("X-Tt-Logid") || "" };
@@ -338,6 +352,8 @@ async function asrPollBounded({ taskId, logId }, env, maxPolls) {
     if (code === "20000000" || res.audio_info?.duration || res.result?.text?.trim()) return { status: "done", data: res };
     // Deterministic client error (45xxxxxx) → give up, caller marks empty.
     if (isDeterministicAsrCode(code)) throw new AsrError(code);
+    // 账号级授权失效：告警 + 直接留到下趟（继续 poll 没有意义）。
+    if (String(code) === "45000030") { await alertAsrResourceDown(env, code); return { status: "pending" }; }
     // Otherwise — in-progress (2000000x), transient server error (55xxxxxx), or any
     // unknown code — keep polling and resume next pass; ASR_MAX_AGE_MS bounds a wedged task.
     if (i < maxPolls - 1) await new Promise(r => setTimeout(r, ASR_POLL_INTERVAL_MS));
