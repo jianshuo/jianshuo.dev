@@ -56,3 +56,30 @@ describe("push/book-done", () => {
     expect(sendPush.mock.calls[0][2].body).toContain("你的书已经出炉");
   });
 });
+
+describe("push/admin", () => {
+  const callAdmin = (env, { token, body } = {}) =>
+    handleUsageRoute(new URL("https://jianshuo.dev/agent/push/admin"),
+      new Request("https://x/", { method: "POST", headers: token ? { Authorization: "Bearer " + token } : {},
+        ...(body ? { body: JSON.stringify(body) } : {}) }), env);
+
+  it("非管理员 → 403 不推", async () => {
+    sendPush.mockClear();
+    const r = await callAdmin({ SESSION_SECRET: "", ADMIN_SCOPE: "users/admin/" },
+      { token: "anon_somebody_token_abcdefghijklm", body: { title: "x" } });
+    expect(r.status).toBe(403);
+    expect(sendPush).not.toHaveBeenCalled();
+  });
+
+  it("管理员本人 → 200 推送", async () => {
+    sendPush.mockClear();
+    const { anonScopeFromToken } = await import("../../functions/lib/auth.js");
+    const tok = "anon_admin_token_abcdefghijklmnop";
+    const scope = await anonScopeFromToken(tok);
+    const r = await callAdmin({ SESSION_SECRET: "", ADMIN_SCOPE: scope },
+      { token: tok, body: { title: "警报", body: "内容" } });
+    expect(r.status).toBe(200);
+    expect(sendPush).toHaveBeenCalledTimes(1);
+    expect(sendPush.mock.calls[0][2].title).toBe("警报");
+  });
+});

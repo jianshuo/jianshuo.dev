@@ -838,8 +838,8 @@ const normSub = (s) => {
 };
 
 export async function handleUsageRoute(url, request, env) {
-  // /agent/push/book-done 也归这里管：和 book-charge 同一套 bearer→scope 鉴权。
-  if (!url.pathname.startsWith("/agent/usage/") && url.pathname !== "/agent/push/book-done") return null;
+  // /agent/push/* 也归这里管：和 book-charge 同一套 bearer→scope 鉴权。
+  if (!url.pathname.startsWith("/agent/usage/") && !url.pathname.startsWith("/agent/push/")) return null;
   try {
   const tok = bearerToken(request);
   const isAdmin = env.FILES_TOKEN && tok === env.FILES_TOKEN;
@@ -898,6 +898,20 @@ export async function handleUsageRoute(url, request, env) {
       body: title ? `《${title}》已经出炉，点开看看` : "你的书已经出炉，点开看看",
       link: `https://voicedrop.cn/books/${slug}/`,
     });
+    return J({ ok: true });
+  }
+
+  // 系统级故障给管理员的即时推送（2026-08-24，用户要求「这样的问题立刻 APN 通知我」）。
+  // 鉴权：请求者 scope 必须就是 ADMIN_SCOPE 本人（lab 用发布账号 token 调，无需新密钥）。
+  if (url.pathname === "/agent/push/admin" && request.method === "POST") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    if (!env.ADMIN_SCOPE || scope !== env.ADMIN_SCOPE) return J({ error: "not-admin" }, 403);
+    const b = await request.json().catch(() => ({}));
+    const title = String(b.title || "").slice(0, 60);
+    const body = String(b.body || "").slice(0, 200);
+    if (!title) return J({ error: "empty" }, 400);
+    await sendPush(env, env.ADMIN_SCOPE, { title, body, link: String(b.link || "voicedrop://settings") });
     return J({ ok: true });
   }
 

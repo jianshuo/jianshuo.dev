@@ -429,6 +429,7 @@ async function getSessionMessages(id: string) {
 //   ssh root@VPS 'sudo -u claude-agent HOME=/opt/claude-agent codex login --device-auth'
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
 const BOOK_PUSH_URL = process.env.BOOK_PUSH_URL ?? "https://jianshuo.dev/agent/push/book-done";
+const ADMIN_PUSH_URL = process.env.ADMIN_PUSH_URL ?? "https://jianshuo.dev/agent/push/admin";
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
 
@@ -757,6 +758,23 @@ async function chargeBook(
 // 书写好了给主人发 APNs（2026-08-23）：worker /agent/push/book-done 用同一枚用户
 // bearer 认人——lab 不存推送凭据，token 是谁的就推给谁。尽力而为，失败只留日志，
 // 绝不影响主流程。
+// 系统级故障/任务失败 → 立刻推管理员（2026-08-24 用户要求）。用发布账号 token
+// 认自己人（worker 端校验 scope==ADMIN_SCOPE），无需新密钥。尽力而为不抛错。
+async function notifyAdmin(title: string, body: string) {
+  try {
+    const tok = await publisherToken();
+    if (!tok) return;
+    const r = await fetch(ADMIN_PUSH_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body }),
+    });
+    console.log(`[admin-push] ${title} status=${r.status}`);
+  } catch (e) {
+    console.error("[admin-push] failed", e);
+  }
+}
+
 async function notifyBookDone(auth: string | undefined, slug: string, title: string) {
   if (!auth?.startsWith("Bearer ")) return;
   try {
@@ -908,6 +926,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       ok = out.ok;
       reply = out.reply;
       console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
+      if (!ok) await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
     } catch (e) {
       console.error("[book] job failed", e);
     }
@@ -979,6 +998,7 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
         ...(out.ok ? {} : { error: out.error }),
       });
       console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
+      if (!out.ok) await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
     } catch (e: any) {
       console.error("[revise] job failed", e);
       await patchThreadEntry(slug, entryTs, { status: "failed", error: String(e?.message ?? e) }).catch(() => {});
