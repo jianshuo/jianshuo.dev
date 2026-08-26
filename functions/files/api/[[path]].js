@@ -39,6 +39,7 @@ const isAsrSidecar = (key) => key.endsWith('.asr.json') || key.endsWith('.asrdon
 const WECHAT_COMPONENT_KEY = 'config/wechat-component.json';
 const WECHAT_AUTH_STATE_CONTEXT = 'wechat-auth-state:';
 const WECHAT_AUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const WECHAT_AUTH_PUBLIC_BASE = 'https://voicedrop.cn/files/api';
 
 async function createWechatAuthState(scope, secret) {
   if (!secret || !/^users\/[^/]+\/$/.test(scope)) return '';
@@ -849,8 +850,7 @@ async function handleRequest(context) {
     }
     const state = await createWechatAuthState(scope, env.SESSION_SECRET);
     if (!state) return json({ error: 'wechat_authorization_user_required' }, 400);
-    const base = (env.WECHAT_AUTH_BASE_URL || (url.origin + '/files/api')).replace(/\/$/, '');
-    return json({ scan_url: base + '/wechat/scan?state=' + encodeURIComponent(state) });
+    return json({ scan_url: WECHAT_AUTH_PUBLIC_BASE + '/wechat/scan?state=' + encodeURIComponent(state) });
   }
 
   // ── Delete account (Apple 5.1.1(v)) ──────────────────────────────────────

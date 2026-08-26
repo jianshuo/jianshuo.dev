@@ -519,6 +519,22 @@ describe("微信公众号第三方授权状态", () => {
     expect((await c.env.FILES.list({ prefix: "config/wechat-bind-sessions/" })).objects).toHaveLength(0);
   });
 
+  it("创建授权始终返回 voicedrop.cn 扫描入口，不受请求或回调域名影响", async () => {
+    const c = await userCtx("POST", "wechat/authorization");
+    c.env.WECHAT_COMPONENT_APP_ID = "component-appid";
+    c.env.WECHAT_AUTH_BASE_URL = "https://callback.example/files/api";
+    c.request = new Request("https://jianshuo.dev/files/api/wechat/authorization", {
+      method: "POST",
+      headers: { Authorization: c.request.headers.get("Authorization") },
+    });
+
+    const response = await onRequest(c);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.scan_url).toMatch(/^https:\/\/voicedrop\.cn\/files\/api\/wechat\/scan\?state=/);
+  });
+
   it("扫码入口校验签名后申请 pre_auth_code，并用前端 JS 打开微信授权页", async () => {
     const c = await userCtx("POST", "wechat/authorization", {
       "config/wechat-component.json": JSON.stringify({
