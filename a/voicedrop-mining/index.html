@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="VoiceDrop 挖矿 Token 激励经济设计 — 用区块链挖矿叙事推广 VoiceDrop，说话产出内容，内容产出算力 token。">
+<title>VoiceDrop 挖矿 · Token 激励经济设计</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fbf3e9;--ink:#4a3f35;--soft:#9b8b78;--card:#fffdf9;
+  --accent:#ef7d54;--accent2:#f6a560;--green:#2e7d32;--greenl:#e8f5e8;
+  --blue:#1a6bc4;--bluel:#e3effd;--red:#c0392b;--redl:#fde8e6;
+  --yellow:#a06e00;--yellowl:#fff8e1;
+}
+body{background:radial-gradient(ellipse 120% 80% at 50% -10%,#fdf0e0,var(--bg));color:var(--ink);font-family:'Nunito',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+
+.wrap{max-width:860px;margin:0 auto;padding:44px 28px 100px}
+
+/* ── header ── */
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:52px}
+.brand{display:flex;align-items:center;gap:12px;font-family:'Quicksand',sans-serif;font-weight:700;font-size:1.3rem;color:inherit;text-decoration:none}
+.brand .blob{width:34px;height:34px;border-radius:42% 58% 60% 40%/45% 45% 55% 55%;background:linear-gradient(135deg,#f6a560,#ef7d54);box-shadow:0 6px 16px rgba(239,125,84,.4)}
+header nav a{font-weight:700;font-size:.84rem;color:var(--soft);text-decoration:none;padding:8px 16px;border-radius:999px;transition:all .2s}
+header nav a:hover{background:var(--card);color:var(--ink);box-shadow:0 4px 12px rgba(74,63,53,.08)}
+
+/* ── hero ── */
+.hero{margin-bottom:48px}
+.status-row{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border-radius:999px;padding:6px 14px;font-family:'Quicksand',sans-serif;font-weight:600;font-size:.78rem;color:var(--accent);box-shadow:0 4px 12px rgba(74,63,53,.07)}
+.pill.draft{color:#a06e00;background:#fff8e1}
+.pill.date{color:var(--soft);background:transparent;border:1.5px solid #e8dfcf;box-shadow:none}
+h1{font-family:'Quicksand',sans-serif;font-weight:700;font-size:clamp(1.8rem,5vw,2.8rem);line-height:1.15;letter-spacing:-.02em;margin-bottom:16px}
+h1 span{color:var(--accent)}
+.tagline{font-size:1.05rem;color:#7d6f5f;font-weight:600;line-height:1.6;max-width:700px;background:var(--card);border-left:4px solid var(--accent2);border-radius:0 12px 12px 0;padding:14px 18px;box-shadow:0 4px 14px rgba(74,63,53,.06)}
+
+/* ── toc ── */
+.toc{background:var(--card);border-radius:20px;padding:24px 26px;margin-bottom:40px;box-shadow:0 8px 24px rgba(74,63,53,.06)}
+.toc h2{font-family:'Quicksand',sans-serif;font-size:.9rem;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
+.toc ol{padding-left:1.3em;display:grid;grid-template-columns:1fr 1fr;gap:4px 28px}
+@media(max-width:500px){.toc ol{grid-template-columns:1fr}}
+.toc li{font-size:.88rem;font-weight:600;color:var(--soft)}
+.toc li a{color:var(--ink);text-decoration:none;transition:color .15s}
+.toc li a:hover{color:var(--accent)}
+
+/* ── sections ── */
+.sec{margin-bottom:48px}
+.sec h2{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1.4rem;letter-spacing:-.01em;margin-bottom:18px;display:flex;align-items:center;gap:10px}
+.sec h2 .num{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#f6a560,#ef7d54);color:#fff;font-size:.85rem;flex-shrink:0}
+.sec h3{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1.05rem;margin:22px 0 10px;color:var(--ink)}
+p{font-size:.97rem;line-height:1.7;color:#5a4e43;font-weight:600;margin-bottom:12px}
+
+/* ── callout ── */
+.callout{border-radius:14px;padding:16px 20px;margin:18px 0;font-size:.95rem;line-height:1.65;font-weight:600}
+.callout.hero-quote{background:linear-gradient(135deg,#fff5ec,#fff9f5);border:1.5px solid #f6c499;color:#7a4020;font-size:1.05rem;font-style:italic;text-align:center}
+.callout.warning{background:var(--redl);border:1.5px solid #f5bdb8;color:var(--red)}
+.callout.info{background:var(--bluel);border:1.5px solid #b3d4f5;color:var(--blue)}
+.callout.success{background:var(--greenl);border:1.5px solid #b8dcb8;color:var(--green)}
+.callout.note{background:var(--yellowl);border:1.5px solid #f0d080;color:var(--yellow)}
+
+/* ── engine diagram ── */
+.engine{background:var(--card);border-radius:20px;padding:28px 24px;box-shadow:0 8px 24px rgba(74,63,53,.07);margin:20px 0;overflow-x:auto}
+.engine-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.enode{background:#fff5ec;border:1.5px solid #f6c499;border-radius:12px;padding:10px 16px;font-size:.88rem;font-weight:700;color:#7a4020;white-space:nowrap}
+.enode.action{background:linear-gradient(135deg,#fff0e0,#fde8d0);border-color:#ef7d54;color:#bf4c1e}
+.enode.reward{background:var(--greenl);border-color:#82c682;color:var(--green)}
+.enode.cost{background:var(--bluel);border-color:#82b8e8;color:var(--blue)}
+.earrow{font-size:1.1rem;color:var(--soft);flex-shrink:0}
+.engine-note{font-size:.83rem;color:var(--soft);font-weight:600;margin-top:8px;border-top:1px solid #f0e8dc;padding-top:12px}
+
+/* ── tables ── */
+.table-wrap{overflow-x:auto;margin:16px 0;border-radius:14px;box-shadow:0 4px 16px rgba(74,63,53,.06)}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden}
+th{background:linear-gradient(135deg,#f6a560,#ef7d54);color:#fff;font-family:'Quicksand',sans-serif;font-weight:700;font-size:.84rem;text-align:left;padding:12px 16px;letter-spacing:.02em}
+td{padding:11px 16px;font-size:.88rem;font-weight:600;border-bottom:1px solid #f5ede0;color:#4a3f35;vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:nth-child(even) td{background:rgba(246,165,96,.06)}
+td strong{color:#4a3f35}
+td code{background:#f5ede0;border-radius:5px;padding:2px 6px;font-size:.83rem;color:#7a4020}
+
+/* ── param cards ── */
+.param-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:16px 0}
+@media(max-width:520px){.param-grid{grid-template-columns:1fr}}
+.param-card{background:var(--card);border-radius:16px;padding:18px;box-shadow:0 4px 14px rgba(74,63,53,.06);border:1.5px solid #f0e4d0}
+.param-card .label{font-size:.76rem;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.param-card .value{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1.35rem;color:var(--accent);margin-bottom:4px}
+.param-card .desc{font-size:.82rem;font-weight:600;color:#7d6f5f;line-height:1.5}
+
+/* ── lever cards ── */
+.lever-list{display:flex;flex-direction:column;gap:14px;margin:16px 0}
+.lever{background:var(--card);border-radius:16px;padding:18px 20px;box-shadow:0 4px 14px rgba(74,63,53,.06);border-left:4px solid var(--accent2)}
+.lever .title{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1rem;margin-bottom:6px}
+.lever p{margin-bottom:0;font-size:.9rem}
+
+/* ── arch points ── */
+.arch-list{display:flex;flex-direction:column;gap:12px;margin:16px 0}
+.arch-item{background:var(--card);border-radius:14px;padding:16px 18px;box-shadow:0 4px 12px rgba(74,63,53,.05);display:flex;gap:14px}
+.arch-item .arch-icon{font-size:1.3rem;flex-shrink:0;margin-top:2px}
+.arch-item .arch-body .title{font-family:'Quicksand',sans-serif;font-weight:700;font-size:.95rem;margin-bottom:4px}
+.arch-item .arch-body p{margin-bottom:0;font-size:.87rem}
+
+/* ── open questions ── */
+.q-list{display:flex;flex-direction:column;gap:10px;margin:16px 0}
+.q-item{background:var(--card);border-radius:12px;padding:14px 18px;box-shadow:0 3px 10px rgba(74,63,53,.05);display:flex;gap:12px;align-items:flex-start}
+.q-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--yellowl);color:var(--yellow);font-family:'Quicksand',sans-serif;font-weight:700;font-size:.85rem;flex-shrink:0;margin-top:1px}
+.q-item p{margin-bottom:0;font-size:.9rem}
+
+/* ── yagni ── */
+.yagni-list{display:flex;flex-direction:column;gap:8px;margin:16px 0}
+.yagni-item{display:flex;align-items:center;gap:12px;background:var(--card);border-radius:12px;padding:12px 16px;font-size:.9rem;font-weight:600;color:#7d6f5f;box-shadow:0 3px 10px rgba(74,63,53,.04)}
+.yagni-item::before{content:"✕";display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--redl);color:var(--red);font-size:.75rem;font-weight:800;flex-shrink:0}
+
+/* ── divider ── */
+hr{border:none;border-top:1.5px solid #f0e4d4;margin:8px 0 16px}
+
+/* ── footer ── */
+footer{text-align:center;margin-top:60px;font-size:.78rem;color:var(--soft);font-weight:600}
+footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <a class="brand" href="/"><span class="blob"></span>jianshuo.dev</a>
+  <nav>
+    <a href="/a/">← /a</a>
+    <a href="/">首页</a>
+  </nav>
+</header>
+
+<!-- hero -->
+<div class="hero">
+  <div class="status-row">
+    <span class="pill">⛏️ VoiceDrop · 挖矿经济</span>
+    <span class="pill draft">📋 设计稿 · 待评审</span>
+    <span class="pill date">2026-06-26</span>
+  </div>
+  <h1>VoiceDrop 挖矿<br><span>Token 激励经济设计</span></h1>
+  <div class="tagline">
+    用"区块链挖矿"叙事推广 VoiceDrop —— 说话产出内容，内容产出算力 token，token 又拿去挖更多内容。奖励是真·Claude token（产品燃料），不可提现、只在 App 内消耗，对发起方真实成本铁顶可控。
+  </div>
+</div>
+
+<!-- toc -->
+<div class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">目标与定位</a></li>
+    <li><a href="#s2">核心叙事</a></li>
+    <li><a href="#s3">经济引擎（闭环）</a></li>
+    <li><a href="#s4">关键参数</a></li>
+    <li><a href="#s5">成本与安全</a></li>
+    <li><a href="#s6">增长杠杆</a></li>
+    <li><a href="#s7">反作弊机制</a></li>
+    <li><a href="#s8">架构接入点</a></li>
+    <li><a href="#s9">开放问题</a></li>
+    <li><a href="#s10">不做（YAGNI）</a></li>
+  </ol>
+</div>
+
+<!-- §1 -->
+<div class="sec" id="s1">
+  <h2><span class="num">1</span>目标与定位</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:30%">维度</th><th>内容</th></tr>
+      <tr><td><strong>核心行为</strong></td><td>录音 → 出文章（VoiceDrop 真价值），以及<strong>自传播</strong>（老带新）</td></tr>
+      <tr><td><strong>手段</strong></td><td>把"区块链 / 挖矿 / 早鸟稀释"叙事，套在一个<strong>自包含的内部 token 经济</strong>上</td></tr>
+      <tr><td><strong>不是什么</strong></td><td>不发现金、不可提现、不涉及链上、不转售 API 接入。"区块链"仅作营销叙事，底层就是一个数据库账本。</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- §2 -->
+<div class="sec" id="s2">
+  <h2><span class="num">2</span>核心叙事</h2>
+  <div class="callout hero-quote">
+    "VoiceDrop 挖矿：说话产出内容，内容产出算力。越早挖，越值钱。"
+  </div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>要素</th><th>说明</th></tr>
+      <tr><td><strong>奖励单位</strong></td><td><strong>Claude Code Token</strong>（真实算力 token），不是抽象积分、不是现金</td></tr>
+      <tr><td><strong>心理爽感</strong></td><td>天然大数字（动辄几千万 / 几亿）= 免费的感知价值</td></tr>
+      <tr><td><strong>唯一出路</strong></td><td>只能在 App 内"用掉"—— 去挖更多文章</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- §3 -->
+<div class="sec" id="s3">
+  <h2><span class="num">3</span>经济引擎（闭环）</h2>
+  <div class="engine">
+    <div class="engine-row">
+      <span class="enode action">🎙️ 说话</span>
+      <span class="earrow">→</span>
+      <span class="enode action">📝 出文章</span>
+      <span class="earrow">→</span>
+      <span class="enode">🌐 进 VD 社区</span>
+    </div>
+    <div class="engine-row" style="margin-left:32px">
+      <span class="earrow">↓</span>
+    </div>
+    <div class="engine-row">
+      <span class="enode">👆 别人点击你的文章</span>
+      <span class="earrow">→</span>
+      <span class="enode reward">读者 +1 金币 &amp; 作者 +1 金币</span>
+      <span style="font-size:.82rem;color:var(--soft);font-weight:700;align-self:center">← 双向铸币：双方都肯点 = 病毒</span>
+    </div>
+    <div class="engine-row" style="margin-left:32px">
+      <span class="earrow">↓</span>
+    </div>
+    <div class="engine-row">
+      <span class="enode cost">📊 每天固定大饼 P = 1000 元等值真实 token</span>
+    </div>
+    <div class="engine-row" style="margin-left:32px">
+      <span class="earrow">↓</span>
+    </div>
+    <div class="engine-row">
+      <span class="enode">全网铸出 T 枚金币</span>
+      <span class="earrow">→</span>
+      <span class="enode reward">每枚单价 = P / T</span>
+    </div>
+    <div class="engine-row" style="margin-left:32px">
+      <span class="earrow">↓ 夜里结算</span>
+    </div>
+    <div class="engine-row">
+      <span class="enode reward">到手 = 自己金币数 × (P/T) 的 token</span>
+    </div>
+    <div class="engine-row" style="margin-left:32px">
+      <span class="earrow">↓</span>
+    </div>
+    <div class="engine-row">
+      <span class="enode action">⛏️ token 拿去挖文章（= 花 token）</span>
+      <span class="earrow">─────────────────────────────────────→</span>
+      <span style="font-size:.82rem;color:var(--soft);font-weight:700;align-self:center">回到顶部</span>
+    </div>
+    <div class="engine-note">完整闭环：内容驱动铸币，铸币驱动挖矿，挖矿驱动更多内容。</div>
+  </div>
+
+  <h3>两套独立的反馈信号（刻意分离）</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>概念</th><th>作用</th><th>是否碰钱</th></tr>
+      <tr>
+        <td><strong>👍 点赞</strong></td>
+        <td>质量 / 推荐信号，驱动社区排序与曝光</td>
+        <td style="color:var(--red);font-weight:700">否（绝不碰钱）</td>
+      </tr>
+      <tr>
+        <td><strong>👆 点击（喂币）</strong></td>
+        <td>价值分配：一次点击给读者和作者各 +1 金币</td>
+        <td style="color:var(--green);font-weight:700">是（铸币 → 分大饼）</td>
+      </tr>
+    </table>
+  </div>
+  <div class="callout note">
+    <strong>为什么分离：</strong>点赞一旦能换钱就会被刷，就不再是诚实的质量信号（Goodhart 定律）。把钱走另一条管子，点赞回归纯净。<br><strong>明确决定：不对铸币做点赞质量加权。</strong>
+  </div>
+</div>
+
+<!-- §4 -->
+<div class="sec" id="s4">
+  <h2><span class="num">4</span>关键参数（本轮拍板）</h2>
+  <div class="param-grid">
+    <div class="param-card">
+      <div class="label">每日大饼真实成本上限</div>
+      <div class="value">1000 元 / 天</div>
+      <div class="desc">名义 token 数巨大，但真实 API 成本铁顶 1000 元 / 天</div>
+    </div>
+    <div class="param-card">
+      <div class="label">新人启动额度</div>
+      <div class="value">够挖 30 篇</div>
+      <div class="desc">注册即送，开局零摩擦，无需付费即可体验</div>
+    </div>
+    <div class="param-card">
+      <div class="label">金币 / Token 过期</div>
+      <div class="value">6 个月</div>
+      <div class="desc">use-or-lose，防无限沉淀，制造"快用掉"的活跃压力</div>
+    </div>
+    <div class="param-card">
+      <div class="label">点赞质量加权</div>
+      <div class="value" style="color:var(--red)">不做</div>
+      <div class="desc">保护点赞信号纯度，防 Goodhart 定律</div>
+    </div>
+  </div>
+</div>
+
+<!-- §5 -->
+<div class="sec" id="s5">
+  <h2><span class="num">5</span>成本与安全：空头支票模型（双端封顶）</h2>
+  <p>这是整个方案的金融内核。</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>维度</th><th>说明</th></tr>
+      <tr><td><strong>面值巨大且免费</strong></td><td>大饼是名义面值，写多大都不额外花钱</td></tr>
+      <tr><td><strong>真实成本极小</strong></td><td>只发生在 token 被真正烧去调 API 的那一刻——而那正是"内容产出"，本来就要花</td></tr>
+      <tr><td><strong>沉淀率（breakage）</strong></td><td>绝大多数金币永不兑现 → 真实成本 ≪ 名义面值</td></tr>
+    </table>
+  </div>
+
+  <div class="callout warning">
+    <strong>⚠️ 真实成本必须同时卡在两端，否则会被挤兑爆仓</strong>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>端</th><th>机制</th><th>为什么</th></tr>
+      <tr>
+        <td><strong>发行端（大饼）</strong></td>
+        <td>每天空投的 token 总量 = "1000 元能买到的真实 token 量"（约几千万 token，数字够唬人，真实成本精确 = 1000 元）</td>
+        <td>控制名义欠账的增长速度</td>
+      </tr>
+      <tr>
+        <td><strong>兑现端（挖矿）</strong></td>
+        <td>全网每天真实挖矿消耗也限速在 ≈1000 元额度内；超出则排队</td>
+        <td>token 6 个月才过期，沉淀余额越积越多，光卡发行挡不住大户集中挤兑</td>
+      </tr>
+    </table>
+  </div>
+  <div class="callout success">
+    <strong>结论：</strong>面值巨大（真·几千万 token / 天）、真实成本铁顶 1000 元 / 天、永不爆仓。<br>挖矿排队 = 契合"挖矿"叙事，不违和。
+  </div>
+
+  <h3>合规</h3>
+  <div class="callout info">
+    • 不可提现成人民币 → 规避资金盘 / 拉人头定性<br>
+    • 非现金奖励 → 规避 Apple 对"现金奖励绑定使用行为"的限制<br>
+    • 仍需法务 / 审核口径复核（见§9开放问题）
+  </div>
+</div>
+
+<!-- §6 -->
+<div class="sec" id="s6">
+  <h2><span class="num">6</span>增长杠杆</h2>
+  <div class="lever-list">
+    <div class="lever">
+      <div class="title">📉 早鸟稀释 → FOMO</div>
+      <p>人越多、互动越多 → T 越大 → 每枚金币越不值钱；冷清早期每枚贵得离谱 → "越早挖越值钱"的 FOMO 驱动早期传播。</p>
+    </div>
+    <div class="lever">
+      <div class="title">🔄 双向铸币 → 双边飞轮</div>
+      <p>读者 + 作者都得币 → 作者有动力拉人、读者有动力点击 → 内容侧与消费侧同时激活，双边飞轮自转。</p>
+    </div>
+    <div class="lever">
+      <div class="title">🤝 互助群 = 特性而非 bug</div>
+      <p>靠"每对用户每天只算一次"，多赚必须拉<strong>更多真人</strong>组成<strong>更多新对</strong>，且每人需有<strong>真实内容</strong>可点。<br>
+      "互助刷量" = 每日活跃 + 持续产内容 + 拉新。先例：宠咖秀。</p>
+    </div>
+  </div>
+</div>
+
+<!-- §7 -->
+<div class="sec" id="s7">
+  <h2><span class="num">7</span>反作弊（去重 + 账号真实性，不碰点赞）</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>机制</th><th>作用</th></tr>
+      <tr><td><strong>每对用户每天只算一次铸币</strong></td><td>把"作弊"逼成"拉真人 + 产内容"，与增长同向</td></tr>
+      <tr><td><strong>每人每日点击 / 铸币上限</strong></td><td>防单点爆量，保排行榜观感</td></tr>
+      <tr><td><strong>风险触发式 Apple 登录（step-up auth）</strong></td><td>一个真 Apple ID ≈ 一个真人，抬高海量假号成本</td></tr>
+    </table>
+  </div>
+
+  <h3>风险触发式分级登录（核心反 sybil 机制）</h3>
+  <div class="callout info">
+    <strong>原则：</strong>不在注册时设闸（匿名 <code>anon_*</code> 零摩擦进来，可录音、可点击、可赚账面金币），只在以下时刻才弹一次 Apple ID 登录确认——把摩擦精确加在刷子身上，正常人几乎永远碰不到：
+  </div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>触发时刻</th><th>原因</th></tr>
+      <tr><td><strong>匿名账号要用赚来的 token 真去挖矿兑现</strong></td><td>在"价值落袋"那一刻设闸，而非参与那一刻</td></tr>
+      <tr><td><strong>互点模式异常</strong></td><td>小圈子高频对敲、铸币速度异常、新账号集中互点</td></tr>
+      <tr><td><strong>要进排行榜 / 拿大额奖励</strong></td><td>高价值操作才需验证身份</td></tr>
+    </table>
+  </div>
+  <div class="callout success">
+    VoiceDrop 现有 anon + Apple Sign-in 双轨，本机制 = "匿名→Apple 的风险触发升级"，基建现成、改动小。<br><br>
+    <strong>真人互助群：敞开欢迎。</strong><br>
+    单人海量假号：靠"价值落袋时要 Apple 登录"压制；即便漏几个，刷的也是"死支票"（不兑换 = 不花钱），故仅影响公平观感，不动钱包 → 防御紧迫度低。
+  </div>
+</div>
+
+<!-- §8 -->
+<div class="sec" id="s8">
+  <h2><span class="num">8</span>与现有架构的接入点</h2>
+  <div class="arch-list">
+    <div class="arch-item">
+      <div class="arch-icon">📒</div>
+      <div class="arch-body">
+        <div class="title">账本</div>
+        <p>每用户一个 token 余额（含批次 / 过期时间）。落点：R2 <code>users/&lt;sub&gt;/wallet.json</code>（余额、按批次的过期、当日铸币计数、当日点击对集合）。需强一致写（HEAD 校验已有先例）。</p>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="arch-icon">👆</div>
+      <div class="arch-body">
+        <div class="title">铸币（点击）</div>
+        <p><code>CommunityPostView</code> 增加"点击 / 喂币"动作 → 写读者 &amp; 作者各 +1，带 <code>(reader, author, date)</code> 去重。点赞维持独立、不碰币。</p>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="arch-icon">⛏️</div>
+      <div class="arch-body">
+        <div class="title">挖矿计费</div>
+        <p>现挖文章免费（Miner DO / <code>mine.py</code>）。改为<strong>消耗 token</strong>：挖前校验余额 + 扣费 + 全网当日兑现额度（≈1000 元）限速；不足则排队 / 提示。新人注册发放 30 篇额度。</p>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="arch-icon">🌙</div>
+      <div class="arch-body">
+        <div class="title">每日结算</div>
+        <p>定时任务（cron / DO alarm，已有 6h cron 先例）：统计当日 T → 单价 P/T → 把当日金币折算成 token 入各账户（带 6 个月过期批次）。</p>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="arch-icon">📊</div>
+      <div class="arch-body">
+        <div class="title">展示</div>
+        <p>钱包余额、今日单价、即将过期提醒、（可选）排行榜。</p>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="arch-icon">🧪</div>
+      <div class="arch-body">
+        <div class="title">测试</div>
+        <p>遵循 <code>agent/test/</code> 规则，覆盖账本、铸币去重、结算、限速、过期。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- §9 -->
+<div class="sec" id="s9">
+  <h2><span class="num">9</span>开放问题（评审时定）</h2>
+  <div class="q-list">
+    <div class="q-item"><span class="q-num">1</span><p><strong>名义单位换算：</strong>金币 ↔ token 的展示倍率与文案（如何让数字"够大够唬人"又不失真）</p></div>
+    <div class="q-item"><span class="q-num">2</span><p><strong>读者也得币会不会冲淡"奖励作者"：</strong>是否给作者更高权重（如作者 +2 / 读者 +1）？当前设计取 1:1，待定。</p></div>
+    <div class="q-item"><span class="q-num">3</span><p><strong>兑现端限速的 UX：</strong>全网额度耗尽时"挖矿排队" vs 每用户限速平滑，二选一或并用。</p></div>
+    <div class="q-item"><span class="q-num">4</span><p><strong>挤兑 / 过期的边界：</strong>6 个月批次过期的具体实现与提醒节奏。</p></div>
+    <div class="q-item"><span class="q-num">5</span><p><strong>法务 / 审核口径：</strong>非现金 token 的对外措辞，确保不触 Apple / 国内监管红线。</p></div>
+    <div class="q-item"><span class="q-num">6</span><p><strong>大饼随汇率 / 模型价格漂移：</strong>1000 元 → token 数的折算频率（每日重算？）</p></div>
+    <div class="q-item"><span class="q-num">7</span><p><strong>冷启动：</strong>池子空、内容少时单价畸高的早期，如何避免被少数人独吞（恰是"早鸟"卖点，但需观感把控）</p></div>
+  </div>
+</div>
+
+<!-- §10 -->
+<div class="sec" id="s10">
+  <h2><span class="num">10</span>不做（YAGNI）</h2>
+  <div class="yagni-list">
+    <div class="yagni-item">不上链、不发可提现资产、不做对外 API 代理网关（曾讨论的方案 B，已否决）</div>
+    <div class="yagni-item">不做点赞质量加权</div>
+    <div class="yagni-item">不做复杂策展奖励（Steemit curation）</div>
+  </div>
+</div>
+
+<footer>VoiceDrop 挖矿经济设计 · 2026-06-26 · <a href="/a/">← 回到 /a</a> · <a href="/">jianshuo.dev</a></footer>
+</div>
+
+<!-- Cloudflare Web Analytics --><script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "34108fa3d3204951afa585ccb3976c88"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
