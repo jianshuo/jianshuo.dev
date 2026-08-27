@@ -450,6 +450,29 @@ const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80); // 仅 claude �
 // （提示词里给绝对路径），本目录只是进程落脚点。
 const BOOK_RUN_DIR = process.env.BOOK_RUN_DIR ?? join(__dirname, "..", "bookrun");
 
+// --- 写书引擎配额（2026-08-27）：每个 6 小时固定窗口，前 N 本新书走 lab 的
+// Claude 订阅（不注入兼容端点），之后自动降到 Kimi（BOOK_ANTHROPIC_*）。只数
+// 新书（/api/book），修书不占额也不受影响。Kimi 没配（BASE_URL 空）时全部走
+// Claude 订阅，取号照记但不改变行为。计数落盘 bookrate.json，重启不清零。
+const BOOK_CLAUDE_FIRST_N = Number(process.env.BOOK_CLAUDE_FIRST_N ?? 3);
+const BOOK_WINDOW_HOURS = Number(process.env.BOOK_WINDOW_HOURS ?? 6);
+const BOOK_RATE_FILE = join(__dirname, "..", "bookrate.json");
+// 取号：epoch 对齐的固定窗口桶。返回本窗口这是第几本（1 起）。
+async function takeBookSlot(): Promise<number> {
+  const bucket = Math.floor(Date.now() / (BOOK_WINDOW_HOURS * 3600 * 1000));
+  let st = { bucket, count: 0 };
+  try {
+    const j = JSON.parse(await readFile(BOOK_RATE_FILE, "utf8"));
+    if (j && j.bucket === bucket && Number.isFinite(j.count)) st = j;
+  } catch {
+    /* 首次/换窗口/文件坏 → 从 0 起 */
+  }
+  st.bucket = bucket;
+  st.count = (st.count ?? 0) + 1;
+  await writeFile(BOOK_RATE_FILE, JSON.stringify(st)).catch(() => {});
+  return st.count;
+}
+
 const SKILLS_DIR = join(process.env.HOME ?? homedir(), ".claude", "skills");
 
 // codex 是单代理循环，没有 Claude 的 skill 装载/并行 subagent/Workflow——skill 里
@@ -468,7 +491,11 @@ type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: strin
 // claude 腿：与 runCodexExec 同一契约。复用同一份写书 preamble（读 skill 文件、
 // 串行扮演写手/评审，引擎无关），会话落 ~/.claude/projects（lab 侧栏可回看）。
 // 2026-08-20 前的老实现的复活版 + 按次 env 注入（Kimi 兼容端点）。
-async function runClaudeExec(prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+async function runClaudeExec(
+  prompt: string,
+  onThread?: (id: string) => void,
+  injectCompat = true, // false = 忽略 BOOK_ANTHROPIC_*，走 lab 自己的 Claude 订阅
+): Promise<CodexOutcome> {
   await mkdir(BOOK_RUN_DIR, { recursive: true });
   // 每单清空本项目的 auto-memory：书的真源在 skill 与 _src，不需要跨单记忆；
   // 让它积累书内容迟早再次触发 Kimi 风控（workspace 项目就是前车之鉴）。
@@ -479,7 +506,10 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
   // skill 里说的「工作目录 book-<slug>」按绝对路径落 WORKSPACE——cwd 只是落脚点。
   prompt = `${prompt}\n\n补充：你的当前目录不是书库根目录；skill 里说的「工作目录 book-<slug>」一律用绝对路径 ${WORKSPACE}/book-<slug>。`;
   const env: Record<string, string | undefined> = { ...process.env };
-  if (BOOK_ANTHROPIC_BASE_URL) {
+  // 兼容端点在配且本单被指派 → 注入；否则模型退回 lab 默认（订阅端点不认 k3 这类第三方名）。
+  const useCompat = Boolean(BOOK_ANTHROPIC_BASE_URL) && injectCompat;
+  const model = useCompat ? BOOK_CLAUDE_MODEL : MODEL;
+  if (useCompat) {
     env.ANTHROPIC_BASE_URL = BOOK_ANTHROPIC_BASE_URL;
     env.ANTHROPIC_API_KEY = BOOK_ANTHROPIC_API_KEY;
     delete env.CLAUDE_CODE_OAUTH_TOKEN; // 订阅 token 在场会抢道，明确让位给兼容端点
@@ -501,7 +531,7 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
     prompt,
     options: {
       cwd: BOOK_RUN_DIR,
-      model: BOOK_CLAUDE_MODEL,
+      model,
       maxTurns: BOOK_MAX_TURNS,
       permissionMode: "bypassPermissions",
       systemPrompt: { type: "preset", preset: "claude_code" },
@@ -529,7 +559,7 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
         }
         if (!ok && !error) error = String(msg.subtype ?? "error");
         console.log(
-          `[book] claude-engine done model=${BOOK_CLAUDE_MODEL} turns=${msg.num_turns} cost=${msg.total_cost_usd ?? "-"}` +
+          `[book] claude-engine done model=${model} compat=${useCompat} turns=${msg.num_turns} cost=${msg.total_cost_usd ?? "-"}` +
             (ok ? "" : ` ERROR=${error}`),
         );
       }
@@ -540,9 +570,25 @@ async function runClaudeExec(prompt: string, onThread?: (id: string) => void): P
   return { ok, threadId, reply, error: ok ? "" : error || "no result" };
 }
 
-// 引擎分发：两条腿同一契约，runBookJob / runReviseJob 调这里。
-const runBookEngine = (prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> =>
-  BOOK_ENGINE === "claude" ? runClaudeExec(prompt, onThread) : runCodexExec(prompt, onThread);
+// 引擎分发：两条腿同一契约，runBookJob / runReviseJob 调这里。newBook=true（只有
+// /api/book 传）时按 6 小时窗口取号：前 BOOK_CLAUDE_FIRST_N 本走 Claude 订阅，
+// 之后注入 Kimi 兼容端点；修书不取号，沿用配置原样（Kimi 在配即 Kimi）。
+const runBookEngine = async (
+  prompt: string,
+  onThread?: (id: string) => void,
+  opts?: { newBook?: boolean },
+): Promise<CodexOutcome> => {
+  if (BOOK_ENGINE !== "claude") return runCodexExec(prompt, onThread);
+  let injectCompat = true;
+  if (opts?.newBook && BOOK_ANTHROPIC_BASE_URL) {
+    const n = await takeBookSlot();
+    injectCompat = n > BOOK_CLAUDE_FIRST_N;
+    console.log(
+      `[book] window slot ${n} (first ${BOOK_CLAUDE_FIRST_N}/${BOOK_WINDOW_HOURS}h → claude-sub) engine=${injectCompat ? "kimi-compat" : "claude-sub"}`,
+    );
+  }
+  return runClaudeExec(prompt, onThread, injectCompat);
+};
 
 // 跑一次 codex exec 到结束。事件解析与 codex-agent 的 translate() 同源（实机 fixture
 // 校准过）：thread.started 拿线程号，item.completed/agent_message 的最后一条是给
@@ -945,7 +991,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
     try {
       const out = await runBookEngine(prompt, (id) => {
         sessionId = id;
-      });
+      }, { newBook: true });
       ok = out.ok;
       reply = out.reply;
       console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
