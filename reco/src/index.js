@@ -10,7 +10,9 @@ const CORS = {
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS } });
 
-const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
+// 64：书帖 shareId 是 "book-<slug>"，slug 最长 63——32 会把 9 本长名书的
+// engage 拒成 400（2026-08-27 书帖转正时发现）。
+const ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
 
 // —— 书帖（kind:"book"，shareId "book-<slug>"）：2026-08-27 起为写时登记的一等
 // 社区帖——agent worker /agent/book/community 在写书/修书收尾 upsert 进

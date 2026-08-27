@@ -148,6 +148,10 @@ describe("reco worker", () => {
     const t = await token("users/u1/");
     // 书帖的赞是真的：engage 记在 book-<slug> 上，feed 里数字/liked 生效
     await worker.fetch(req("/reco/engage/book-demo-book", { body: { action: "like", on: true }, auth: t }), e);
+    // 长 slug 的书（shareId > 32 字符）也收得进——ID 限长 64
+    const rLong = await worker.fetch(req("/reco/engage/book-embodied-intelligence-humanoid-robots",
+      { body: { action: "view" }, auth: t }), e);
+    expect(rLong.status).toBe(200);
     const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: { "X-VD-Build": "330" } }), e);
     const j2 = await r2.json();
     const book = j2.posts.find((p) => p.kind === "book");
