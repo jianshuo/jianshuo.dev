@@ -12,15 +12,16 @@ const json = (obj, status = 200) =>
 
 const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
 
-// —— 书架预览彩蛋（2026-08-27）：只对书发布者本人的 feed 混入公开书架的所有书，
-// 先感受「书出现在社区里」的效果；其他用户的响应一字不差。撤掉 = 删本段与 feed
-// 分支里的调用，重新 deploy。书条目点开会取不到分享快照（没有真 shareId），预览
-// 阶段的已知限制。
+// —— 书架进社区 feed（2026-08-27 预览彩蛋当天转正）：所有用户的 feed 都混入公开
+// 书架的全部书（kind:"book"，shareId 是 "book-<slug>"）。新版 app 点书卡用站内
+// 浏览器打开 voicedrop.cn/books/<slug>/；旧版 app 会当普通帖去取分享快照而失败，
+// 属已知过渡代价。撤掉 = 删本段与 feed 分支里的调用，重新 deploy。
 // 书列表来自公开 /voicedrop/books/?format=json——该函数无缓存、97 本书逐本读
 // 标题，实测一次要 ~9s，绝不能让 feed 同步等它（会拖垮正常刷社区）。所以走
 // stale-while-revalidate：feed 只取 isolate 缓存（可能为空/过期），缺了就
 // ctx.waitUntil 后台预热（给足 20s）。冷启动第一刷没书、几秒后再刷就有。
-const BOOKS_PREVIEW_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
+// BOOKS_OWNER_SCOPE 只用来拼封面的 R2 key（书都发布在这个 scope 下）。
+const BOOKS_OWNER_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
 const BOOKS_TTL_MS = 10 * 60_000;
 let booksPreviewCache = { at: 0, posts: null, refreshing: false };
 async function refreshBooksPreview() {
@@ -38,7 +39,7 @@ async function refreshBooksPreview() {
           author: b.author || "王建硕",
           title: b.title || b.slug,
           ...(b.sub ? { preview: b.sub } : {}),
-          ...(b.cover ? { coverPhotoKey: `${BOOKS_PREVIEW_SCOPE}books/${b.slug}/cover.jpg` } : {}),
+          ...(b.cover ? { coverPhotoKey: `${BOOKS_OWNER_SCOPE}books/${b.slug}/cover.jpg` } : {}),
           hasPhoto: !!b.cover,
           count: b.chapters || 0,
           firstSharedAt: b.createdAt || 0,
@@ -59,6 +60,11 @@ function booksPreviewPosts(ctx) {
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
   }
   return booksPreviewCache.posts || [];
+}
+
+// 测试钩子：重置书架缓存（与 store.js 的 __resetStoreCaches 同款惯例）。
+export function __resetBooksPreviewCache() {
+  booksPreviewCache = { at: 0, posts: null, refreshing: false };
 }
 
 export default {
@@ -109,8 +115,8 @@ export default {
       }));
       const rankInput = rows.map((r) => ({ shareId: r.share_id, firstSharedAt: r.first_shared_at,
                                            author: r.author, replyCount: replyCounts[r.share_id] || 0 }));
-      // 书架预览：只有发布者本人的 feed 才混书（见顶部 BOOKS_PREVIEW_SCOPE 注释）。
-      if (scope === BOOKS_PREVIEW_SCOPE) {
+      // 书架进 feed：所有用户可见（见顶部 BOOKS_OWNER_SCOPE 注释）。
+      {
         const books = booksPreviewPosts(ctx);
         if (books.length) {
           posts.push(...books);

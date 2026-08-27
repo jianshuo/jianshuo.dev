@@ -1,10 +1,19 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../src/index.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import worker, { __resetBooksPreviewCache } from "../src/index.js";
 import { fakeD1 } from "./fakes.js";
 import { hmacSign } from "../src/auth.js";
 import { __resetStoreCaches } from "../src/store.js";
 
-beforeEach(() => __resetStoreCaches());   // 进程内缓存别把上个用例的数据带过来
+// 进程内缓存别把上个用例的数据带过来。书架混入（对所有 feed 生效）默认 stub 成
+// 空书架——既防测试打真网，也让老 feed 用例保持「无书」环境；要书的用例自己覆盖。
+const realFetch = globalThis.fetch;
+beforeEach(() => {
+  __resetStoreCaches();
+  __resetBooksPreviewCache();
+  globalThis.fetch = async () => new Response(JSON.stringify({ books: [] }),
+    { headers: { "Content-Type": "application/json" } });
+});
+afterEach(() => { globalThis.fetch = realFetch; });
 
 const SECRET = "test-secret";
 function b64url(str) {
@@ -129,8 +138,8 @@ describe("reco worker", () => {
     expect(r.status).toBe(503);
   });
 
-  it("feed 书架预览：只有发布者本人混入书，其他人一字不差", async () => {
-    const PREVIEW = "users/anon-ae209ac53499d51d513425503bd134b0/";
+  it("feed 书架混入：所有人可见（SWR：首刷触发预热、二刷出书）", async () => {
+    const OWNER = "users/anon-ae209ac53499d51d513425503bd134b0/";   // 只决定封面 key 前缀
     const now = Date.now();
     const posts = [
       { share_id: "a", owner: "users/u1/", author: "我", title: "甲", preview: null,
@@ -145,31 +154,26 @@ describe("reco worker", () => {
     const pending = [];
     const fakeCtx = { waitUntil: (p) => pending.push(p) };
     try {
-      // 普通用户（先请求）：无书，也绝不触发书列表预热
-      const t1 = await token("users/u1/");
-      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t1 }), env([], posts), fakeCtx);
+      // 任意用户首刷：书列表接口太慢（实测 ~9s），feed 绝不同步等它——
+      // 首刷无书，但 waitUntil 里挂上了后台预热
+      const t = await token("users/u1/");
+      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
       const j1 = await r1.json();
       expect(j1.posts.some((p) => p.kind === "book")).toBe(false);
-      expect(pending.length).toBe(0);
-      // 发布者本人首刷：书列表接口太慢（实测 ~9s），feed 绝不同步等它——
-      // 首刷无书，但 waitUntil 里挂上了后台预热
-      const t2 = await token(PREVIEW);
-      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts), fakeCtx);
-      const j2 = await r2.json();
-      expect(j2.posts.some((p) => p.kind === "book")).toBe(false);
       expect(pending.length).toBe(1);
       await Promise.all(pending);
-      // 二刷：缓存已热，书混进来，字段齐全、时间倒序、推荐序覆盖
-      const r3 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts), fakeCtx);
-      const j3 = await r3.json();
-      const book = j3.posts.find((p) => p.kind === "book");
+      // 二刷：缓存已热，普通用户也看到书——字段齐全、时间倒序、推荐序覆盖
+      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
+      const j2 = await r2.json();
+      const book = j2.posts.find((p) => p.kind === "book");
       expect(book.shareId).toBe("book-demo-book");
-      expect(book.coverPhotoKey).toBe(PREVIEW + "books/demo-book/cover.jpg");
+      expect(book.coverPhotoKey).toBe(OWNER + "books/demo-book/cover.jpg");
       expect(book.hasPhoto).toBe(true);
       expect(book.count).toBe(12);
       expect(book.preview).toBe("副标题");
-      expect(j3.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
-      expect(new Set(j3.order)).toEqual(new Set(["a", "book-demo-book"]));
+      expect(book.mine).toBe(false);       // 书卡不出「取消分享」菜单
+      expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
+      expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
     } finally { globalThis.fetch = realFetch; }
   });
 
