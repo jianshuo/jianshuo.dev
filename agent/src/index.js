@@ -882,6 +882,35 @@ export async function handleUsageRoute(url, request, env) {
     return J({ ok: true, scope, charged_suanli: priceSuanli, suanli: r1(uyToSuanli(after)) });
   }
 
+  // 写书/修书失败退款（lab 失败回调转发同一枚用户 bearer 调这里，2026-08-27）：
+  // 写书是预扣一口价——引擎被拒/超时/崩溃时书没写成，得把预扣的 320（修书 40）
+  // 算力原数还回，否则失败=白扣（曾漏此路，一本被 API 拒的书扣了钱没退）。
+  // 谁扣的退给谁（bearer 认人），无需 admin 凭据。幂等靠 ref（写书=jobId、修书=
+  // slug#ts）：同一次失败重复调只退一次，重复请求直接 ok。退成 90 天有效期桶，
+  // 与运营补偿同档。
+  if (url.pathname === "/agent/usage/book-refund" && request.method === "POST") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    if (!env.USAGE) return J({ error: "degraded" }, 503);
+    const b = await request.json().catch(() => ({}));
+    const ref = String(b.ref || "").slice(0, 120);
+    if (!ref) return J({ error: "bad-request", hint: "ref required" }, 400);
+    const revise = b.kind === "revise";
+    const [costUY, priceSuanli, reason] = revise
+      ? [bookReviseCostUY(), BOOK_REVISE_SUANLI, "book-revise-refund"]
+      : [bookCostUY(), BOOK_SUANLI, "book-refund"];
+    const now = Date.now();
+    // 幂等：同一 ref 已退过就直接 ok，绝不二次退。
+    const dup = await env.USAGE.prepare(
+      "SELECT id FROM ledger WHERE user_sub=? AND kind='grant' AND reason=? AND detail LIKE ? LIMIT 1"
+    ).bind(scope, reason, `%"ref":"${ref}"%`).first();
+    if (dup) return J({ ok: true, deduped: true, refunded_suanli: 0 });
+    const expiresAt = now + CAMPAIGN_EXPIRE_DAYS * DAY_MS;
+    await grantBucket(env.USAGE, scope, costUY, reason, expiresAt, now, { ref, kind: revise ? "revise" : "book" });
+    const after = await balanceUY(env.USAGE, scope, now);
+    return J({ ok: true, refunded_suanli: priceSuanli, suanli: r1(uyToSuanli(after)) });
+  }
+
   // 书写好了 → 给主人发 APNs（lab 写书收尾时转发用户 bearer 调这里，2026-08-23）。
   // 谁的 token 就推给谁——lab 上不存推送凭据，APNs 密钥只留在 worker。
   // link 用 voicedrop.cn 直链而不是 voicedrop://books：绘本缺省 hidden 不上书架，

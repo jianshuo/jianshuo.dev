@@ -428,6 +428,7 @@ async function getSessionMessages(id: string) {
 // codex-subscription-auth-chains）。重登：
 //   ssh root@VPS 'sudo -u claude-agent HOME=/opt/claude-agent codex login --device-auth'
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
+const BOOK_REFUND_URL = process.env.BOOK_REFUND_URL ?? "https://jianshuo.dev/agent/usage/book-refund";
 const BOOK_PUSH_URL = process.env.BOOK_PUSH_URL ?? "https://jianshuo.dev/agent/push/book-done";
 const ADMIN_PUSH_URL = process.env.ADMIN_PUSH_URL ?? "https://jianshuo.dev/agent/push/admin";
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
@@ -755,6 +756,28 @@ async function chargeBook(
   }
 }
 
+// 写书/修书失败退款（2026-08-27）：预扣一口价的书没写成——引擎被拒/超时/崩溃——
+// 用下单时那枚用户 bearer 调 worker 的 book-refund，把预扣的算力原数还回。ref 幂等
+// （写书=jobId、修书=slug#ts），worker 端同 ref 只退一次。尽力而为：退不成只留日志，
+// 绝不抛错（退款失败还有管理员报警兜底人工补）。
+async function refundBook(
+  auth: string | undefined,
+  extra: { ref: string; kind?: "revise" },
+): Promise<void> {
+  if (!auth?.startsWith("Bearer ")) return;
+  try {
+    const r = await fetch(BOOK_REFUND_URL, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify(extra),
+    });
+    const body: any = await r.json().catch(() => ({}));
+    console.log(`[book] refund ref=${extra.ref} kind=${extra.kind ?? "book"} status=${r.status} ${body?.deduped ? "deduped" : `refunded=${body?.refunded_suanli ?? "?"}`}`);
+  } catch (e) {
+    console.error("[book] refund failed", e);
+  }
+}
+
 // 书写好了给主人发 APNs（2026-08-23）：worker /agent/push/book-done 用同一枚用户
 // bearer 认人——lab 不存推送凭据，token 是谁的就推给谁。尽力而为，失败只留日志，
 // 绝不影响主流程。
@@ -926,9 +949,15 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       ok = out.ok;
       reply = out.reply;
       console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
-      if (!ok) await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+      if (!ok) {
+        await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+        await refundBook(auth, { ref: jobId });   // 预扣一口价没写成——原数退回
+      }
     } catch (e) {
       console.error("[book] job failed", e);
+      // 引擎抛异常（超时/崩溃）同样扣了钱没产出，退款；ref=jobId 幂等，与上面正常
+      // 失败分支互斥（try 走完不进 catch），双保险不会双退。
+      await refundBook(auth, { ref: jobId });
     }
     // 收尾登记：早登记过就补 status/reply；没有就整条落档。找不到 slug 落
     // _unmatched 便于人工对号——绝不让一本已扣费的书没有主人记录。
@@ -977,7 +1006,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
 
 // 修书 job：不 resume 写书旧线程（背着整段历史只多花钱）——每次修改都是全新
 // codex exec，以工作目录/线上成书这些「文件」为真源。
-function runReviseJob(slug: string, scope: string, author: string, instruction: string, entryTs: number) {
+function runReviseJob(slug: string, scope: string, author: string, instruction: string, entryTs: number, auth?: string) {
   console.log(`[revise] start slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author ? `这本书署名「${author}」，改动不要动署名。` : "这本书不署名，保持不署名。";
   const prompt =
@@ -998,10 +1027,14 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
         ...(out.ok ? {} : { error: out.error }),
       });
       console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
-      if (!out.ok) await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+      if (!out.ok) {
+        await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+        await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40
+      }
     } catch (e: any) {
       console.error("[revise] job failed", e);
       await patchThreadEntry(slug, entryTs, { status: "failed", error: String(e?.message ?? e) }).catch(() => {});
+      await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 引擎崩溃同样退
     }
   })();
 }
@@ -1103,7 +1136,7 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
   const entry: ThreadEntry = { ts: Date.now(), kind: "revise", instruction, status: "running" };
   meta.thread.push(entry);
   await writeBookMeta(meta);
-  runReviseJob(slug, meta.scope, meta.author, instruction, entry.ts);
+  runReviseJob(slug, meta.scope, meta.author, instruction, entry.ts, req.headers.authorization);
   res.writeHead(202, json).end(
     JSON.stringify({ ok: true, ts: entry.ts, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }),
   );
