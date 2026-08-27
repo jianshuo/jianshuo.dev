@@ -858,6 +858,25 @@ async function notifyBookDone(auth: string | undefined, slug: string, title: str
   }
 }
 
+// 书帖登记（2026-08-27）：写书/修书收尾把书 upsert 成社区一等帖（agent worker
+// /agent/book/community，share_id "book-<slug>"）——赞/回应/推荐排序与普通帖同权，
+// 取代 reco 的读时混入。同一枚用户 bearer 认人（主人的 hidden 书也带得出来，
+// hidden 照登记、feed 自然不出）。尽力而为：失败只留日志，漂了用 admin 批量回填。
+const BOOK_COMMUNITY_URL = process.env.BOOK_COMMUNITY_URL ?? "https://jianshuo.dev/agent/book/community";
+async function registerBookPost(auth: string | undefined, slug: string) {
+  if (!auth?.startsWith("Bearer ")) return;
+  try {
+    const r = await fetch(BOOK_COMMUNITY_URL, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    console.log(`[book] community-post slug=${slug} status=${r.status}`);
+  } catch (e) {
+    console.error("[book] community-post failed", e);
+  }
+}
+
 // 用 bearer 问 files API 这是谁（history 只读不扣费，用这个拿 scope 做主人校验）。
 async function fetchScope(auth: string | undefined): Promise<string> {
   if (!auth?.startsWith("Bearer ")) return "";
@@ -1034,6 +1053,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
         // 写成了才推；失败不推用户（钱的事人工处理，别用推送吓人）。
         if (ok) {
           const title = String((await findBookByJobId(jobId))?.book?.title ?? "");
+          await registerBookPost(auth, slug);   // 先登记社区帖，推送里的书立刻可在社区看到
           await notifyBookDone(auth, slug, title);
         }
       } else {
@@ -1073,6 +1093,7 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
         ...(out.ok ? {} : { error: out.error }),
       });
       console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
+      if (out.ok) await registerBookPost(auth, slug);   // 标题/hidden/章节数可能变了——刷新书帖
       if (!out.ok) {
         await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
         await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40

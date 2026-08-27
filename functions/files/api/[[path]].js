@@ -28,6 +28,7 @@ import { shareIdFor, communityKey, reportKey, isShareId, promptPostTitle } from 
 import { readStyleDoc, writeStyleDoc, setStyleHead, resolveStyle, parseStyleMarkdown, readProfileName, mergeProfile, ensureStyleSeeded, isDefaultSeed, readLegacyStyleMd } from "../../lib/style-store.js";
 import { sanitizeSeg, sha256hex, timingSafeEqual, bytesToB64url, b64urlToBytes, b64urlToString, b64url, hmacSign, verifySession, anonScopeFromToken, bearerToken, hasVerifiedBinding } from "../../lib/auth.js";
 import { checkArticlesShareable } from "../../lib/moderation.js";
+import { upsertCommunityPost, deleteCommunityPost, setCommunityPostHidden } from "../../lib/community-index.js";
 import { coreLoadPromptShares, coreDeleteUserData, coreListArticles, coreReplaceArticles, coreUpsertRecording, coreDeleteRecording, coreListRecordings, coreReplaceRecordings, coreGetIdentity, corePutIdentity, coreUpsertProfile, coreGetProfile, corePutPushToken, corePutReport, coreDeleteReport, coreGetReport, corePendingReportIds, coreListReports } from "../../lib/core-db.js";
 
 // Miner sidecars that live under articles/ and end in .json but are NOT article
@@ -1567,32 +1568,17 @@ async function handleRequest(context) {
       const title = articles[0]?.title ?? p.title ?? '';
       // hidden 未显式给定时查 D1 举报态（不可用按未举报处理——展示索引由对账收敛）。
       const hid = hidden !== null ? (hidden ? 1 : 0) : ((await coreGetReport(env, p.shareId)) ? 1 : 0);
-      await env.RECO_DB.prepare(
-        `INSERT INTO community_posts (share_id, owner, article_key, author, title, preview,
-           cover_photo_key, has_photo, article_count, first_shared_at, updated_at, reply_to, hidden, kind)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(share_id) DO UPDATE SET
-           owner=excluded.owner, article_key=excluded.article_key, author=excluded.author,
-           title=excluded.title, preview=excluded.preview, cover_photo_key=excluded.cover_photo_key,
-           has_photo=excluded.has_photo, article_count=excluded.article_count,
-           first_shared_at=excluded.first_shared_at, updated_at=excluded.updated_at,
-           reply_to=excluded.reply_to, hidden=excluded.hidden, kind=excluded.kind`,
-      ).bind(p.shareId, p.owner || '', p.articleKey || null, p.author || '', title,
-             ex.preview || null, ex.coverPhotoKey || null, ex.hasPhoto ? 1 : 0,
-             articles.length || 1, p.firstSharedAt || null,
-             p.updatedAt || p.firstSharedAt || null, p.replyTo || null, hid, k).run();
+      // 实际写入走统一写入层 community-index.js（文章/提示词/书三种 kind 同一段 SQL）。
+      await upsertCommunityPost(env.RECO_DB, {
+        shareId: p.shareId, owner: p.owner, articleKey: p.articleKey, author: p.author, title,
+        preview: ex.preview, coverPhotoKey: ex.coverPhotoKey, hasPhoto: ex.hasPhoto,
+        articleCount: articles.length || 1, firstSharedAt: p.firstSharedAt,
+        updatedAt: p.updatedAt, replyTo: p.replyTo, hidden: hid, kind: k,
+      });
     } catch (e) { console.log('[community-index] upsert failed', String(e?.message || e)); }
   }
-  async function indexDelete(shareId) {
-    if (!env.RECO_DB) return;
-    try { await env.RECO_DB.prepare('DELETE FROM community_posts WHERE share_id=?').bind(shareId).run(); }
-    catch (e) { console.log('[community-index] delete failed', String(e?.message || e)); }
-  }
-  async function indexSetHidden(shareId, hidden) {
-    if (!env.RECO_DB) return;
-    try { await env.RECO_DB.prepare('UPDATE community_posts SET hidden=? WHERE share_id=?').bind(hidden ? 1 : 0, shareId).run(); }
-    catch (e) { console.log('[community-index] hide failed', String(e?.message || e)); }
-  }
+  const indexDelete = (shareId) => deleteCommunityPost(env.RECO_DB, shareId);
+  const indexSetHidden = (shareId, hidden) => setCommunityPostHidden(env.RECO_DB, shareId, hidden);
   async function indexDeleteOwner(owner) {
     if (!env.RECO_DB) return;
     try { await env.RECO_DB.prepare('DELETE FROM community_posts WHERE owner=?').bind(owner).run(); }

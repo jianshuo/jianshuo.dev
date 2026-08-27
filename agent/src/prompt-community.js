@@ -7,6 +7,7 @@
 // 帖不断，全部自动成立，索引里不用存任何新绑定。
 import { shareIdFor, communityKey, promptPostTitle } from "../../functions/lib/community-store.js";
 import { readProfileName } from "../../functions/lib/style-store.js";
+import { upsertCommunityPost, deleteCommunityPost } from "../../functions/lib/community-index.js";
 
 export const promptShareId = (code, secret) => shareIdFor(`promptshare:${code}`, secret);
 
@@ -43,29 +44,17 @@ export async function retractPromptPost(env, code) {
   try {
     const shareId = await promptShareId(code, env.SESSION_SECRET);
     await env.FILES.delete(communityKey(shareId));
-    if (env.RECO_DB) {
-      try {
-        await env.RECO_DB.prepare("DELETE FROM community_posts WHERE share_id=?").bind(shareId).run();
-      } catch (e) { console.log("[prompt-community] index delete failed", String(e?.message || e)); }
-    }
+    await deleteCommunityPost(env.RECO_DB, shareId);
   } catch (e) { console.error("[prompt-community] retract failed:", e && e.message); }
 }
 
 // D1 展示索引行（与 Pages indexUpsert 的 prompt 语义一致：title=promptPostTitle
-// 组合的「分组｜名字」、preview=正文前60字、无图）。写失败吞掉。
+// 组合的「分组｜名字」、preview=正文前60字、无图）。写入走统一写入层。
 async function indexUpsertPrompt(env, post, leaf) {
-  if (!env.RECO_DB) return;
-  try {
-    await env.RECO_DB.prepare(
-      `INSERT INTO community_posts (share_id, owner, article_key, author, title, preview,
-         cover_photo_key, has_photo, article_count, first_shared_at, updated_at, reply_to, hidden, kind)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(share_id) DO UPDATE SET
-         owner=excluded.owner, author=excluded.author, title=excluded.title,
-         preview=excluded.preview, updated_at=excluded.updated_at, hidden=excluded.hidden,
-         kind=excluded.kind`,
-    ).bind(post.shareId, post.owner, null, post.author || "", promptPostTitle(leaf) || "",
-           previewOf(leaf.instruction) || null, null, 0, 1,
-           post.firstSharedAt, Date.now(), null, 0, "prompt").run();
-  } catch (e) { console.log("[prompt-community] index upsert failed", String(e?.message || e)); }
+  await upsertCommunityPost(env.RECO_DB, {
+    shareId: post.shareId, owner: post.owner, author: post.author,
+    title: promptPostTitle(leaf) || "", preview: previewOf(leaf.instruction),
+    articleCount: 1, firstSharedAt: post.firstSharedAt, updatedAt: Date.now(),
+    hidden: false, kind: "prompt",
+  });
 }

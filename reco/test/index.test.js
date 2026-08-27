@@ -1,19 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import worker, { __resetBooksPreviewCache } from "../src/index.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import worker from "../src/index.js";
 import { fakeD1 } from "./fakes.js";
 import { hmacSign } from "../src/auth.js";
 import { __resetStoreCaches } from "../src/store.js";
 
-// 进程内缓存别把上个用例的数据带过来。书架混入（对所有 feed 生效）默认 stub 成
-// 空书架——既防测试打真网，也让老 feed 用例保持「无书」环境；要书的用例自己覆盖。
-const realFetch = globalThis.fetch;
-beforeEach(() => {
-  __resetStoreCaches();
-  __resetBooksPreviewCache();
-  globalThis.fetch = async () => new Response(JSON.stringify({ books: [] }),
-    { headers: { "Content-Type": "application/json" } });
-});
-afterEach(() => { globalThis.fetch = realFetch; });
+// 进程内缓存别把上个用例的数据带过来。书帖自 2026-08-27 起是写时登记的 D1 行
+// （kind:"book"），reco 不再抓书架 JSON——无外网请求，无需 fetch stub。
+beforeEach(() => { __resetStoreCaches(); });
 
 const SECRET = "test-secret";
 function b64url(str) {
@@ -138,49 +131,41 @@ describe("reco worker", () => {
     expect(r.status).toBe(503);
   });
 
-  it("feed 书架混入：X-VD-Build ≥ 330 可见（SWR：首刷预热、二刷出书）；老版本不混", async () => {
-    const OWNER = "users/anon-ae209ac53499d51d513425503bd134b0/";   // 只决定封面 key 前缀
+  it("feed 书帖（D1 行）：X-VD-Build ≥ 330 可见且互动同权；老版本服务端滤掉", async () => {
+    const OWNER = "users/anon-ae209ac53499d51d513425503bd134b0/";
     const now = Date.now();
     const posts = [
       { share_id: "a", owner: "users/u1/", author: "我", title: "甲", preview: null,
         cover_photo_key: null, has_photo: 0, article_count: 1,
         first_shared_at: now, updated_at: now, reply_to: null, hidden: 0 },
+      // 书帖 = community_posts 里的一等行（agent /agent/book/community 写时登记）
+      { share_id: "book-demo-book", owner: "users/u2/", author: "王建硕", title: "示例书",
+        preview: "副标题", cover_photo_key: OWNER + "books/demo-book/cover.jpg", has_photo: 1,
+        article_count: 12, first_shared_at: now - 5000, updated_at: now - 5000,
+        reply_to: null, hidden: 0, kind: "book" },
     ];
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({ books: [
-      { slug: "demo-book", title: "示例书", sub: "副标题", author: "王建硕",
-        cover: true, coverAt: now, chapters: 12, createdAt: now - 5000 },
-    ] }), { headers: { "Content-Type": "application/json" } });
-    const pending = [];
-    const fakeCtx = { waitUntil: (p) => pending.push(p) };
-    try {
-      // 新版客户端（X-VD-Build: 330）首刷：书列表接口太慢（实测 ~9s），feed 绝不
-      // 同步等它——首刷无书，但 waitUntil 里挂上了后台预热
-      const t = await token("users/u1/");
-      const b330 = { "X-VD-Build": "330" };
-      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: b330 }), env([], posts), fakeCtx);
-      const j1 = await r1.json();
-      expect(j1.posts.some((p) => p.kind === "book")).toBe(false);
-      expect(pending.length).toBe(1);
-      await Promise.all(pending);
-      // 二刷：缓存已热，书混进来——字段齐全、时间倒序、推荐序覆盖
-      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: b330 }), env([], posts), fakeCtx);
-      const j2 = await r2.json();
-      const book = j2.posts.find((p) => p.kind === "book");
-      expect(book.shareId).toBe("book-demo-book");
-      expect(book.coverPhotoKey).toBe(OWNER + "books/demo-book/cover.jpg");
-      expect(book.hasPhoto).toBe(true);
-      expect(book.count).toBe(12);
-      expect(book.preview).toBe("副标题");
-      expect(book.mine).toBe(false);       // 书卡不出「取消分享」菜单
-      expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
-      expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
-      // 缓存已热的前提下：老版本（低 build / 不带版本头）依然一本书都看不到
-      const r3 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: { "X-VD-Build": "329" } }), env([], posts), fakeCtx);
-      expect((await r3.json()).posts.some((p) => p.kind === "book")).toBe(false);
-      const r4 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
-      expect((await r4.json()).posts.some((p) => p.kind === "book")).toBe(false);
-    } finally { globalThis.fetch = realFetch; }
+    const e = env([], posts);
+    const t = await token("users/u1/");
+    // 书帖的赞是真的：engage 记在 book-<slug> 上，feed 里数字/liked 生效
+    await worker.fetch(req("/reco/engage/book-demo-book", { body: { action: "like", on: true }, auth: t }), e);
+    const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: { "X-VD-Build": "330" } }), e);
+    const j2 = await r2.json();
+    const book = j2.posts.find((p) => p.kind === "book");
+    expect(book.shareId).toBe("book-demo-book");
+    expect(book.coverPhotoKey).toBe(OWNER + "books/demo-book/cover.jpg");
+    expect(book.hasPhoto).toBe(true);
+    expect(book.count).toBe(12);
+    expect(book.preview).toBe("副标题");
+    expect(book.mine).toBe(false);
+    expect(book.likes).toBe(1);          // 互动同权（旧混入路径永远是 0）
+    expect(book.liked).toBe(true);
+    expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
+    expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
+    // 老版本（低 build / 不带版本头）在服务端整体滤掉，点开失败无从发生
+    const r3 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: { "X-VD-Build": "329" } }), e);
+    expect((await r3.json()).posts.some((p) => p.kind === "book")).toBe(false);
+    const r4 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), e);
+    expect((await r4.json()).posts.some((p) => p.kind === "book")).toBe(false);
   });
 
   // 2026-07-13 事故回归：社区过百帖后 IN (?,?,…) 超出 D1 的 100 参数上限，rank
