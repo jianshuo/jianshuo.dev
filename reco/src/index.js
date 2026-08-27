@@ -21,16 +21,22 @@ const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
 // stale-while-revalidate：feed 只取 isolate 缓存（可能为空/过期），缺了就
 // ctx.waitUntil 后台预热（给足 20s）。冷启动第一刷没书、几秒后再刷就有。
 // BOOKS_OWNER_SCOPE 只用来拼封面的 R2 key（书都发布在这个 scope 下）。
+// isolate 内存缓存之外再垫一层 Cache API（同 colo 全部 isolate 共享，读毫秒级）：
+// CF 不保证连续请求落同一 isolate，没有这层的话每个冷 isolate 都要自己熬 ~25s
+// 预热，「刷两次」会退化成「刷 N 次」（2026-08-27 实测踩到）。
 const BOOKS_OWNER_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
 const BOOKS_TTL_MS = 10 * 60_000;
+const BOOKS_CACHE_URL = "https://voicedrop-reco.cache/books-feed-posts";
 let booksPreviewCache = { at: 0, posts: null, refreshing: false };
 async function refreshBooksPreview() {
   if (booksPreviewCache.refreshing) return;
   booksPreviewCache.refreshing = true;
   try {
     const r = await fetch("https://jianshuo.dev/voicedrop/books/?format=json", { signal: AbortSignal.timeout(20000) });
+    console.log("books-refresh: status", r.status);
     if (r.ok) {
       const j = await r.json();
+      console.log("books-refresh: loaded", (j.books || []).length);
       booksPreviewCache = {
         at: Date.now(),
         refreshing: false,
@@ -48,17 +54,28 @@ async function refreshBooksPreview() {
           kind: "book",
         })),
       };
+      try {
+        await caches.default.put(BOOKS_CACHE_URL, new Response(JSON.stringify(booksPreviewCache.posts), {
+          headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${BOOKS_TTL_MS / 1000}` },
+        }));
+      } catch {}   // Cache API 缺席（单测环境）→ 只有 isolate 内存缓存，无碍
       return;
     }
-  } catch {}
+  } catch (e) { console.log("books-refresh: error", String(e && e.message || e)); }
   booksPreviewCache.refreshing = false;   // 失败保留旧值，下次请求再试
 }
-function booksPreviewPosts(ctx) {
-  const stale = !booksPreviewCache.posts || Date.now() - booksPreviewCache.at > BOOKS_TTL_MS;
-  if (stale) {
-    const p = refreshBooksPreview();
-    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
-  }
+async function booksPreviewPosts(ctx) {
+  if (booksPreviewCache.posts && Date.now() - booksPreviewCache.at <= BOOKS_TTL_MS) return booksPreviewCache.posts;
+  try {
+    const hit = await caches.default.match(BOOKS_CACHE_URL);   // 同 colo 共享，毫秒级
+    if (hit) {
+      const posts = await hit.json();
+      booksPreviewCache = { at: Date.now(), posts, refreshing: booksPreviewCache.refreshing };
+      return posts;
+    }
+  } catch {}   // Cache API 缺席（单测环境）→ 走预热路径
+  const p = refreshBooksPreview();
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
   return booksPreviewCache.posts || [];
 }
 
@@ -117,7 +134,7 @@ export default {
                                            author: r.author, replyCount: replyCounts[r.share_id] || 0 }));
       // 书架进 feed：所有用户可见（见顶部 BOOKS_OWNER_SCOPE 注释）。
       {
-        const books = booksPreviewPosts(ctx);
+        const books = await booksPreviewPosts(ctx);
         if (books.length) {
           posts.push(...books);
           posts.sort((a, b) => (b.firstSharedAt || 0) - (a.firstSharedAt || 0));
