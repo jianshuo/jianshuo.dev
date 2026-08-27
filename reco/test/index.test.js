@@ -129,6 +129,40 @@ describe("reco worker", () => {
     expect(r.status).toBe(503);
   });
 
+  it("feed 书架预览：只有发布者本人混入书，其他人一字不差", async () => {
+    const PREVIEW = "users/anon-ae209ac53499d51d513425503bd134b0/";
+    const now = Date.now();
+    const posts = [
+      { share_id: "a", owner: "users/u1/", author: "我", title: "甲", preview: null,
+        cover_photo_key: null, has_photo: 0, article_count: 1,
+        first_shared_at: now, updated_at: now, reply_to: null, hidden: 0 },
+    ];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ books: [
+      { slug: "demo-book", title: "示例书", sub: "副标题", author: "王建硕",
+        cover: true, coverAt: now, chapters: 12, createdAt: now - 5000 },
+    ] }), { headers: { "Content-Type": "application/json" } });
+    try {
+      // 普通用户（先请求，确保不触发书列表 fetch/缓存）：无书
+      const t1 = await token("users/u1/");
+      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t1 }), env([], posts));
+      const j1 = await r1.json();
+      expect(j1.posts.some((p) => p.kind === "book")).toBe(false);
+      // 发布者本人：书混进来，字段齐全、时间倒序、推荐序覆盖
+      const t2 = await token(PREVIEW);
+      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts));
+      const j2 = await r2.json();
+      const book = j2.posts.find((p) => p.kind === "book");
+      expect(book.shareId).toBe("book-demo-book");
+      expect(book.coverPhotoKey).toBe(PREVIEW + "books/demo-book/cover.jpg");
+      expect(book.hasPhoto).toBe(true);
+      expect(book.count).toBe(12);
+      expect(book.preview).toBe("副标题");
+      expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
+      expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
+    } finally { globalThis.fetch = realFetch; }
+  });
+
   // 2026-07-13 事故回归：社区过百帖后 IN (?,?,…) 超出 D1 的 100 参数上限，rank
   // 整条 500（app 静默回退：推荐退化成时间序、红心全 0）。分块后必须扛住 100+。
   it("rank 100+ 帖不炸：IN 查询分块，likes/liked 跨块合并", async () => {

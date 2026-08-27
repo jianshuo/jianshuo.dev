@@ -12,6 +12,40 @@ const json = (obj, status = 200) =>
 
 const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
 
+// —— 书架预览彩蛋（2026-08-27）：只对书发布者本人的 feed 混入公开书架的所有书，
+// 先感受「书出现在社区里」的效果；其他用户的响应一字不差。撤掉 = 删本段与 feed
+// 分支里的调用，重新 deploy。书条目点开会取不到分享快照（没有真 shareId），预览
+// 阶段的已知限制。列表来自公开 /books/?format=json，60s isolate 缓存，失败静默。
+const BOOKS_PREVIEW_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
+let booksPreviewCache = { at: 0, posts: null };
+async function booksPreviewPosts() {
+  if (booksPreviewCache.posts && Date.now() - booksPreviewCache.at <= 60_000) return booksPreviewCache.posts;
+  try {
+    const r = await fetch("https://jianshuo.dev/voicedrop/books/?format=json", { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return booksPreviewCache.posts || [];
+    const j = await r.json();
+    booksPreviewCache = {
+      at: Date.now(),
+      posts: (j.books || []).map((b) => ({
+        shareId: "book-" + b.slug,
+        author: b.author || "王建硕",
+        title: b.title || b.slug,
+        ...(b.sub ? { preview: b.sub } : {}),
+        ...(b.cover ? { coverPhotoKey: `${BOOKS_PREVIEW_SCOPE}books/${b.slug}/cover.jpg` } : {}),
+        hasPhoto: !!b.cover,
+        count: b.chapters || 0,
+        firstSharedAt: b.createdAt || 0,
+        updatedAt: b.createdAt || 0,
+        mine: false, likes: 0, replies: 0, liked: false,
+        kind: "book",
+      })),
+    };
+  } catch {
+    return booksPreviewCache.posts || [];
+  }
+  return booksPreviewCache.posts;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -58,10 +92,19 @@ export default {
         liked: likedSet.has(r.share_id),
         kind: r.kind || "article",
       }));
-      const order = rankPosts(
-        rows.map((r) => ({ shareId: r.share_id, firstSharedAt: r.first_shared_at,
-                           author: r.author, replyCount: replyCounts[r.share_id] || 0 })),
-        engMap, Date.now());
+      const rankInput = rows.map((r) => ({ shareId: r.share_id, firstSharedAt: r.first_shared_at,
+                                           author: r.author, replyCount: replyCounts[r.share_id] || 0 }));
+      // 书架预览：只有发布者本人的 feed 才混书（见顶部 BOOKS_PREVIEW_SCOPE 注释）。
+      if (scope === BOOKS_PREVIEW_SCOPE) {
+        const books = await booksPreviewPosts();
+        if (books.length) {
+          posts.push(...books);
+          posts.sort((a, b) => (b.firstSharedAt || 0) - (a.firstSharedAt || 0));
+          rankInput.push(...books.map((b) => ({ shareId: b.shareId, firstSharedAt: b.firstSharedAt,
+                                                author: b.author, replyCount: 0 })));
+        }
+      }
+      const order = rankPosts(rankInput, engMap, Date.now());
       return json({ posts, order });
     }
 

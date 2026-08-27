@@ -684,7 +684,11 @@ async function handleRequest(context) {
   // content are ever visible. CORS `*` + public cache so any page can load + cache it.
   if (request.method === 'GET' && action === 'photo') {
     const key = decodeURIComponent(segments.slice(1).join('/'));
-    if (key.includes('..') || !/^users\/[^/]+\/photos\/.+\.(jpe?g|png)$/i.test(key)) {
+    // 书封面 cover.jpg 与 photos/ 同级放行：本就通过公开书架 /books/<slug>/cover.jpg
+    // 可访问，这里只是让社区卡片能用同一个 /photo/<key> 通道渲染（书架预览彩蛋）。
+    if (key.includes('..')
+        || !(/^users\/[^/]+\/photos\/.+\.(jpe?g|png)$/i.test(key)
+             || /^users\/[^/]+\/books\/[^/]+\/cover\.jpe?g$/i.test(key))) {
       return json({ error: 'not a photo' }, 400);
     }
     const obj = await env.FILES.get(key);
