@@ -26,10 +26,10 @@ async function token(scope) {
   return `${h}.${p}.${await hmacSign(`${h}.${p}`, SECRET)}`;
 }
 function env(seed = [], posts = []) { return { ...fakeD1(seed, posts), SESSION_SECRET: SECRET }; }
-function req(path, { method = "POST", body, auth } = {}) {
+function req(path, { method = "POST", body, auth, headers = {} } = {}) {
   return new Request("https://jianshuo.dev" + path, {
     method,
-    headers: { ...(auth ? { Authorization: "Bearer " + auth } : {}), "Content-Type": "application/json" },
+    headers: { ...(auth ? { Authorization: "Bearer " + auth } : {}), "Content-Type": "application/json", ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -138,7 +138,7 @@ describe("reco worker", () => {
     expect(r.status).toBe(503);
   });
 
-  it("feed 书架混入：所有人可见（SWR：首刷触发预热、二刷出书）", async () => {
+  it("feed 书架混入：X-VD-Build ≥ 330 可见（SWR：首刷预热、二刷出书）；老版本不混", async () => {
     const OWNER = "users/anon-ae209ac53499d51d513425503bd134b0/";   // 只决定封面 key 前缀
     const now = Date.now();
     const posts = [
@@ -154,16 +154,17 @@ describe("reco worker", () => {
     const pending = [];
     const fakeCtx = { waitUntil: (p) => pending.push(p) };
     try {
-      // 任意用户首刷：书列表接口太慢（实测 ~9s），feed 绝不同步等它——
-      // 首刷无书，但 waitUntil 里挂上了后台预热
+      // 新版客户端（X-VD-Build: 330）首刷：书列表接口太慢（实测 ~9s），feed 绝不
+      // 同步等它——首刷无书，但 waitUntil 里挂上了后台预热
       const t = await token("users/u1/");
-      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
+      const b330 = { "X-VD-Build": "330" };
+      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: b330 }), env([], posts), fakeCtx);
       const j1 = await r1.json();
       expect(j1.posts.some((p) => p.kind === "book")).toBe(false);
       expect(pending.length).toBe(1);
       await Promise.all(pending);
-      // 二刷：缓存已热，普通用户也看到书——字段齐全、时间倒序、推荐序覆盖
-      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
+      // 二刷：缓存已热，书混进来——字段齐全、时间倒序、推荐序覆盖
+      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: b330 }), env([], posts), fakeCtx);
       const j2 = await r2.json();
       const book = j2.posts.find((p) => p.kind === "book");
       expect(book.shareId).toBe("book-demo-book");
@@ -174,6 +175,11 @@ describe("reco worker", () => {
       expect(book.mine).toBe(false);       // 书卡不出「取消分享」菜单
       expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
       expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
+      // 缓存已热的前提下：老版本（低 build / 不带版本头）依然一本书都看不到
+      const r3 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t, headers: { "X-VD-Build": "329" } }), env([], posts), fakeCtx);
+      expect((await r3.json()).posts.some((p) => p.kind === "book")).toBe(false);
+      const r4 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env([], posts), fakeCtx);
+      expect((await r4.json()).posts.some((p) => p.kind === "book")).toBe(false);
     } finally { globalThis.fetch = realFetch; }
   });
 

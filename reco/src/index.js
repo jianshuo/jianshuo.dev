@@ -25,6 +25,7 @@ const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
 // CF 不保证连续请求落同一 isolate，没有这层的话每个冷 isolate 都要自己熬 ~25s
 // 预热，「刷两次」会退化成「刷 N 次」（2026-08-27 实测踩到）。
 const BOOKS_OWNER_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
+const BOOKS_MIN_BUILD = 330;   // 书卡首发 build（1.13(330)）；X-VD-Build 低于它不混书
 const BOOKS_TTL_MS = 10 * 60_000;
 const BOOKS_CACHE_URL = "https://voicedrop-reco.cache/books-feed-posts";
 let booksPreviewCache = { at: 0, posts: null, refreshing: false };
@@ -132,8 +133,11 @@ export default {
       }));
       const rankInput = rows.map((r) => ({ shareId: r.share_id, firstSharedAt: r.first_shared_at,
                                            author: r.author, replyCount: replyCounts[r.share_id] || 0 }));
-      // 书架进 feed：所有用户可见（见顶部 BOOKS_OWNER_SCOPE 注释）。
-      {
+      // 书架进 feed：只发给认识书卡的客户端（见顶部 BOOKS_OWNER_SCOPE 注释）。
+      // 客户端每个请求统一带 X-VD-Build（Networking.swift setBearer 收口，1.13(330) 起），
+      // 通用版本门槛：build ≥ 330（书卡点开进书架阅读页的首发版）才混书；老版本不带
+      // 此头 → parseInt NaN → 不混，feed 与从前一字不差，不存在点开失败。
+      if (parseInt(request.headers.get("X-VD-Build"), 10) >= BOOKS_MIN_BUILD) {
         const books = await booksPreviewPosts(ctx);
         if (books.length) {
           posts.push(...books);
