@@ -142,24 +142,34 @@ describe("reco worker", () => {
       { slug: "demo-book", title: "示例书", sub: "副标题", author: "王建硕",
         cover: true, coverAt: now, chapters: 12, createdAt: now - 5000 },
     ] }), { headers: { "Content-Type": "application/json" } });
+    const pending = [];
+    const fakeCtx = { waitUntil: (p) => pending.push(p) };
     try {
-      // 普通用户（先请求，确保不触发书列表 fetch/缓存）：无书
+      // 普通用户（先请求）：无书，也绝不触发书列表预热
       const t1 = await token("users/u1/");
-      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t1 }), env([], posts));
+      const r1 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t1 }), env([], posts), fakeCtx);
       const j1 = await r1.json();
       expect(j1.posts.some((p) => p.kind === "book")).toBe(false);
-      // 发布者本人：书混进来，字段齐全、时间倒序、推荐序覆盖
+      expect(pending.length).toBe(0);
+      // 发布者本人首刷：书列表接口太慢（实测 ~9s），feed 绝不同步等它——
+      // 首刷无书，但 waitUntil 里挂上了后台预热
       const t2 = await token(PREVIEW);
-      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts));
+      const r2 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts), fakeCtx);
       const j2 = await r2.json();
-      const book = j2.posts.find((p) => p.kind === "book");
+      expect(j2.posts.some((p) => p.kind === "book")).toBe(false);
+      expect(pending.length).toBe(1);
+      await Promise.all(pending);
+      // 二刷：缓存已热，书混进来，字段齐全、时间倒序、推荐序覆盖
+      const r3 = await worker.fetch(req("/reco/feed", { method: "GET", auth: t2 }), env([], posts), fakeCtx);
+      const j3 = await r3.json();
+      const book = j3.posts.find((p) => p.kind === "book");
       expect(book.shareId).toBe("book-demo-book");
       expect(book.coverPhotoKey).toBe(PREVIEW + "books/demo-book/cover.jpg");
       expect(book.hasPhoto).toBe(true);
       expect(book.count).toBe(12);
       expect(book.preview).toBe("副标题");
-      expect(j2.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
-      expect(new Set(j2.order)).toEqual(new Set(["a", "book-demo-book"]));
+      expect(j3.posts.map((p) => p.shareId)).toEqual(["a", "book-demo-book"]);  // 时间倒序
+      expect(new Set(j3.order)).toEqual(new Set(["a", "book-demo-book"]));
     } finally { globalThis.fetch = realFetch; }
   });
 

@@ -15,39 +15,54 @@ const ID_RE = /^[0-9A-Za-z_-]{1,32}$/;
 // —— 书架预览彩蛋（2026-08-27）：只对书发布者本人的 feed 混入公开书架的所有书，
 // 先感受「书出现在社区里」的效果；其他用户的响应一字不差。撤掉 = 删本段与 feed
 // 分支里的调用，重新 deploy。书条目点开会取不到分享快照（没有真 shareId），预览
-// 阶段的已知限制。列表来自公开 /books/?format=json，60s isolate 缓存，失败静默。
+// 阶段的已知限制。
+// 书列表来自公开 /voicedrop/books/?format=json——该函数无缓存、97 本书逐本读
+// 标题，实测一次要 ~9s，绝不能让 feed 同步等它（会拖垮正常刷社区）。所以走
+// stale-while-revalidate：feed 只取 isolate 缓存（可能为空/过期），缺了就
+// ctx.waitUntil 后台预热（给足 20s）。冷启动第一刷没书、几秒后再刷就有。
 const BOOKS_PREVIEW_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
-let booksPreviewCache = { at: 0, posts: null };
-async function booksPreviewPosts() {
-  if (booksPreviewCache.posts && Date.now() - booksPreviewCache.at <= 60_000) return booksPreviewCache.posts;
+const BOOKS_TTL_MS = 10 * 60_000;
+let booksPreviewCache = { at: 0, posts: null, refreshing: false };
+async function refreshBooksPreview() {
+  if (booksPreviewCache.refreshing) return;
+  booksPreviewCache.refreshing = true;
   try {
-    const r = await fetch("https://jianshuo.dev/voicedrop/books/?format=json", { signal: AbortSignal.timeout(4000) });
-    if (!r.ok) return booksPreviewCache.posts || [];
-    const j = await r.json();
-    booksPreviewCache = {
-      at: Date.now(),
-      posts: (j.books || []).map((b) => ({
-        shareId: "book-" + b.slug,
-        author: b.author || "王建硕",
-        title: b.title || b.slug,
-        ...(b.sub ? { preview: b.sub } : {}),
-        ...(b.cover ? { coverPhotoKey: `${BOOKS_PREVIEW_SCOPE}books/${b.slug}/cover.jpg` } : {}),
-        hasPhoto: !!b.cover,
-        count: b.chapters || 0,
-        firstSharedAt: b.createdAt || 0,
-        updatedAt: b.createdAt || 0,
-        mine: false, likes: 0, replies: 0, liked: false,
-        kind: "book",
-      })),
-    };
-  } catch {
-    return booksPreviewCache.posts || [];
+    const r = await fetch("https://jianshuo.dev/voicedrop/books/?format=json", { signal: AbortSignal.timeout(20000) });
+    if (r.ok) {
+      const j = await r.json();
+      booksPreviewCache = {
+        at: Date.now(),
+        refreshing: false,
+        posts: (j.books || []).map((b) => ({
+          shareId: "book-" + b.slug,
+          author: b.author || "王建硕",
+          title: b.title || b.slug,
+          ...(b.sub ? { preview: b.sub } : {}),
+          ...(b.cover ? { coverPhotoKey: `${BOOKS_PREVIEW_SCOPE}books/${b.slug}/cover.jpg` } : {}),
+          hasPhoto: !!b.cover,
+          count: b.chapters || 0,
+          firstSharedAt: b.createdAt || 0,
+          updatedAt: b.createdAt || 0,
+          mine: false, likes: 0, replies: 0, liked: false,
+          kind: "book",
+        })),
+      };
+      return;
+    }
+  } catch {}
+  booksPreviewCache.refreshing = false;   // 失败保留旧值，下次请求再试
+}
+function booksPreviewPosts(ctx) {
+  const stale = !booksPreviewCache.posts || Date.now() - booksPreviewCache.at > BOOKS_TTL_MS;
+  if (stale) {
+    const p = refreshBooksPreview();
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(p);
   }
-  return booksPreviewCache.posts;
+  return booksPreviewCache.posts || [];
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean); // ['reco','engage','<id>'] | ['reco','rank']
@@ -96,7 +111,7 @@ export default {
                                            author: r.author, replyCount: replyCounts[r.share_id] || 0 }));
       // 书架预览：只有发布者本人的 feed 才混书（见顶部 BOOKS_PREVIEW_SCOPE 注释）。
       if (scope === BOOKS_PREVIEW_SCOPE) {
-        const books = await booksPreviewPosts();
+        const books = booksPreviewPosts(ctx);
         if (books.length) {
           posts.push(...books);
           posts.sort((a, b) => (b.firstSharedAt || 0) - (a.firstSharedAt || 0));
