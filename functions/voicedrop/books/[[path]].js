@@ -9,6 +9,9 @@
 // 自己的用户 token 走 PUT /files/api/upload/books/<slug>/<file>，upload 路由把
 // key 锁进调用者 scope，agent 拿不到也不该拿 FILES_TOKEN，所以公开路由迁就写端。
 import { bearerToken, verifySession, anonScopeFromToken } from '../../lib/auth.js';
+// 书没有 <meta name="author"> 时，按书主人 owner 显示作者名——与社区文章同一套
+// （profile.name → id 前 6 位大写），2026-08-27。
+import { readProfileName } from '../../lib/style-store.js';
 // key 钉死在该 scope 的 books/ 尾段下，桶里其他东西（articles/、WECHAT.json…）
 // 够不着，所以不需要 photo 那样的文件类型白名单。
 //
@@ -28,6 +31,9 @@ import { bearerToken, verifySession, anonScopeFromToken } from '../../lib/auth.j
 //                      反复重发迭代），其余（pdf/图片等大文件）缓存一天。
 
 const PUBLISHER = 'users/anon-ae209ac53499d51d513425503bd134b0/books/';
+// 发布者账号 scope（去掉尾段 books/）：存量老书没有 _src/book.json、拿不到 owner，
+// 一律回落到这个账号——公开书架历来就是发布者(建硕)名下，无主老书归它，仍显示「王建硕」。
+const PUBLISHER_SCOPE = PUBLISHER.replace(/books\/$/, '');
 
 // 类目（2026-08-17 定的六个词）：书架导航 + 每本书的标签。
 // 新书优先读自己 index.html 里的 <meta name="category" content="…">（写书 skill
@@ -427,7 +433,8 @@ async function collectBooks(env, viewerScope = '') {
       if (o) {
         const b = JSON.parse(await o.text());
         if (b.hidden === true)
-          return viewerScope && b.owner === viewerScope ? { slug, hidden: true } : null;
+          return viewerScope && b.owner === viewerScope ? { slug, hidden: true, owner: b.owner } : null;
+        return { slug, hidden: false, owner: b.owner };   // owner 带出去给作者名用
       }
     } catch {}
     return { slug, hidden: false };
@@ -439,7 +446,7 @@ async function collectBooks(env, viewerScope = '') {
   // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
   // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
   // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
-  const books = (await Promise.all(shown.map(async ({ slug, hidden }) => {
+  const books = (await Promise.all(shown.map(async ({ slug, hidden, owner }) => {
     let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
     try {
       const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
@@ -470,6 +477,13 @@ async function collectBooks(env, viewerScope = '') {
         cursor = listed.truncated ? listed.cursor : undefined;
       } while (cursor);
     } catch {}
+    // 没有 <meta name="author"> 的书 → 按书主人 owner 显示：profile.name，没设置则
+    // id 前 6 位大写（如 998DCD），和社区文章一套。owner 缺失的存量老书回落发布者账号
+    // （ae209ac5 → 建硕）。有 meta 署名的书不进这里，原样用书自报的作者。
+    if (!author) {
+      try { author = await readProfileName(env, owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
+      catch {}
+    }
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
     return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt,

@@ -43,7 +43,8 @@ async function refreshBooksPreview() {
         refreshing: false,
         posts: (j.books || []).map((b) => ({
           shareId: "book-" + b.slug,
-          author: b.author || "王建硕",
+          author: b.author || "匿名",   // 作者名由上游 books JSON 按 owner 定（profile.name / id 前6位）；这里只做极端兜底，不再硬编码建硕
+
           title: b.title || b.slug,
           ...(b.sub ? { preview: b.sub } : {}),
           ...(b.cover ? { coverPhotoKey: `${BOOKS_OWNER_SCOPE}books/${b.slug}/cover.jpg` } : {}),
