@@ -246,9 +246,23 @@ async function uploadAsset(localPath, destName) {
   const t = await r.text();
   if (!r.ok) { console.error(`上传失败 ${key}: ${r.status} ${t}`); process.exit(1); }
   console.log(`ok  ${key}  →  ${publicUrl(book.slug, destName)}`);
+  if (destName === "cover.jpg") {
+    // 封面标记归口进 book.json（书架接口读 cover/coverAt 字段，不再探测 R2 对象）。
+    book.cover = true; book.coverAt = Date.now();
+    writeFileSync(join(workdir, "book.json"), JSON.stringify(book, null, 2) + "\n");
+    await syncBookJson(book);
+  }
 }
 
-async function doIndex() { await upload(book.slug, fileName.index, renderIndex(book)); await syncBookJson(book); }
+async function doIndex() {
+  // 书的诞生时间：首次发布目录页时盖章进 book.json——书架接口只读 book.json，
+  // 不再靠列举 R2 找最老文件当创建时间（2026-08-27 book.json 归口单一真源）。
+  if (!book.createdAt) {
+    book.createdAt = Date.now();
+    writeFileSync(join(workdir, "book.json"), JSON.stringify(book, null, 2) + "\n");
+  }
+  await upload(book.slug, fileName.index, renderIndex(book)); await syncBookJson(book);
+}
 async function doIntro() {
   const b = readFrag("intro.html"); if (!b) { console.error("缺 intro.html"); process.exit(1); }
   await upload(book.slug, fileName.intro, renderIntro(book, b));
@@ -307,6 +321,12 @@ async function doPull(slug) {
     process.exit(3);
   }
   const b = JSON.parse(await r.text());
+  if (b.legacy) {
+    // legacy 老书的 book.json 是 2026-08-27 归口迁移补录的书架元数据，_src 无章节源稿。
+    console.error(`这是 legacy 老书（book.json 为迁移补录件），无章节源稿。`);
+    console.error(`按 SKILL.md「修书模式」的手工重建路径：抓渲染页 ${pub("index.html")} 提取 <article> 内容。`);
+    process.exit(3);
+  }
   mkdirSync(join(workdir, "chapters"), { recursive: true });
   writeFileSync(join(workdir, "book.json"), JSON.stringify(b, null, 2) + "\n");
   console.log(`ok  book.json  （${b.title} · ${b.chapters?.length ?? 0} 章）`);

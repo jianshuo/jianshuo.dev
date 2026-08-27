@@ -411,9 +411,13 @@ const splitTitle = (t) => {
   return [t.trim(), ''];
 };
 
-/// 书架数据：一个 delimiter listing 拿书的文件夹（delimitedPrefixes），再逐本读
-/// <slug>/index.html 的 <title> 当书名。必须 cursor 翻页：R2 的 delimited list 按
-/// 「扫过的 key 数」截断，不是按返回的前缀数（admin/llm 页曾因此冻在 2026-07-13）。
+/// 书架数据（2026-08-27 book.json 归口）：一个 delimiter listing 拿书的文件夹，
+/// 再逐本**只读 `_src/book.json`**——title/author/category/hidden/owner/createdAt/
+/// cover/coverAt/章节数全部以它为单一真源（build.mjs 发布时维护；存量书由归口
+/// 迁移一次性补齐，老书补录件带 legacy:true）。此前的「读 index.html 抠标题 +
+/// 全量列文件夹考古时间戳」已废——那套是每刷 ~350 次 R2 操作、9 秒的元凶。
+/// listing 必须 cursor 翻页：R2 delimited list 按「扫过的 key 数」截断，不是按
+/// 返回的前缀数（admin/llm 页曾因此冻在 2026-07-13）。
 async function collectBooks(env, viewerScope = '') {
   const slugs = [];
   let cursor;
@@ -423,70 +427,38 @@ async function collectBooks(env, viewerScope = '') {
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 
-  // 不上架的书：book.json 里写 "hidden": true（build.mjs 会镜像到 _src/book.json），
-  // 文件仍在 R2（直链可开），公开书架不出。**主人例外（2026-08-23）**：JSON 接口
-  // 带登录态且 book.json 的 owner == 请求者 scope 时仍列出、条目标 hidden——App
-  // 书架给自己的隐藏书贴「隐藏」角标；别人依旧看不见。
-  const visible = await Promise.all(slugs.map(async (slug) => {
+  const books = (await Promise.all(slugs.map(async (slug) => {
+    let b = null;
     try {
       const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
-      if (o) {
-        const b = JSON.parse(await o.text());
-        if (b.hidden === true)
-          return viewerScope && b.owner === viewerScope ? { slug, hidden: true, owner: b.owner } : null;
-        return { slug, hidden: false, owner: b.owner };   // owner 带出去给作者名用
-      }
+      if (o) b = JSON.parse(await o.text());
     } catch {}
-    return { slug, hidden: false };
-  }));
-  const shown = visible.filter(Boolean);
-
-  // 书名 = <slug>/index.html 的 <title>；作者 = 同页 <meta name="author">（写书
-  // skill 2026-08-11 起按提交者署名输出；没有此 meta 的存量书都是建硕的）。
-  // 诞生时间 = 夹内最早的 uploaded（书会反复重发迭代，index.html 的 uploaded 会
-  // 跟着刷新；最早的那个文件基本不动，当创建时间最稳）。同一次全量列举顺手数出
-  // cover.jpg 有无 + 顶层章节 html 数（index/intro 不算章），HTML 和 JSON 共用。
-  const books = (await Promise.all(shown.map(async ({ slug, hidden, owner }) => {
-    let title = slug, author = '', category = CATEGORY_OF[slug] || '', createdAt = 0, cover = false, coverAt = 0, chapters = 0;
-    try {
-      const obj = await env.FILES.get(`${PUBLISHER}${slug}/index.html`);
-      // 没有 index.html 的目录不是书——失败/流产的写书任务只留下 _src 登记的
-      // 空壳（2026-08-24 曾有三本幽灵书以 slug 当书名混上书架），一律不上架。
-      if (!obj) return null;
-      {
-        const html = await obj.text();
-        const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-        if (m && m[1].trim()) title = m[1].trim();
-        const a = /<meta\s+name="author"\s+content="([^"]*)"/i.exec(html);
-        if (a && a[1].trim()) author = a[1].trim().slice(0, 20);
-        const c = /<meta\s+name="category"\s+content="([^"]*)"/i.exec(html);
-        if (c && c[1].trim()) category = c[1].trim().slice(0, 8);
-      }
-      let cursor;
-      do {
-        const listed = await env.FILES.list({ prefix: `${PUBLISHER}${slug}/`, limit: 1000, ...(cursor ? { cursor } : {}) });
-        for (const o of listed.objects || []) {
-          const t = new Date(o.uploaded).getTime();
-          if (t && (!createdAt || t < createdAt)) createdAt = t;
-          const rel = o.key.slice(PUBLISHER.length + slug.length + 1);
-          if (rel.includes('/')) continue;                     // 只看顶层文件
-          const leaf = rel.toLowerCase();
-          if (leaf === 'cover.jpg') { cover = true; coverAt = t; }
-          else if (/\.html?$/.test(leaf) && leaf !== 'index.html' && leaf !== 'intro.html') chapters++;
-        }
-        cursor = listed.truncated ? listed.cursor : undefined;
-      } while (cursor);
-    } catch {}
-    // 没有 <meta name="author"> 的书 → 按书主人 owner 显示：profile.name，没设置则
-    // id 前 6 位大写（如 998DCD），和社区文章一套。owner 缺失的存量老书回落发布者账号
-    // （ae209ac5 → 建硕）。有 meta 署名的书不进这里，原样用书自报的作者。
+    // 上架条件 = book.json 存在且 createdAt 已盖章（build.mjs 首次发布目录页时盖）。
+    // 失败/流产任务只留 _src 空壳、没有 createdAt → 不上架（幽灵书拦截，语义与
+    // 旧的「看 index.html 存在」一致）。
+    if (!b || !b.createdAt) return null;
+    // hidden 书主人例外（2026-08-23）：带登录态且 owner == 请求者时仍列出、条目标
+    // hidden——App 书架贴「隐藏」角标；别人看不见。
+    const hidden = b.hidden === true;
+    if (hidden && !(viewerScope && b.owner === viewerScope)) return null;
+    // 作者：book.json 自报优先；没有的按书主人 owner 显示 profile.name（没设置则
+    // id 前 6 位大写），owner 缺失的老书回落发布者账号（ae209ac5 → 建硕）。
+    let author = String(b.author || '').trim().slice(0, 20);
     if (!author) {
-      try { author = await readProfileName(env, owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
+      try { author = await readProfileName(env, b.owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
       catch {}
     }
+    const title = String(b.title || slug);
+    const category = String(b.category || CATEGORY_OF[slug] || '').slice(0, 8);
+    // 章节数：chapters 数组数 done（新书）；迁移补录的老书存的是数值 chaptersCount。
+    const chapters = Array.isArray(b.chapters)
+      ? b.chapters.filter((x) => x && x.status === 'done').length
+      : (Number(b.chaptersCount) || 0);
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
-    return { slug, title, main, sub, c, c2, author, category, cover, coverAt, chapters, createdAt,
+    return { slug, title, main, sub, c, c2, author, category,
+             cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
+             chapters, createdAt: Number(b.createdAt) || 0,
              ...(hidden ? { hidden: true } : {}) };
   }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
