@@ -1624,7 +1624,10 @@ async function handleRequest(context) {
     });
     let removed = 0;
     try {
-      const { results } = await env.RECO_DB.prepare('SELECT share_id FROM community_posts').all();
+      // 书帖（kind='book'）是 D1 原生行——由 agent /agent/book/community 写时登记，
+      // **没有** R2 community/*.json 指针，绝不能按「R2 没有」清掉（2026-08-27 上线
+      // 当天全部 98 行被这里误删过一轮）。对账只管 R2 真源覆盖的 article/prompt 帖。
+      const { results } = await env.RECO_DB.prepare("SELECT share_id FROM community_posts WHERE kind IS NULL OR kind!='book'").all();
       for (const r of results || []) {
         if (!seen.has(r.share_id)) { await indexDelete(r.share_id); removed++; }
       }
