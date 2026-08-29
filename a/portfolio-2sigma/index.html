@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>组合 2σ 看板</title>
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    --bg: #faf8f4;
+    --card: #ffffff;
+    --ink: #1f2328;
+    --ink-2: #5c6570;
+    --ink-3: #8a929c;
+    --line: #e8e3da;
+    --red: #c62828;   /* 涨超 2σ（红涨绿跌） */
+    --green: #1e7d32; /* 跌超 2σ */
+    --tint: #eef2e9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 20px 64px; }
+  header h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: .5px; }
+  header .sub { color: var(--ink-2); margin: 0 0 4px; }
+  header .sub em { font-style: normal; color: var(--ink); }
+  .meta { color: var(--ink-3); font-size: 13px; margin-bottom: 20px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 14px 0 26px; font-size: 14px; color: var(--ink-2); }
+  .legend .chip { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 28px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .tile.port { background: var(--tint); }
+  .tile .sym { font-size: 13px; font-weight: 600; color: var(--ink-2); display: flex; justify-content: space-between; }
+  .tile .sym .role { font-weight: 400; color: var(--ink-3); }
+  .tile .day { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 2px 0; }
+  .tile .rows { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .tile .rows b { color: var(--ink-2); font-weight: 600; }
+
+  .tablecard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 6px 0; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 780px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 14px; text-align: right; font-size: 15px; white-space: nowrap; }
+  th { color: var(--ink-2); font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--line); }
+  th .sig { display: block; font-weight: 400; color: var(--ink-3); font-size: 12px; }
+  td:first-child, th:first-child { text-align: left; color: var(--ink-2); font-size: 13px; position: sticky; left: 0; background: var(--card); }
+  tbody tr:hover td { background: #f7f4ee; }
+  tbody tr:hover td:first-child { background: #f7f4ee; }
+  td.up { color: var(--red); font-weight: 700; }
+  td.down { color: var(--green); font-weight: 700; }
+  td.na { color: var(--ink-3); }
+  tr.cum td { border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13px; padding-top: 10px; }
+  tr.cum td:first-child { font-weight: 600; }
+  .tag { display: inline-block; margin-left: 6px; font-size: 11px; color: #a05a00; background: #fdf1dc; border-radius: 6px; padding: 0 6px; vertical-align: 1px; }
+
+  .note { color: var(--ink-3); font-size: 13px; line-height: 1.8; margin-top: 22px; }
+  .note b { color: var(--ink-2); }
+  #status { color: var(--ink-3); padding: 40px 0; text-align: center; }
+  a { color: #1c5cab; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>组合 2σ 看板</h1>
+    <p class="sub">「两个 σ 以内，不问为什么。」 — 建仓 <em>2026-08-28</em>，六标的，股债 70/30</p>
+    <div class="meta" id="meta">数据加载中…</div>
+  </header>
+
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:var(--ink)"></span>±2σ 以内 · 正常呼吸</span>
+    <span class="chip"><span class="dot" style="background:var(--red)"></span>▲ 涨超 2σ · 值得看一眼</span>
+    <span class="chip"><span class="dot" style="background:var(--green)"></span>▼ 跌超 2σ · 值得看一眼</span>
+  </div>
+
+  <div id="status">正在拉取六个标的的日线数据…</div>
+  <div class="tiles" id="tiles" hidden></div>
+  <div class="tablecard" id="tablecard" hidden>
+    <table id="tbl"></table>
+  </div>
+
+  <div class="note">
+    <b>怎么读：</b>每格是该标的当日涨跌幅（相对前一交易日收盘）。σ 取该标的此前 252 个交易日日收益率的标准差（逐日滚动，不含当日）；
+    单日波动在 ±2σ 以内属于统计噪音，标黑不解读——历史上约 95% 的日子都该是黑色。红/绿才是「超出正常呼吸」的日子。
+    组合列按建仓股数 VTI 18 / VXUS 45 / BND 82 / QQQ 1 / FLSA 29 / HOOD 9 加权。悬停任一格子可看收盘价、当日 σ 与几个 σ。<br>
+    <b>基准：</b>累计涨跌以 2026-08-28 收盘价为基准（FLSA 建仓单当晚未成交，同样按 08-28 收盘对齐口径）。
+    数据来自 Yahoo Finance 日线，经本站代理，边缘缓存 10 分钟；美股交易时段内最新一行为盘中数据，收盘后自动定格。
+  </div>
+</div>
+
+<script>
+const SYMBOLS = ["VTI", "VXUS", "BND", "QQQ", "FLSA", "HOOD"];
+const SHARES  = { VTI: 18, VXUS: 45, BND: 82, QQQ: 1, FLSA: 29, HOOD: 9 };
+const ROLES   = { VTI: "美国全市场", VXUS: "国际宽基", BND: "债券压舱", QQQ: "科技卫星", FLSA: "沙特卫星", HOOD: "个股练手" };
+const BASE_DATE = "2026-08-28";   // 建仓日（美东）
+const WINDOW = 252;               // σ 滚动窗口（交易日）
+const MIN_WINDOW = 60;
+
+const fmtDate = ts => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(ts * 1000));
+const fmtPct = (x, digits = 2) => (x >= 0 ? "+" : "−") + Math.abs(x * 100).toFixed(digits) + "%";
+const weekday = d => "日一二三四五六"[new Date(d + "T12:00:00-04:00").getUTCDay()];
+
+function std(arr) {
+  const n = arr.length;
+  if (n < 2) return null;
+  const m = arr.reduce((a, b) => a + b, 0) / n;
+  return Math.sqrt(arr.reduce((a, b) => a + (b - m) * (b - m), 0) / (n - 1));
+}
+
+// 把一条 {t,c} 序列整理成 [{d, close, ret, sigma}]，σ 用此前 WINDOW 日收益率滚动计算
+function buildSeries(t, c) {
+  const rows = [];
+  const rets = [];
+  for (let i = 0; i < t.length; i++) {
+    const ret = i > 0 ? c[i] / c[i - 1] - 1 : null;
+    let sigma = null;
+    if (rets.length >= MIN_WINDOW) sigma = std(rets.slice(-WINDOW));
+    rows.push({ d: fmtDate(t[i]), close: c[i], ret, sigma });
+    if (ret != null) rets.push(ret);
+  }
+  return rows;
+}
+
+function classify(ret, sigma) {
+  if (ret == null) return "";
+  if (sigma != null && ret > 2 * sigma) return "up";
+  if (sigma != null && ret < -2 * sigma) return "down";
+  return "";
+}
+
+function cellHTML(row) {
+  if (!row || row.ret == null) return '<td class="na">—</td>';
+  const cls = classify(row.ret, row.sigma);
+  const arrow = cls === "up" ? "▲ " : cls === "down" ? "▼ " : "";
+  const z = row.sigma ? (row.ret / row.sigma).toFixed(1) : "?";
+  const sigTxt = row.sigma ? (row.sigma * 100).toFixed(2) + "%" : "—";
+  const tip = `收盘 $${row.close.toFixed(2)}　当日 ${fmtPct(row.ret)}　σ=${sigTxt}　即 ${z}σ`;
+  return `<td class="${cls}" title="${tip}">${arrow}${fmtPct(row.ret)}</td>`;
+}
+
+async function main() {
+  let data;
+  try {
+    const r = await fetch(`/api/market?symbols=${SYMBOLS.join(",")}&range=2y`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+  } catch (e) {
+    document.getElementById("status").textContent = "行情拉取失败：" + e.message + "（刷新重试）";
+    return;
+  }
+
+  const per = {};    // sym -> Map(date -> row)
+  const list = {};   // sym -> rows 数组
+  let intraday = false;
+  for (const sym of SYMBOLS) {
+    const q = data.quotes[sym];
+    if (!q || q.error) { per[sym] = new Map(); list[sym] = []; continue; }
+    const rows = buildSeries(q.t, q.c);
+    list[sym] = rows;
+    per[sym] = new Map(rows.map(r => [r.d, r]));
+    if (q.regularEnd && data.fetched < q.regularEnd) intraday = true;
+  }
+
+  // 组合序列：六标的都有数的日期上，按股数加权求市值
+  const common = list.VTI.map(r => r.d).filter(d => SYMBOLS.every(s => per[s].has(d)));
+  const pv = common.map(d => SYMBOLS.reduce((sum, s) => sum + SHARES[s] * per[s].get(d).close, 0));
+  const portRows = buildSeries(common.map((d, i) => i), pv).map((r, i) => ({ ...r, d: common[i] }));
+  const portMap = new Map(portRows.map(r => [r.d, r]));
+
+  // 建仓日以来的行（含 08-28 当天），倒序
+  const days = list.VTI.map(r => r.d).filter(d => d >= BASE_DATE).reverse();
+  const base = {};
+  for (const sym of SYMBOLS) base[sym] = per[sym].get(BASE_DATE)?.close ?? null;
+  const basePort = portMap.get(BASE_DATE)?.close ?? null;
+
+  // 顶部 tiles：最新一天
+  const latest = days[0];
+  const tiles = document.getElementById("tiles");
+  const tileFor = (label, role, row, baseClose, isPort) => {
+    const cls = row ? classify(row.ret, row.sigma) : "";
+    const cum = row && baseClose ? row.close / baseClose - 1 : null;
+    return `<div class="tile${isPort ? " port" : ""}">
+      <div class="sym"><span>${label}</span><span class="role">${role}</span></div>
+      <div class="day" style="color:${cls === "up" ? "var(--red)" : cls === "down" ? "var(--green)" : "var(--ink)"}">${row && row.ret != null ? fmtPct(row.ret) : "—"}</div>
+      <div class="rows">${isPort ? "市值 $" + (row ? row.close.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "—") : "收盘 $" + (row ? row.close.toFixed(2) : "—")}<br>
+      2σ ±${row && row.sigma ? (2 * row.sigma * 100).toFixed(2) + "%" : "—"} · 累计 <b>${cum != null ? fmtPct(cum, 1) : "—"}</b></div>
+    </div>`;
+  };
+  tiles.innerHTML =
+    tileFor("组合", "六标的加权", portMap.get(latest), basePort, true) +
+    SYMBOLS.map(s => tileFor(s, ROLES[s], per[s].get(latest), base[s], false)).join("");
+  tiles.hidden = false;
+
+  // 表格
+  const head = `<thead><tr><th>日期</th>${SYMBOLS.map(s =>
+    `<th>${s}<span class="sig">2σ ±${(2 * (list[s].at(-1)?.sigma ?? 0) * 100).toFixed(2)}%</span></th>`).join("")}
+    <th>组合<span class="sig">2σ ±${(2 * (portRows.at(-1)?.sigma ?? 0) * 100).toFixed(2)}%</span></th></tr></thead>`;
+
+  const bodyRows = days.map((d, i) => {
+    const tag = i === 0 && intraday ? '<span class="tag">盘中</span>' : "";
+    return `<tr><td>${d}（${weekday(d)}）${tag}</td>${SYMBOLS.map(s => cellHTML(per[s].get(d))).join("")}${cellHTML(portMap.get(d))}</tr>`;
+  }).join("");
+
+  const cumCell = (row, b) => row && b ? `<td>${fmtPct(row.close / b - 1, 1)}</td>` : '<td class="na">—</td>';
+  const cumRow = `<tr class="cum"><td>自建仓累计</td>${SYMBOLS.map(s => cumCell(per[s].get(latest), base[s])).join("")}${cumCell(portMap.get(latest), basePort)}</tr>`;
+
+  document.getElementById("tbl").innerHTML = head + `<tbody>${cumRow}${bodyRows}</tbody>`;
+  document.getElementById("tablecard").hidden = false;
+  document.getElementById("status").hidden = true;
+
+  const fetchedAt = new Date(data.fetched * 1000);
+  document.getElementById("meta").textContent =
+    `行情更新于 ${fetchedAt.toLocaleString("zh-CN", { hour12: false })}（东京时间）· ${intraday ? "美股盘中，最新一行未定格" : "美股已收盘"}`;
+}
+main();
+</script>
+</body>
+</html>
