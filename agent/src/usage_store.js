@@ -153,9 +153,7 @@ export async function mintLedger(db, now, limit = 80) {
 
   const day0 = now - (now % DAY);
   const today = await db.prepare(
-    // kind='feed' 必须带上：本表还住着 referral / claim 等玩法，漏了会把它们的
-    // 行数算进「今日投币」（2026-08-30 修，claim 上线前顺手）。
-    "SELECT COALESCE(SUM(actor_uy+beneficiary_uy),0) AS minted_uy, COUNT(*) AS events FROM mint WHERE kind='feed' AND ts>=?"
+    "SELECT COALESCE(SUM(actor_uy+beneficiary_uy),0) AS minted_uy, COUNT(*) AS events FROM mint WHERE ts>=?"
   ).bind(day0).first();
 
   // 近 7 天铸币量（币价分母用，与 /agent/feed/state 同口径）
