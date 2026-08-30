@@ -6,7 +6,7 @@ vi.mock("agents", () => ({
 }));
 import { fakeD1, fakeFetch, usageSql } from "./fakes.js";
 import { handleIapRoute, processTransaction, revokeTransaction, appleJWT, decodeJWSPayload } from "../src/iap.js";
-import { SUB_PRODUCT_MONTHLY, SUB_GRANT_SUANLI, SUB_BUCKET_GRACE_MS, suanliToUY, uyToSuanli, SIGNUP_GRANT_UY } from "../src/usage.js";
+import { SUB_PRODUCT_MONTHLY, SUB_PRODUCT_PRO, SUB_GRANT_SUANLI, SUB_BUCKET_GRACE_MS, suanliToUY, uyToSuanli, SIGNUP_GRANT_UY } from "../src/usage.js";
 import { anonScopeFromToken } from "../../functions/lib/auth.js";
 
 const SQL = usageSql();
@@ -256,6 +256,39 @@ describe("档位表（SUB_PRODUCTS）", () => {
     const env = mkEnv(db, appleRoute(txnPayload()));
     const r = await call(env, "/agent/iap/claim", { method: "POST", token: TOK, body: { transaction_id: "1000000001" } });
     expect((await r.json()).suanli).toBe(SUB_PRODUCTS[SUB_PRODUCT_MONTHLY]);
+  });
+
+  it("高档 monthly_199 在表里 → 发 2000（写一本书 320，主档 200 盖不住才有这档）", async () => {
+    const { SUB_PRODUCTS } = await import("../src/usage.js");
+    expect(SUB_PRODUCT_PRO).toMatch(/_199$/);
+    expect(SUB_PRODUCTS[SUB_PRODUCT_PRO]).toBe(2000);
+    const db = fakeD1(SQL);
+    const txn = txnPayload({ productId: SUB_PRODUCT_PRO });
+    const env = mkEnv(db, appleRoute(txn));
+    const r = await call(env, "/agent/iap/claim", { method: "POST", token: TOK, body: { transaction_id: txn.transactionId } });
+    const body = await r.json();
+    expect(body.granted).toBe(true);
+    expect(body.suanli).toBe(2000);
+    expect(await suanli(db, await anonScopeFromToken(TOK))).toBe(SIGNUP_SUANLI + 2000);
+  });
+
+  it("主档升高档（同一 original_txn_id，新交易）→ 再发 2000，status 换成高档 ID", async () => {
+    const db = fakeD1(SQL);
+    const scope = await anonScopeFromToken(TOK);
+    const now = Date.now();
+    // 先订主档
+    const first = txnPayload();
+    await processTransaction(db, first, "Production", scope, now);
+    expect(await suanli(db, scope)).toBe(SIGNUP_SUANLI + SUB_GRANT_SUANLI);
+    // 升档：同一 original_txn_id，新的 transactionId + 高档 productId
+    const up = txnPayload({ transactionId: "1000000002", productId: SUB_PRODUCT_PRO });
+    const res = await processTransaction(db, up, "Production", scope, now);
+    expect(res).toMatchObject({ ok: true, granted: true });
+    expect(await suanli(db, scope)).toBe(SIGNUP_SUANLI + SUB_GRANT_SUANLI + 2000);
+    const env = mkEnv(db, {});
+    const st = await (await call(env, "/agent/iap/status", { token: TOK })).json();
+    expect(st.product_id).toBe(SUB_PRODUCT_PRO);
+    expect(st.monthly_suanli).toBe(2000);
   });
 });
 

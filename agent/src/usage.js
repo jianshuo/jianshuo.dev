@@ -88,10 +88,14 @@ export const CAMPAIGN_EXPIRE_DAYS = 90;   // 活动赠送默认 3 个月
 // 订阅档位：产品 ID → 每月发放算力。ID 里写死价格（monthly_19_9 = ¥19.9/月），
 // 以后加档（如 ¥49.9）只在这里加一行 + ASC 建同名产品，服务端零改动。
 export const SUB_PRODUCTS = {
-  "com.wangjianshuo.VoiceDrop.sub.monthly_19_9": 200,   // ¥19.9/月 → 200 算力
+  "com.wangjianshuo.VoiceDrop.sub.monthly_19_9": 200,     // ¥19.9/月 → 200 算力
+  "com.wangjianshuo.VoiceDrop.sub.monthly_199": 2000,    // ¥199/月 → 2000 算力（高档）
 };
 export const SUB_GRANT_SUANLI = 200;      // 当前主档发放量（展示兜底用，发放以 SUB_PRODUCTS 为准）
 export const SUB_PRODUCT_MONTHLY = "com.wangjianshuo.VoiceDrop.sub.monthly_19_9"; // 当前主档（iOS 请求的 ID）
+// 高档（同一订阅组，升档由 StoreKit 按比例补差价）：写一本书 320 算力，主档每月
+// 200 根本盖不住——「订着但当月烧光」「订了也不够」这两个时刻推的就是它。
+export const SUB_PRODUCT_PRO = "com.wangjianshuo.VoiceDrop.sub.monthly_199";
 export const SUB_BUCKET_GRACE_MS = 6 * 3600 * 1000;  // 订阅桶过期宽限（续费空窗，spec §12.2）
 export const expiryAfterDays = (now, days) => now + days * DAY_MS;
 
