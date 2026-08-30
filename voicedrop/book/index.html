@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="领 320 算力，写一本你自己的书。一辈子送一次。">
+<meta property="og:title" content="领 320 算力，写一本你自己的书">
+<meta property="og:description" content="说个想法，VoiceDrop 替你把整本书写出来。一辈子送一次。">
+<title>领 320 算力写一本书 · VoiceDrop</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#FAF6EF;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;color:#2A2521}
+  a{color:inherit}
+  .vd-btn:active{transform:scale(.96)}
+  .card{background:#fff;border-radius:12px;padding:16px 17px;text-align:left}
+  .row{display:flex;gap:12px;align-items:flex-start}
+  .row+.row{margin-top:14px}
+  .ico{flex:0 0 30px;height:30px;border-radius:8px;background:#FBEAD2;color:#C98A2E;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .t{font:600 14px/1.5 -apple-system;margin:0}
+  .s{font:400 12.5px/1.6 -apple-system;color:#8A8175;margin:2px 0 0}
+</style>
+</head>
+<body>
+
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;text-align:center">
+
+  <a href="https://voicedrop.cn/" style="text-decoration:none;display:flex;align-items:flex-end;gap:9px">
+    <span style="display:inline-flex;align-items:flex-end;gap:2.5px;height:24px"><span style="width:3px;height:10px;background:#D8593B;border-radius:2px"></span><span style="width:3px;height:18px;background:#D8593B;border-radius:2px"></span><span style="width:3px;height:24px;background:#D8593B;border-radius:2px"></span><span style="width:3px;height:15px;background:#D8593B;border-radius:2px"></span><span style="width:3px;height:8px;background:#D8593B;border-radius:2px"></span></span>
+    <span style="font:600 18px -apple-system;letter-spacing:-.01em">VoiceDrop</span>
+  </a>
+
+  <h1 style="margin:30px 0 0;font:600 44px/1.1 -apple-system;letter-spacing:-.03em;color:#C98A2E">320 算力</h1>
+  <p style="margin:12px auto 0;font:600 18px/1.5 -apple-system;max-width:20em">正好够写一本你自己的书</p>
+  <p style="margin:8px auto 0;font:400 14px/1.7 -apple-system;color:#6b5f51;max-width:22em">一辈子送一次。</p>
+
+  <div style="margin-top:30px;width:100%;max-width:22em">
+    <a class="vd-btn" id="claim" href="voicedrop://claim" style="display:block;font:600 16px -apple-system;color:#fff;background:#D8593B;padding:15px 20px;border-radius:10px;box-shadow:0 10px 26px -8px rgba(216,89,59,.55);text-decoration:none">领取 320 算力</a>
+    <p style="font:400 12.5px -apple-system;color:#9a8f7f;margin:12px 0 0">在 VoiceDrop 里打开领取 · 需要登录确认是本人</p>
+  </div>
+
+  <div class="card" style="margin-top:28px;width:100%;max-width:22em">
+    <div class="row"><div class="ico">✦</div><div><p class="t">一句话就够</p><p class="s">说个想法，AI 替你把整本书写出来——目录、章节、插图都有</p></div></div>
+    <div class="row"><div class="ico">◎</div><div><p class="t">一辈子送一次</p><p class="s">领了就是你的，写不写、什么时候写都随你</p></div></div>
+    <div class="row"><div class="ico">◷</div><div><p class="t">90 天内有效</p><p class="s">别攒着，攒着就过期了</p></div></div>
+  </div>
+
+  <!-- 点了按钮但 App 没起来（多半是没装）→ 亮出来 -->
+  <div id="get-app" style="display:none;margin-top:26px;width:100%;max-width:22em">
+    <p style="font:600 14px -apple-system;margin:0 0 12px">还没装 VoiceDrop？</p>
+    <a class="vd-btn" href="https://apps.apple.com/cn/app/id6781565141" style="display:block;font:600 15px -apple-system;color:#D8593B;background:#F6E4DC;padding:13px 20px;border-radius:10px;text-decoration:none">iPhone · App Store</a>
+    <a class="vd-btn" href="https://voicedrop.cn/apk/" style="display:block;margin-top:10px;font:600 15px -apple-system;color:#D8593B;background:#F6E4DC;padding:13px 20px;border-radius:10px;text-decoration:none">Android · 下载</a>
+    <p style="font:400 12.5px/1.7 -apple-system;color:#9a8f7f;margin:12px 0 0">装好后回到这个页面，再点一次「领取」。</p>
+  </div>
+
+  <p style="margin:30px 0 0;font:400 12.5px -apple-system;color:#9a8f7f">
+    <a href="https://voicedrop.cn/" style="color:#9a8f7f;text-decoration:none">VoiceDrop 是什么</a>
+  </p>
+
+</div>
+
+<!-- 微信 / QQ 内置浏览器：拉不起 App，只能引导去系统浏览器 -->
+<div id="wx-mask" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(20,16,12,.92);color:#fff;text-align:center">
+  <div style="position:absolute;top:10px;right:26px;font-size:44px;line-height:1">⤴</div>
+  <div style="padding:110px 32px 0">
+    <p style="font:600 19px/1.6 -apple-system;margin:0">微信里打不开 App</p>
+    <p style="font:400 15px/2 -apple-system;color:#d8cfc2;margin:18px 0 0">
+      点击右上角 <span style="display:inline-block;background:#3a332b;border-radius:6px;padding:0 10px;font-weight:600;letter-spacing:2px">···</span><br>
+      选择「<b style="color:#fff">在浏览器中打开</b>」<br>再点「领取」就可以了
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var ua = navigator.userAgent;
+  var inWeChat = /MicroMessenger/i.test(ua) || / QQ\//i.test(ua);
+  var btn = document.getElementById('claim');
+  var mask = document.getElementById('wx-mask');
+  var getApp = document.getElementById('get-app');
+
+  if (inWeChat) {
+    // 微信内置浏览器一律拦截自定义 scheme，跳了只会白屏——直接引导去系统浏览器。
+    btn.addEventListener('click', function (e) { e.preventDefault(); mask.style.display = 'block'; });
+    mask.addEventListener('click', function () { mask.style.display = 'none'; });
+    return;
+  }
+
+  // 装了 App → voicedrop://claim 立刻把页面切走（document 隐藏）。1.2 秒后
+  // 页面还在前台 = 多半没装，把下载入口亮出来。不做自动跳商店：误判会把
+  // 老用户莫名其妙送去 App Store。
+  btn.addEventListener('click', function () {
+    var t = setTimeout(function () {
+      if (!document.hidden) {
+        getApp.style.display = 'block';
+        getApp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 1200);
+    document.addEventListener('visibilitychange', function once() {
+      if (document.hidden) { clearTimeout(t); document.removeEventListener('visibilitychange', once); }
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

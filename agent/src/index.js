@@ -31,6 +31,7 @@ import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
 import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, bookReviseCostUY, BOOK_REVISE_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
 import { ensureAccount, balanceUY, debit, editCount, getLedger, grantBucket, allAccounts, mintLedger, referralLedger, usageSummary } from "./usage_store.js";
 import { handleMintRoutes, feedQuote } from "./mint.js";
+import { handleClaimRoute } from "./claim.js";
 import { handleIapRoute } from "./iap.js";
 import { handleReferralRoutes, publishMintRate } from "./referral.js";
 import { handlePromptShareRoutes, shareStates } from "./prompt-share.js";
@@ -854,6 +855,12 @@ export async function handleUsageRoute(url, request, env) {
     const a = await env.USAGE.prepare("SELECT granted_uy,spent_uy FROM account WHERE user_sub=?").bind(scope).first();
     return J({ suanli: r1(uyToSuanli(bal)), yuan: r2(uyToYuan(bal)),
       granted_suanli: r1(uyToSuanli(a.granted_uy)), spent_suanli: r1(uyToSuanli(a.spent_uy)) });
+  }
+
+  // 一生一次领 320 算力（正好写一本书）。落地页 voicedrop.cn/book/ 的 deep link
+  // 终点；实名闸门 + mint 唯一键去重都在 src/claim.js 里，文件头有完整设计说明。
+  if (url.pathname === "/agent/usage/claim") {
+    return handleClaimRoute(url, request, env, await resolveScope(tok, env));
   }
 
   // 写书/修书扣费（lab.jianshuo.dev /api/book* 调用，转发用户 bearer）：一口价按算力。
