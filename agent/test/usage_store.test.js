@@ -1,7 +1,7 @@
 // test/usage_store.test.js
 import { describe, it, expect, beforeEach } from "vitest";
 import { fakeD1, usageSql } from "./fakes.js";
-import { ensureAccount, debit, getLedger, editCount, allAccounts, balanceUY, grantBucket } from "../src/usage_store.js";
+import { ensureAccount, debit, getLedger, editCount, allAccounts, balanceUY, grantBucket, mintLedger } from "../src/usage_store.js";
 import { SIGNUP_GRANT_UY } from "../src/usage.js";
 
 const SQL = usageSql();
@@ -164,5 +164,25 @@ describe("getLedger pagination + usageSummary", () => {
     expect(find("spend", "mine").total_uy).toBe(150);
     expect(find("spend", "mine").n).toBe(2);
     expect(find("spend", "asr").total_uy).toBe(30);
+  });
+});
+
+describe("mintLedger 的「今日」只数投币", () => {
+  // mint 表是所有挣币玩法共用的事件表（feed / referral / …）。后台铸币榜的
+  // 「今日」格子问的是「今天投币发出去多少」，所以那条 SQL 必须按 kind 过滤——
+  // 漏了的话 referral 的行会被算进今日投币，事件数和金额都虚高。
+  const row = (kind, actorUY, benUY, ts) => db.prepare(
+    "INSERT INTO mint (kind,subject_key,share_id,actor_sub,beneficiary_sub," +
+    "coins_uc,price_uy,actor_uy,beneficiary_uy,detail,ts) VALUES (?,?,NULL,?,?,0,0,?,?,NULL,?)"
+  ).bind(kind, kind + ":subj", "users/a/", "users/b/", actorUY, benUY, ts).run();
+
+  it("referral 的行不算进今日投币", async () => {
+    const now = Date.now();
+    row("feed", 10, 40, now);
+    row("referral", 7, 3, now);   // 同一天，但不是投币
+
+    const { today } = await mintLedger(db, now);
+    expect(today.events).toBe(1);
+    expect(today.minted_uy).toBe(50);
   });
 });
