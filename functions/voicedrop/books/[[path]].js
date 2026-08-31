@@ -73,12 +73,19 @@ const TYPES = {
 };
 
 export async function onRequest({ request, env, params }) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return new Response('method not allowed', { status: 405 });
-  }
   const segments = Array.isArray(params.path) ? params.path : (params.path ? [params.path] : []);
   let rel = decodeURIComponent(segments.join('/'));
   if (rel.includes('..') || rel.startsWith('/')) return notFound();
+
+  // 唯一的写入口：POST /books/<slug>/hidden {hidden:bool}（书页 ⋯ 菜单「隐藏本书」）。
+  // 其余任何非 GET/HEAD 仍旧 405——别因为开了一个开关就把整个 POST 面放开。
+  if (request.method === 'POST') {
+    const hm = /^([^/]+)\/hidden$/.exec(rel);
+    if (hm) return setHidden(env, request, hm[1]);
+  }
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405 });
+  }
 
   // 索引页：/books 或 /books/（?format=json 给 App 吃结构化数据）
   if (!rel) {
@@ -466,23 +473,61 @@ async function collectBooks(env, viewerScope = '') {
   return books;
 }
 
+const jsonResp = (x, status = 200) => new Response(JSON.stringify(x), {
+  status,
+  headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+});
+
+/// bearer → 请求者 scope（session JWT 优先，匿名 token 兜底）。拿不到给 ''。
+/// 书单用它决定「自己的 hidden 书要不要列出来」，隐藏开关用它认主人——同一套口径。
+async function viewerScope(env, request) {
+  const tok = bearerToken(request);
+  if (!tok) return '';
+  try {
+    if (env.SESSION_SECRET) {
+      const s = await verifySession(tok, env.SESSION_SECRET);
+      if (s && s.scope) return s.scope;
+    }
+    return (await anonScopeFromToken(tok)) || '';
+  } catch { return ''; }
+}
+
+/// POST /books/<slug>/hidden {hidden:bool} —— 书页 ⋯ 菜单的「隐藏本书」开关。
+/// 改的是 `_src/book.json` 的 hidden 字段，也就是 collectBooks 判「列不列」读的
+/// 那份真源；页面 HTML 是构建产物、不受影响（隐藏只影响书架列表，直链照样能看，
+/// 与写书 skill 里绘本缺省 hidden 的语义完全一致）。
+/// 归属口径与书单一致：`_src/book.json` 的 owner，老书没有就算发布者的
+/// （PUBLISHER_SCOPE），否则存量老书会变成谁都藏不了。
+async function setHidden(env, request, slug) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(slug)) return jsonResp({ error: 'bad slug' }, 400);
+  const scope = await viewerScope(env, request);
+  if (!scope) return jsonResp({ error: 'unauthorized' }, 401);
+
+  const key = `${PUBLISHER}${slug}/_src/book.json`;
+  const obj = await env.FILES.get(key);
+  if (!obj) return jsonResp({ error: 'not found' }, 404);
+  let doc;
+  try { doc = JSON.parse(await obj.text()); } catch { return jsonResp({ error: 'bad book.json' }, 500); }
+  const owner = doc.owner || PUBLISHER_SCOPE;
+  if (owner !== scope) return jsonResp({ error: 'not owner' }, 403);
+
+  const body = await request.json().catch(() => ({}));
+  const hidden = body && body.hidden === true;
+  // 取消隐藏是**删字段**而不是写 false：源稿保持干净，build.mjs 重发时也不会
+  // 凭空多出一行（collectBooks 判的是 `=== true`，两种写法都能工作）。
+  if (hidden) doc.hidden = true; else delete doc.hidden;
+  await env.FILES.put(key, JSON.stringify(doc, null, 2),
+    { httpMetadata: { contentType: 'application/json' } });
+  return jsonResp({ ok: true, slug, hidden });
+}
+
 /// JSON 索引（iOS 图书馆）。cover / chapters / createdAt 已在 collectBooks 里
 /// 随全量列举一并算好，这里直接吐。
 async function indexJSON(env, request) {
   // 登录态（可选）：带 bearer 时把「自己的 hidden 书」也列出（条目带 hidden:true），
   // App 书架据此贴「隐藏」角标。带个人内容的响应 no-store——绝不进共享缓存
   // （CF 边缘 / EdgeOne 都不许把带登录态的书单缓存到别人头上）。
-  let scope = '';
-  const tok = bearerToken(request);
-  if (tok) {
-    try {
-      if (env.SESSION_SECRET) {
-        const s = await verifySession(tok, env.SESSION_SECRET);
-        if (s) scope = s.scope;
-      }
-      if (!scope) scope = (await anonScopeFromToken(tok)) || '';
-    } catch {}
-  }
+  const scope = await viewerScope(env, request);
   const books = await collectBooks(env, scope);
   return new Response(JSON.stringify({ books }), {
     headers: {
