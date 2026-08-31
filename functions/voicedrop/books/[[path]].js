@@ -79,10 +79,12 @@ export async function onRequest({ request, env, params }) {
 
   // 唯一的写入口：POST /books/<slug>/hidden {hidden:bool}（书页 ⋯ 菜单「隐藏本书」）。
   // 其余任何非 GET/HEAD 仍旧 405——别因为开了一个开关就把整个 POST 面放开。
-  if (request.method === 'POST') {
-    const hm = /^([^/]+)\/hidden$/.exec(rel);
-    if (hm) return setHidden(env, request, hm[1]);
-  }
+  const hm = /^([^/]+)\/hidden$/.exec(rel);
+  if (hm && request.method === 'POST') return setHidden(env, request, hm[1]);
+  // GET 是「这本是我的吗、藏了吗」——阅读页开场问一句。菜单显不显示、开关打不
+  // 打勾都不能依赖书单列表：那份数据可能来自 App 本地缓存或边缘缓存。读不需要
+  // 登录（没 token 就是 mine:false）。
+  if (hm && request.method === 'GET') return getHidden(env, request, hm[1]);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('method not allowed', { status: 405 });
   }
@@ -498,6 +500,20 @@ async function viewerScope(env, request) {
   } catch { return ''; }
 }
 
+/// GET /books/<slug>/hidden → {slug, hidden, mine}。纯读、不需要登录：
+/// 别人/匿名问就是 mine:false（不是 403——查不等于改）。归属口径与 setHidden、
+/// 书单的 mine 三处完全一致：owner 缺失的老书算发布者的。
+async function getHidden(env, request, slug) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(slug)) return jsonResp({ error: 'bad slug' }, 400);
+  const obj = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
+  if (!obj) return jsonResp({ error: 'not found' }, 404);
+  let doc;
+  try { doc = JSON.parse(await obj.text()); } catch { return jsonResp({ error: 'bad book.json' }, 500); }
+  const scope = await viewerScope(env, request);
+  const mine = !!scope && (doc.owner || PUBLISHER_SCOPE) === scope;
+  return jsonResp({ slug, hidden: doc.hidden === true, mine });
+}
+
 /// POST /books/<slug>/hidden {hidden:bool} —— 书页 ⋯ 菜单的「隐藏本书」开关。
 /// 改的是 `_src/book.json` 的 hidden 字段，也就是 collectBooks 判「列不列」读的
 /// 那份真源；页面 HTML 是构建产物、不受影响（隐藏只影响书架列表，直链照样能看，
@@ -539,7 +555,10 @@ async function indexJSON(env, request) {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': scope ? 'no-store' : 'public, max-age=60',
-      ...(scope ? { Vary: 'Authorization' } : {}),
+      // Vary 必须**永远**带：匿名那份（public, max-age=60）没有 mine/hidden，
+      // 少了 Vary 就可能被共享缓存喂给带登录态的请求，登录用户看到的书单里
+      // 自己的书既没有 mine 也没有隐藏角标（2026-08-31 踩过）。
+      Vary: 'Authorization',
       'Access-Control-Allow-Origin': '*',
     },
   });

@@ -132,3 +132,66 @@ describe("书单条目的 mine 标记", () => {
     for (const b of await shelf(env)) expect(b.mine).toBeUndefined();
   });
 });
+
+// ── GET /books/<slug>/hidden：阅读页开场问一句「这本是我的吗、藏了吗」──────
+// 不依赖书单列表：列表可能来自 App 本地缓存或边缘缓存，而菜单显不显示、开关
+// 打不打勾都必须是当下的真相（2026-08-31：自己的书上菜单也不出现）。
+describe("查一本书的归属与隐藏态", () => {
+  const get = (env, { slug = SLUG, token } = {}) => onRequest({
+    request: new Request(`https://voicedrop.cn/books/${slug}/hidden`, {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    }),
+    env,
+    params: { path: [slug, "hidden"] },
+  });
+
+  it("主人问 → mine:true，并带上当前隐藏态", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK), hidden: true });
+    const r = await get(env, { token: OWNER_TOK });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ slug: SLUG, mine: true, hidden: true });
+  });
+
+  it("别人问 → 200 但 mine:false（不是 403——只是查，不是改）", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    const r = await get(env, { token: OTHER_TOK });
+    expect(r.status).toBe(200);
+    expect((await r.json()).mine).toBe(false);
+  });
+
+  it("没 token → mine:false，不是 401（读不需要登录）", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    const r = await get(env);
+    expect(r.status).toBe(200);
+    expect((await r.json()).mine).toBe(false);
+  });
+
+  it("书不存在 → 404", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    expect((await get(env, { slug: "nope", token: OWNER_TOK })).status).toBe(404);
+  });
+});
+
+// ── 书单必须永远带 Vary: Authorization ──────────────────────────────────
+describe("书单的缓存头", () => {
+  const idx = (env, token) => onRequest({
+    request: new Request("https://voicedrop.cn/books/?format=json", {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    }),
+    env,
+    params: { path: [] },
+  });
+
+  it("匿名响应也要带 Vary: Authorization——否则共享缓存会把这份没有 mine/hidden 的副本喂给登录用户", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    const r = await idx(env);
+    expect(r.headers.get("Vary")).toBe("Authorization");
+  });
+
+  it("带登录态的响应 no-store + Vary", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    const r = await idx(env, OWNER_TOK);
+    expect(r.headers.get("Cache-Control")).toBe("no-store");
+    expect(r.headers.get("Vary")).toBe("Authorization");
+  });
+});
