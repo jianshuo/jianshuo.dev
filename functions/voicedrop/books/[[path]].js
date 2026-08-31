@@ -463,10 +463,16 @@ async function collectBooks(env, viewerScope = '') {
       : (Number(b.chaptersCount) || 0);
     const [main, sub] = splitTitle(title);
     const [c, c2] = colorOf(slug);
+    // mine：这本是不是请求者自己的。App 的 ⋯ 菜单据此决定「隐藏本书 / 修改这本书」
+    // 显不显示——ShelfBook 里原本没有任何归属字段，客户端无从判断（2026-08-31：
+    // 建硕在别人的书上点隐藏，服务端 403，App 只能笼统说「没改成」）。归属口径与
+    // setHidden 一致：owner 缺失的老书算发布者的。匿名访客一律不带。
+    const mine = !!viewerScope && (b.owner || PUBLISHER_SCOPE) === viewerScope;
     return { slug, title, main, sub, c, c2, author, category,
              cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
              chapters, createdAt: Number(b.createdAt) || 0,
-             ...(hidden ? { hidden: true } : {}) };
+             ...(hidden ? { hidden: true } : {}),
+             ...(mine ? { mine: true } : {}) };
   }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));

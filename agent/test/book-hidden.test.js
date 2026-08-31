@@ -92,3 +92,43 @@ describe("隐藏本书", () => {
     expect(r.status).toBe(405);
   });
 });
+
+// ── 书单要告诉 App「这本是不是你的」──────────────────────────────────────
+// App 的 ⋯ 菜单里「隐藏本书 / 修改这本书」只对主人显示；而 ShelfBook 里原本
+// 没有任何归属字段，App 无从判断。条目补一个 mine:true（owner === 请求者）。
+describe("书单条目的 mine 标记", () => {
+  const idxReq = (token) => ({
+    request: new Request("https://voicedrop.cn/books/?format=json", {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    }),
+    params: { path: [] },
+  });
+
+  async function shelf(env, token) {
+    const r = await onRequest({ ...idxReq(token), env });
+    return (await r.json()).books;
+  }
+
+  async function twoBookEnv() {
+    const mine = await anonScopeFromToken(OWNER_TOK);
+    const theirs = await anonScopeFromToken(OTHER_TOK);
+    const doc = (title, owner) => JSON.stringify({ title, owner, createdAt: 1, chapters: [] });
+    return fakeEnv({
+      [srcKey("my-book")]: doc("我的书", mine),
+      [srcKey("their-book")]: doc("别人的书", theirs),
+    });
+  }
+
+  it("自己的书带 mine:true，别人的书不带", async () => {
+    const env = await twoBookEnv();
+    const books = await shelf(env, OWNER_TOK);
+    const bySlug = Object.fromEntries(books.map((b) => [b.slug, b]));
+    expect(bySlug["my-book"].mine).toBe(true);
+    expect(bySlug["their-book"].mine).toBeUndefined();
+  });
+
+  it("没登录时谁的书都不带 mine——匿名访客不该看到任何归属", async () => {
+    const env = await twoBookEnv();
+    for (const b of await shelf(env)) expect(b.mine).toBeUndefined();
+  });
+});
