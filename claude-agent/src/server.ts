@@ -443,7 +443,10 @@ const BOOK_ENGINE = (process.env.BOOK_ENGINE ?? "codex").toLowerCase();
 const BOOK_CLAUDE_MODEL = process.env.BOOK_CLAUDE_MODEL || MODEL;
 const BOOK_ANTHROPIC_BASE_URL = process.env.BOOK_ANTHROPIC_BASE_URL ?? "";
 const BOOK_ANTHROPIC_API_KEY = process.env.BOOK_ANTHROPIC_API_KEY ?? "";
-const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 80); // 仅 claude 腿（codex 腿无轮数概念）
+// 绘本最吃轮数：每页要「写字→评审→出图→验图」，14 页光页面就 50+ 轮，再加骨架、
+// refs、封面、逐页 asset 上传，80 轮不够——2026-08-31《同一个月亮》就死在这儿
+// （turns=81 error_max_turns：图全画完了，卡在还没上传，线上只有字没有图）。
+const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 160); // 仅 claude 腿（codex 腿无轮数概念）
 // claude 腿的 cwd：独立目录=独立 Claude Code 项目=零 auto-memory。不能用 WORKSPACE
 // 当 cwd——那个项目积累的记忆笔记（含《江泽民传》等书的内容）会自动注入请求，
 // Kimi 风控直接 400 high risk（2026-08-24 二分定位实锤）。书文件仍落 WORKSPACE
