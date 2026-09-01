@@ -495,7 +495,8 @@ export const TOOLS = [
     name: "write_book",
     description:
       "写一本新书：把一个「中心思想」（seed）交给云端写书 agent——它拆大纲、逐章写正文（费曼式白话）、" +
-      "独立评审过稿，一章一章增量上架到公开书架 voicedrop.cn/books。一口价 320 算力，扣费成功即受理" +
+      "独立评审过稿，一章一章增量上架到公开书架 voicedrop.cn/books。一口价按算力计（价钱以" +
+      "服务端为准，余额不够会直接告诉你这次要多少），扣费成功即受理" +
       "（fire-and-forget），整本书要几十分钟长成：书很快出现在 list_books，章节逐章补齐，" +
       "进度用 book_history 看。署名用我在 App 设置里的名字。",
     inputSchema: obj({ seed: str("中心思想：想让这本书讲什么。一两句话到一段话都行。") }, ["seed"]),
@@ -504,7 +505,7 @@ export const TOOLS = [
       return {
         ...(out && typeof out === "object" ? out : { response: out }),
         next:
-          "已受理，开写了（320 算力已扣）。整本书要几十分钟：先用 list_books 等它上架，" +
+          "已受理，开写了（一本书的算力已扣清）。整本书要几十分钟：先用 list_books 等它上架，" +
           "再用 book_history 看逐章进度。现在关掉对话也不影响。",
       };
     },
