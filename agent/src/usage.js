@@ -63,7 +63,9 @@ export const IMAGE_SUANLI = 1.8;
 export function imageCostUY() { return suanliToUY(IMAGE_SUANLI); }
 
 // 写书（lab.jianshuo.dev /api/book 整本书流水线）单价：一口价按算力计。
-export const BOOK_SUANLI = 320;
+// 2026-09-01 从 320 下调到 160。注意：注册赠送 200 算力（SIGNUP_GRANT_UY）从此
+// 盖得住一本书——「新账户不够写一本」这个旧的天然准入门槛不再成立。
+export const BOOK_SUANLI = 160;
 export function bookCostUY() { return suanliToUY(BOOK_SUANLI); }
 
 // 修书（lab /api/book/revise，写好的书按主人指令改一轮）单价：一口价按算力计。
@@ -93,8 +95,8 @@ export const SUB_PRODUCTS = {
 };
 export const SUB_GRANT_SUANLI = 200;      // 当前主档发放量（展示兜底用，发放以 SUB_PRODUCTS 为准）
 export const SUB_PRODUCT_MONTHLY = "com.wangjianshuo.VoiceDrop.sub.monthly_19_9"; // 当前主档（iOS 请求的 ID）
-// 高档（同一订阅组，升档由 StoreKit 按比例补差价）：写一本书 320 算力，主档每月
-// 200 根本盖不住——「订着但当月烧光」「订了也不够」这两个时刻推的就是它。
+// 高档（同一订阅组，升档由 StoreKit 按比例补差价）：写一本书 160 算力，主档每月
+// 200 够写一本、写第二本就不够——「订着但当月烧光」这个时刻推的就是它。
 export const SUB_PRODUCT_PRO = "com.wangjianshuo.VoiceDrop.sub.monthly_199";
 export const SUB_BUCKET_GRACE_MS = 6 * 3600 * 1000;  // 订阅桶过期宽限（续费空窗，spec §12.2）
 export const expiryAfterDays = (now, days) => now + days * DAY_MS;

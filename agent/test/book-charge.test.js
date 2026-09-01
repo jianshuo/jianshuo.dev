@@ -1,4 +1,4 @@
-// test/book-charge.test.js — POST /agent/usage/book-charge（写书一口价 320 算力）
+// test/book-charge.test.js — POST /agent/usage/book-charge（写书一口价 160 算力）
 import { vi, describe, it, expect } from "vitest";
 vi.mock("agents", () => ({
   Agent: class Agent {},
@@ -27,19 +27,28 @@ describe("book-charge", () => {
     expect(r.status).toBe(401);
   });
 
-  it("新账户只有注册赠送 200 算力 < 320 → 402 不扣", async () => {
+  // 2026-09-01 价格 320→160 后，注册赠送 200 够写第一本（旧用例「新账户必然 402」
+  // 的前提没了）。门槛后移到第二本：200-160=40 < 160 → 402。
+  it("注册赠送 200 够写第一本；写完剩 40 < 160 → 第二本 402 不扣", async () => {
     const db = fakeD1(SQL);
-    const r = await call({ USAGE: db, SESSION_SECRET: "" }, { token: "anon_fresh_token_abcdefghijklmnop" });
-    expect(r.status).toBe(402);
-    const body = await r.json();
+    const env = { USAGE: db, SESSION_SECRET: "" };
+    const tok = "anon_fresh_token_abcdefghijklmnop";
+    // 第一本：扣得动
+    const first = await call(env, { token: tok, body: { seed: "第一本" } });
+    expect(first.status).toBe(200);
+    expect((await first.json()).charged_suanli).toBe(BOOK_SUANLI);
+    // 第二本：余额不足，402 且不再产生 spend 流水
+    const second = await call(env, { token: tok, body: { seed: "第二本" } });
+    expect(second.status).toBe(402);
+    const body = await second.json();
     expect(body.error).toBe("no-credit");
     expect(body.need_suanli).toBe(BOOK_SUANLI);
-    // 没有 spend 流水
+    expect(Math.round(body.suanli)).toBe(200 - BOOK_SUANLI);
     const spends = db.prepare("SELECT * FROM ledger WHERE kind='spend'").bind().all().results;
-    expect(spends.length).toBe(0);
+    expect(spends.length).toBe(1);
   });
 
-  it("余额够 → 扣 320 记 book 流水返回新余额；dry 只验不扣", async () => {
+  it("余额够 → 扣 160 记 book 流水返回新余额；dry 只验不扣", async () => {
     const db = fakeD1(SQL);
     const env = { USAGE: db, SESSION_SECRET: "" };
     const tok = "anon_rich_token_abcdefghijklmnopqr";

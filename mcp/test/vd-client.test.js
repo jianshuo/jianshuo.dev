@@ -133,6 +133,24 @@ describe("错误映射：把上游状态码翻译成人能读、模型能自救�
     expect(e.message).toMatch(/不存在|没找到/);
   });
 
+  // 价钱不写死在 MCP 里：402 的 need_suanli 是服务端的权威数字，改价时这句自动跟着变。
+  it("402 no-credit → 用服务端给的 need_suanli/suanli 说清这次要多少、现在有多少", async () => {
+    const e = await call(() => json({ error: "no-credit", need_suanli: 160, suanli: 40 }, 402));
+
+    expect(e.message).toContain("160");
+    expect(e.message).toContain("40");
+    expect(e.message).toContain("credit_balance");
+    expect(e.message).not.toContain("320");
+  });
+
+  it("402 no-credit 但没带数字 → 退回不含价钱的通用话", async () => {
+    const e = await call(() => json({ error: "no-credit" }, 402));
+
+    expect(e.message).toContain("算力不够");
+    expect(e.message).toContain("credit_balance");
+    expect(e.message).not.toMatch(/\d+ 算力/);
+  });
+
   it("没有专门映射的错误 → 原样带上状态码和响应体，别吞掉", async () => {
     const e = await call(() => json({ error: "boom", detail: "x" }, 500));
 

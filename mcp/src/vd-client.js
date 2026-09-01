@@ -82,12 +82,24 @@ const BY_CODE = {
   pool_exhausted: "今天的投币池已经发完了，明天再来。",
   "read-only token": "这是只读 token，只能列出和下载，不能做任何写操作。",
   insufficient_credit: "算力不够了。",
-  // lab 写书 API 的 402（写一本 320 算力、修一次 40 算力）。
-  "no-credit": "算力不够了。写一本书要 320 算力，修改一次 40 算力——用 credit_balance 看余额。",
+  // lab 写书 API 的 402。这里不写死价钱——402 的 body 带权威的 need_suanli，
+  // 由下面 translate() 拼进来，改价时这句自动跟着变。
+  "no-credit": "算力不够了。用 credit_balance 看余额。",
 };
 
 function translate(status, parsed, raw) {
   const code = typeof parsed === "object" && parsed ? parsed.error : undefined;
+
+  // no-credit 带权威数字：need_suanli（这次要多少）和 suanli（现在有多少）都来自
+  // 服务端，所以 MCP 这头永远不需要知道当前价目。
+  if (code === "no-credit" && parsed && typeof parsed.need_suanli === "number") {
+    const have = typeof parsed.suanli === "number" ? `，你现在有 ${parsed.suanli}` : "";
+    return new VoiceDropError(
+      `算力不够了。这次需要 ${parsed.need_suanli} 算力${have}——用 credit_balance 看余额。`,
+      status,
+      parsed,
+    );
+  }
 
   if (code && BY_CODE[code]) return new VoiceDropError(BY_CODE[code], status, parsed);
 

@@ -28,7 +28,7 @@ import { writeLlmLog } from "./llmlog.js";
 import { QUEUE_TABLE_SQL, makeSqlStore, ArticleQueue, normalizeAnchor } from "./queue.js";
 import { runEditTurn } from "./edit-turn.js";
 import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
-import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, bookReviseCostUY, BOOK_REVISE_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
+import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, bookReviseCostUY, BOOK_REVISE_SUANLI, IMAGE_SUANLI, SIGNUP_GRANT_UY, SUB_GRANT_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
 import { ensureAccount, balanceUY, debit, editCount, getLedger, grantBucket, allAccounts, mintLedger, referralLedger, usageSummary } from "./usage_store.js";
 import { handleMintRoutes, feedQuote } from "./mint.js";
 import { handleIapRoute } from "./iap.js";
@@ -856,10 +856,27 @@ export async function handleUsageRoute(url, request, env) {
       granted_suanli: r1(uyToSuanli(a.granted_uy)), spent_suanli: r1(uyToSuanli(a.spent_uy)) });
   }
 
+  // 价目表（公开，免鉴权）：各端（iOS / 安卓 / 小程序 / MCP）不再各自把价格写死，
+  // 从这里取。价格是纯常量，所以响应带 max-age=86400 交给 Cloudflare 边缘扛——客户端
+  // 也只需一天拉一次（展示价不必和服务端时刻一致，扣费真源永远是 book-charge 本身，
+  // 余额不足时 402 会带权威的 need_suanli）。
+  if (url.pathname === "/agent/usage/prices" && request.method === "GET") {
+    return new Response(JSON.stringify({
+      book: BOOK_SUANLI,
+      book_revise: BOOK_REVISE_SUANLI,
+      image: IMAGE_SUANLI,
+      signup_grant: r1(uyToSuanli(SIGNUP_GRANT_UY)),
+      sub_grant: SUB_GRANT_SUANLI,
+      rate: RATE,
+      updated_at: Date.now(),
+    }), { headers: { "content-type": "application/json", "cache-control": "public, max-age=86400" } });
+  }
+
   // 写书/修书扣费（lab.jianshuo.dev /api/book* 调用，转发用户 bearer）：一口价按算力。
-  // kind 缺省 = 写书 320；kind:"revise" = 修书 40（写好的书按主人指令改一轮）。
+  // kind 缺省 = 写书 160；kind:"revise" = 修书 40（写好的书按主人指令改一轮）。
   // 余额不足 402（不扣）；成功即记账并返回新余额。dry=true 只验余额不扣费。
-  // 这同时就是写书的准入门槛：伪造随机 token 的新账户只有 200 注册赠送，不够一本书。
+  // 2026-09-01 价格降到 160 后，注册赠送 200 已经盖得住一本书——写书不再自带
+  // 「新账户余额不够」的准入门槛，防滥用如果需要得另立闸门。
   if (url.pathname === "/agent/usage/book-charge" && request.method === "POST") {
     const scope = await resolveScope(tok, env);
     if (!scope) return J({ error: "unauthorized" }, 401);

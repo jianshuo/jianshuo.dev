@@ -783,9 +783,10 @@ async function findSlugByJobId(jobId: string): Promise<string | null> {
 }
 
 // 认证 = 计费（2026-08-10 起，替代早前的「须有成文文章 + 每日限额」门槛）：
-// 转发用户 bearer 到 agent worker 的 book-charge，一口价扣 320 算力，扣成功才开写。
-// 伪造随机 token 的新账户只有 200 注册赠送 < 320 → 402，天然挡住；数量限制全部
-// 取消——算力就是闸门。dry=true 只验余额不扣（部署冒烟 + App 预检）。
+// 转发用户 bearer 到 agent worker 的 book-charge，一口价扣 160 算力（真源在
+// agent/src/usage.js 的 BOOK_SUANLI），扣成功才开写。数量限制全部取消——算力就是
+// 闸门。注意 2026-09-01 降价到 160 后，注册赠送 200 已经够写第一本，「新账户不够
+// 一本」这个旧的天然门槛没有了。dry=true 只验余额不扣（部署冒烟 + App 预检）。
 async function chargeBook(
   auth: string | undefined,
   extra: { seed?: string; slug?: string; kind?: "revise" },

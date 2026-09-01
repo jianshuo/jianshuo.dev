@@ -35,14 +35,14 @@ describe("book-refund", () => {
     expect(db.prepare("SELECT * FROM ledger WHERE reason LIKE 'book%refund'").bind().all().results.length).toBe(0);
   });
 
-  it("写书失败 → 退回 320，记 book-refund grant 带 ref，余额复原", async () => {
+  it("写书失败 → 退回 160，记 book-refund grant 带 ref，余额复原", async () => {
     const db = fakeD1(SQL);
     const env = { USAGE: db, SESSION_SECRET: "" };
     const tok = "anon_refund_token_abcdefghijklmnop";
     const scope = await anonScopeFromToken(tok);
-    // 造够额度并模拟预扣 320（书没写成）
+    // 造够额度并模拟预扣一本书的价（书没写成）
     await grantBucket(db, scope, suanliToUY(500), "campaign:test", null, Date.now()); // + signup 200 = 700
-    await debit(db, scope, bookCostUY(), "book", { seed: "台湾" }, Date.now());         // 预扣后 380
+    await debit(db, scope, bookCostUY(), "book", { seed: "台湾" }, Date.now());         // 预扣后 540
     // 退款
     const r = await call(env, { token: tok, body: { ref: "job-abc-123" } });
     expect(r.status).toBe(200);

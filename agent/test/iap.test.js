@@ -258,7 +258,7 @@ describe("档位表（SUB_PRODUCTS）", () => {
     expect((await r.json()).suanli).toBe(SUB_PRODUCTS[SUB_PRODUCT_MONTHLY]);
   });
 
-  it("高档 monthly_199 在表里 → 发 2000（写一本书 320，主档 200 盖不住才有这档）", async () => {
+  it("高档 monthly_199 在表里 → 发 2000（写一本书 160，主档 200 只够一本才有这档）", async () => {
     const { SUB_PRODUCTS } = await import("../src/usage.js");
     expect(SUB_PRODUCT_PRO).toMatch(/_199$/);
     expect(SUB_PRODUCTS[SUB_PRODUCT_PRO]).toBe(2000);
