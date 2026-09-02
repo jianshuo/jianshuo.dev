@@ -26,6 +26,28 @@ test("各家配额/限流文案都判为配额", () => {
   ]) assert.equal(shouldTryNextLeg(s), true, s);
 });
 
+test("令牌被吊销/失效也换腿（9/2 傍晚《易经在说什么》事故原文）", () => {
+  // codex 腿当天的原话——整单就是卡在这句上没换第三条腿。
+  const codexReal =
+    "Your access token could not be refreshed because your refresh token was revoked";
+  assert.equal(shouldTryNextLeg(codexReal), true);
+  for (const s of [
+    "refresh_token_invalidated",                      // paint 同日 401 的机器码
+    "Your session has ended. Please log in again.",   // OpenAI 掉登录的人话版
+    "the token was revoked",
+    "auth token invalidated",
+  ]) assert.equal(shouldTryNextLeg(s), true, s);
+});
+
+test("上下文超长不是凭据问题，别被 token 二字带偏", () => {
+  // 防止上面那条泛化模式误伤：这些都该认输，换腿只会再烧一份额度。
+  for (const s of [
+    "prompt is too long: 250000 tokens > 200000 maximum",
+    "max_tokens exceeded",
+    "token limit reached for this request",
+  ]) assert.equal(shouldTryNextLeg(s), false, s);
+});
+
 test("凭据失效也换腿：腿一样是废的", () => {
   for (const s of [
     "Not logged in. Run codex login",

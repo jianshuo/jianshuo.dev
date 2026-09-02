@@ -48,6 +48,14 @@ const QUOTA_PATTERNS: RegExp[] = [
   /authentication[ _-]?error/i,
   /credit balance is too low/i,         // 按量付费账户欠费
   /failed to authenticate/i,            // 裸的认证失败（未必带状态码）
+  // 令牌被吊销/作废——2026-09-02 傍晚《易经在说什么》栽在这里：codex 腿报
+  // 「Your access token could not be refreshed because your refresh token was revoked」，
+  // 上面那批词一个都不匹配，于是被当成「不是凭据问题」，第三条腿没试就整单失败。
+  // 注意别写成裸 /token/：那会误伤上下文超长（max_tokens / token limit）。
+  /refresh[ _-]?token/i,                // codex 人话版 + paint 的 refresh_token_invalidated
+  /token.{0,24}(revoked|invalidated)/i, // 「… token was revoked / invalidated」
+  /session has ended/i,                 // OpenAI 掉登录：「Your session has ended.」
+  /log ?in again/i,                     // 同上的尾巴，三家掉登录文案共有
 ];
 
 // 明确「不是配额」的错误：这些词出现时，即便文本里混进了上面某个词也不换腿。
