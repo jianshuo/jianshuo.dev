@@ -12,6 +12,9 @@
   // workers.dev 备用直连子域。
   "workers_dev": true,
 
+  // 每日 03:20 UTC（北京 11:20）重算 engagement_counts，抹平增量计数的漂移。
+  "triggers": { "crons": ["20 3 * * *"] },
+
   "d1_databases": [
     { "binding": "DB", "database_name": "voicedrop-reco", "database_id": "feeee5df-0f48-43ca-8845-473d8b4809c3" }
   ]

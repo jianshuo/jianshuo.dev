@@ -110,7 +110,11 @@ describe("reco worker", () => {
     expect(new Set(j.order)).toEqual(new Set(["a", "b"]));       // 推荐序覆盖全部可见帖
   });
 
-  it("feed 每帖带 kind：文章帖 article、提示词帖 prompt", async () => {
+  // 2026-09-02 真 SQL fake 上线后订正：本用例原先断言提示词帖会出现在 feed 里并
+  // 带 kind='prompt'——那是手写 fake 忽略了 feedRows 的 kind!='prompt' 过滤造成的
+  // 假绿。生产自 2026-07-22 起提示词已退出 feed（入口移到提示词管理页），
+  // 断言改成真实行为：文章帖出、提示词帖不出。
+  it("feed 只出文章帖并带 kind；提示词帖被滤掉", async () => {
     const env = { ...fakeD1([], [
       { share_id: "aaaaaaaaaaaa", owner: "users/u1/", author: "甲", title: "文章帖",
         first_shared_at: 1000, kind: "article", preview: null, cover_photo_key: null, has_photo: 0, article_count: 1, updated_at: 1000, reply_to: null, hidden: 0 },
@@ -120,9 +124,8 @@ describe("reco worker", () => {
     const t = await token("users/u1/");
     const resp = await worker.fetch(req("/reco/feed", { method: "GET", auth: t }), env);
     const { posts } = await resp.json();
-    const byId = Object.fromEntries(posts.map(p => [p.shareId, p]));
-    expect(byId.aaaaaaaaaaaa.kind).toBe("article");
-    expect(byId.bbbbbbbbbbbb.kind).toBe("prompt");
+    expect(posts.map((p) => p.shareId)).toEqual(["aaaaaaaaaaaa"]);
+    expect(posts[0].kind).toBe("article");
   });
 
   it("feed 无 D1 → 503（app 回退老的 list+rank 路径）", async () => {

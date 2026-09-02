@@ -1,5 +1,5 @@
 import { resolveScope } from "./auth.js";
-import { recordEngagement, countsFor, likedBy, feedRows } from "./store.js";
+import { recordEngagement, countsFor, likedBy, feedRows, rebuildCounts } from "./store.js";
 import { rankPosts } from "./ranking.js";
 
 const CORS = {
@@ -23,6 +23,15 @@ const ID_RE = /^[0-9A-Za-z_-]{1,64}$/;
 const BOOKS_MIN_BUILD = 330;   // 书卡首发 build（1.13(330)）
 
 export default {
+  // 每日 cron：engagement_counts 全量重算。计数走增量维护（写路径按 meta.changes
+  // 加减），理论上不该漂——但增量计数迟早会漂（跨 isolate 竞态、部署缝隙、
+  // meta 语义变更），而红心数差一个无人察觉、也没人会去查。所以不指望不漂，
+  // 只保证每天抹平一次：便宜（一次 ~1.85 万行）、幂等、可随时手动触发。
+  async scheduled(event, env, ctx) {
+    if (!env.DB) return;
+    ctx.waitUntil(rebuildCounts(env));
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url);
