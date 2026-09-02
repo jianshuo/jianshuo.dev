@@ -68,17 +68,6 @@ export async function rebuildCounts(env) {
   countsCache = { at: 0, map: null };
 }
 
-// D1(SQLite) 单条 SQL 绑定参数上限 100：社区一过 100 帖，IN (?,?,…) 一次绑
-// 100+ 个参数直接 500，rank 整个挂掉（app 静默回退 → 推荐退化成时间序、卡片
-// 赞数全 0）。按 90 一批分块查再合并（留出 likedBy 里 sub 那 1 个参数的余量）。
-const IN_CHUNK = 90;
-
-function chunks(ids) {
-  const out = [];
-  for (let i = 0; i < ids.length; i += IN_CHUNK) out.push(ids.slice(i, i + IN_CHUNK));
-  return out;
-}
-
 export async function countsFor(env, shareIds) {
   if (!countsCache.map || Date.now() - countsCache.at > CACHE_TTL_MS) {
     const map = {};
@@ -112,14 +101,25 @@ export async function feedRows(env) {
   return feedCache.rows;
 }
 
+// 我赞过哪些（每请求实时，不缓存——自己的红心态不能陈旧）。
+//
+// 2026-09-02 从「把 feed 的 shareId 切成 90 个一批的 IN (?,?,…) 查 5 次」改成
+// 「一次查出这个人赞过的全部，再在内存里取交集」：读的行数从「feed 有多少帖」
+// （每次 ~93 行只为返回两三行）变成「这个人赞过几个」（多数用户个位数）。
+// 顺带把 D1 的 100 个绑定参数上限这个雷整个拆掉——没有 IN 就没有分块。
+//
+// 前提是 migrations/0005 的 idx_engagement_user(user_sub, action, share_id)：
+// engagement 主键是 (share_id, user_sub, action)，按 user_sub 查用不上，缺了这条
+// 索引本查询会退化成全表扫 18,638 行，比改之前还糟。索引与本函数必须同进同退。
+//
+// 仍按 shareIds 过滤后再返回：/reco/rank 会把这个集合原样下发给 app（liked 字段），
+// 混进本次请求没问的帖子就是改了接口语义。
 export async function likedBy(env, sub, shareIds) {
+  const wanted = new Set(shareIds);
   const set = new Set();
-  for (const ids of chunks(shareIds)) {
-    const ph = ids.map(() => "?").join(",");
-    const { results } = await env.DB.prepare(
-      `SELECT share_id FROM engagement WHERE user_sub=? AND action='like' AND share_id IN (${ph})`,
-    ).bind(sub, ...ids).all();
-    for (const r of results || []) set.add(r.share_id);
-  }
+  const { results } = await env.DB.prepare(
+    "SELECT share_id FROM engagement WHERE user_sub=? AND action='like'",
+  ).bind(sub).all();
+  for (const r of results || []) if (wanted.has(r.share_id)) set.add(r.share_id);
   return set;
 }

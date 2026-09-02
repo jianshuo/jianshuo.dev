@@ -18,6 +18,7 @@ export function recoSql() {
     f("0002_community_posts.sql"),
     f("0003_community_posts_kind.sql"),
     f("0004_engagement_counts.sql"),
+    f("0005_read_indexes.sql"),
   ].join("\n");
   return _sqlCache;
 }
@@ -57,9 +58,13 @@ export function fakeD1(seed = [], posts = []) {
              SELECT share_id, action, COUNT(*) FROM engagement GROUP BY share_id, action
              ON CONFLICT(share_id, action) DO UPDATE SET c=excluded.c`);
 
+  // 执行过的 SQL 流水：给「这条路径到底打了几次库」这类断言用（读放大回归）。
+  const queries = [];
+
   const prepare = (sql) => {
     const stmt = db.prepare(sql);
     let args = [];
+    const log = () => queries.push(" ".concat(sql).split(/\s+/).join(" ").trim());
     const api = {
       bind(...a) {
         // 真 D1(SQLite) 单条 SQL 绑定参数上限 100。社区过百帖时 IN (?,?,…) 一次
@@ -68,15 +73,17 @@ export function fakeD1(seed = [], posts = []) {
         args = a; return api;
       },
       async run() {
+        log();
         const r = stmt.run(...args);
         return { success: true, meta: { changes: r.changes, last_row_id: r.lastInsertRowid } };
       },
       async first(col) {
+        log();
         const row = stmt.get(...args);
         if (col != null) return row ? row[col] : null;
         return row ?? null;
       },
-      async all() { return { results: stmt.all(...args) }; },
+      async all() { log(); return { results: stmt.all(...args) }; },
     };
     return api;
   };
@@ -90,6 +97,7 @@ export function fakeD1(seed = [], posts = []) {
         return out;
       },
       _db: db,
+      _queries: queries,
     },
   };
 }

@@ -52,6 +52,28 @@ describe("likedBy", () => {
     const liked = await likedBy(env, "u1", ["s1", "s2"]);
     expect([...liked]).toEqual(["s1"]);
   });
+
+  // 2026-09-02 读放大回归：原先按 90 个 shareId 一批发 IN 查询,feed 有多少帖就
+  // 读多少行（~93 行只为返回两三行）。改成一次查完再取交集后,无论 feed 多大都
+  // 只打一次库——这条断言就是防止有人再把 IN 分块写回来。
+  it("无论 feed 多大都只打一次库", async () => {
+    const env = fakeD1();
+    await recordEngagement(env, "p003", "u1", "like", true, 100);
+    const before = env.DB._queries.length;
+    const liked = await likedBy(env, "u1", Array.from({ length: 400 }, (_, i) => `p${String(i).padStart(3, "0")}`));
+    expect(env.DB._queries.length - before).toBe(1);
+    expect([...liked]).toEqual(["p003"]);
+  });
+
+  // 不能图省事把该用户赞过的全部原样返回：/reco/rank 会把这个集合当 liked 下发,
+  // 混进本次没问的帖子就是改了接口语义。
+  it("不返回本次没问的帖子（即便该用户赞过）", async () => {
+    const env = fakeD1();
+    await recordEngagement(env, "asked", "u1", "like", true, 100);
+    await recordEngagement(env, "not-asked", "u1", "like", true, 100);
+    const liked = await likedBy(env, "u1", ["asked"]);
+    expect([...liked]).toEqual(["asked"]);
+  });
 });
 
 // ── engagement_counts 计数表（2026-09-02 读放大根治）─────────────────────────
