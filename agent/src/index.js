@@ -1015,7 +1015,18 @@ export async function handleUsageRoute(url, request, env) {
     const days = Number.isFinite(b.expire_days) ? b.expire_days : CAMPAIGN_EXPIRE_DAYS;
     const expiresAt = now + days * DAY_MS;
     await grantBucket(env.USAGE, sub, suanliToUY(b.suanli), "campaign:" + (b.reason || "manual"), expiresAt, now);
-    return J({ ok: true, user_sub: sub, suanli: b.suanli, cost_yuan: r2(b.suanli / RATE), expires_at: expiresAt });
+    // 可选：发放的同时告诉本人（2026-09-02 写书多扣退款首次用上）。运营补偿/退款
+    // 如果不吭声，用户只能自己去账本里发现，等于没退。push.title 有值才推；推送
+    // 失败（没装 App / 没 push token）不影响发放已成事实，所以只带回 pushed 标志。
+    let pushed = false;
+    if (b.push && b.push.title) {
+      pushed = await sendPush(env, sub, {
+        title: String(b.push.title).slice(0, 60),
+        body: String(b.push.body || "").slice(0, 200),
+        link: String(b.push.link || "voicedrop://settings"),
+      });
+    }
+    return J({ ok: true, user_sub: sub, suanli: b.suanli, cost_yuan: r2(b.suanli / RATE), expires_at: expiresAt, pushed });
   }
 
   if (url.pathname === "/agent/usage/grant/batch" && request.method === "POST") {
