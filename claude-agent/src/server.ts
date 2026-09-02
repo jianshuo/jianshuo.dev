@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { parseLegs, availableLegs, shouldTryNextLeg, type BookLeg } from "./book-legs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -434,12 +435,11 @@ const ADMIN_PUSH_URL = process.env.ADMIN_PUSH_URL ?? "https://jianshuo.dev/agent
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 const BOOK_TIMEOUT_MS = Number(process.env.BOOK_TIMEOUT_MS ?? 3 * 60 * 60 * 1000); // 兜底防挂死，写整本书要给足
 
-// --- 写书引擎开关（2026-08-24，为省 ChatGPT quota 加的第二条腿）---
-// BOOK_ENGINE=codex（默认，ChatGPT 订阅）| claude（Claude Agent SDK 腿）。
+// --- 写书引擎的凭据（三条腿共用这几个常量）---
 // claude 腿不配 BOOK_ANTHROPIC_* 时吃 lab 自己的 Claude 订阅 OAuth；配了则按次
 // 注入 ANTHROPIC_BASE_URL/API_KEY——Kimi 等 Anthropic 兼容端点（订阅/按量都行），
 // 只作用于写书子进程，聊天路径的凭据与模型完全不受影响。
-const BOOK_ENGINE = (process.env.BOOK_ENGINE ?? "codex").toLowerCase();
+// 2026-09-02 起 BOOK_ENGINE 开关废除：改由 BOOK_LEGS 的降级链决定跑哪条腿。
 const BOOK_CLAUDE_MODEL = process.env.BOOK_CLAUDE_MODEL || MODEL;
 const BOOK_ANTHROPIC_BASE_URL = process.env.BOOK_ANTHROPIC_BASE_URL ?? "";
 const BOOK_ANTHROPIC_API_KEY = process.env.BOOK_ANTHROPIC_API_KEY ?? "";
@@ -453,28 +453,9 @@ const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 160); // 仅 claude 
 // （提示词里给绝对路径），本目录只是进程落脚点。
 const BOOK_RUN_DIR = process.env.BOOK_RUN_DIR ?? join(__dirname, "..", "bookrun");
 
-// --- 写书引擎配额（2026-08-27）：每个 6 小时固定窗口，前 N 本新书走 lab 的
-// Claude 订阅（不注入兼容端点），之后自动降到 Kimi（BOOK_ANTHROPIC_*）。只数
-// 新书（/api/book），修书不占额也不受影响。Kimi 没配（BASE_URL 空）时全部走
-// Claude 订阅，取号照记但不改变行为。计数落盘 bookrate.json，重启不清零。
-const BOOK_CLAUDE_FIRST_N = Number(process.env.BOOK_CLAUDE_FIRST_N ?? 3);
-const BOOK_WINDOW_HOURS = Number(process.env.BOOK_WINDOW_HOURS ?? 6);
-const BOOK_RATE_FILE = join(__dirname, "..", "bookrate.json");
-// 取号：epoch 对齐的固定窗口桶。返回本窗口这是第几本（1 起）。
-async function takeBookSlot(): Promise<number> {
-  const bucket = Math.floor(Date.now() / (BOOK_WINDOW_HOURS * 3600 * 1000));
-  let st = { bucket, count: 0 };
-  try {
-    const j = JSON.parse(await readFile(BOOK_RATE_FILE, "utf8"));
-    if (j && j.bucket === bucket && Number.isFinite(j.count)) st = j;
-  } catch {
-    /* 首次/换窗口/文件坏 → 从 0 起 */
-  }
-  st.bucket = bucket;
-  st.count = (st.count ?? 0) + 1;
-  await writeFile(BOOK_RATE_FILE, JSON.stringify(st)).catch(() => {});
-  return st.count;
-}
+// 旧的「每 6 小时前 N 本走 Claude 订阅」取号机制已于 2026-09-02 被下面的三腿
+// 降级链取代（bookrate.json 不再读写，可删）：取号是**开跑前**猜哪条腿有额度，
+// 链是**倒下后**换一条还有额度的，后者不需要猜。
 
 const SKILLS_DIR = join(process.env.HOME ?? homedir(), ".claude", "skills");
 
@@ -568,29 +549,73 @@ async function runClaudeExec(
       }
     }
   } catch (e: any) {
-    error = String(e?.message ?? e);
+    // 别覆盖已经识别出的具体错误。SDK 常在 result 之后再抛一个笼统的
+    // 「process exited with code 1」——2026-09-02 的日志里配额 403 就是这样被
+    // 盖成通用消息的，换腿判别会因此瞎掉（shouldTryNextLeg 认不出没有配额字样的串）。
+    if (!error) error = String(e?.message ?? e);
   }
   return { ok, threadId, reply, error: ok ? "" : error || "no result" };
 }
 
-// 引擎分发：两条腿同一契约，runBookJob / runReviseJob 调这里。newBook=true（只有
-// /api/book 传）时按 6 小时窗口取号：前 BOOK_CLAUDE_FIRST_N 本走 Claude 订阅，
-// 之后注入 Kimi 兼容端点；修书不取号，沿用配置原样（Kimi 在配即 Kimi）。
+// --- 引擎分发：三条腿的降级链（2026-09-02）---------------------------------
+//
+// 顺序 kimi → codex → claude（BOOK_LEGS 可改）。跑倒一条腿就问一句「是配额满了
+// 还是书写坏了」：配额满 → 换下一条腿重跑；书写坏了（撞轮数、崩溃、超时、风控）
+// → 直接认输，换腿只会再烧一份别人的额度。三条腿全满才算失败，走原来的
+// 退款 + 管理员告警。
+//
+// 起因是 9/2 上午：单腿吃 Kimi，7 单 11 分钟内涌进来把 5 小时配额打穿，9 本
+// 书全灭、每本跑几十轮才倒下，而同机的 Codex 和 Claude 订阅整段时间闲着。
+//
+// 换腿是**整本重跑**（各腿的会话不互通）。skill 本身有断点续跑约定，工作目录
+// WORKSPACE/book-<slug> 还在，所以下面给续跑腿追一句提示，让它先查有没有半成品，
+// 免得同一单写出两本书。前一腿烧掉的轮数收不回来，这是换腿的固有代价。
+const BOOK_LEGS = parseLegs(process.env.BOOK_LEGS);
+
+function legLabel(leg: BookLeg): string {
+  return leg === "kimi" ? `kimi-compat(${BOOK_CLAUDE_MODEL})` : leg === "claude" ? "claude-sub" : "codex";
+}
+
+function runLeg(leg: BookLeg, prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+  if (leg === "codex") return runCodexExec(prompt, onThread);
+  return runClaudeExec(prompt, onThread, leg === "kimi"); // kimi=注入兼容端点，claude=吃 lab 订阅
+}
+
+const RESUME_HINT =
+  `\n\n补充（本单已换过引擎）：上一次尝试因引擎配额中断，可能已经写了一部分——` +
+  `动笔前先列一下 ${WORKSPACE}/ 下本单的工作目录，如果已有 book.json / 章节 / reviews，` +
+  `就接着把它写完并发布，**不要另起一本新书、不要换 slug**。`;
+
 const runBookEngine = async (
   prompt: string,
   onThread?: (id: string) => void,
-  opts?: { newBook?: boolean },
+  _opts?: { newBook?: boolean },
 ): Promise<CodexOutcome> => {
-  if (BOOK_ENGINE !== "claude") return runCodexExec(prompt, onThread);
-  let injectCompat = true;
-  if (opts?.newBook && BOOK_ANTHROPIC_BASE_URL) {
-    const n = await takeBookSlot();
-    injectCompat = n > BOOK_CLAUDE_FIRST_N;
+  // 凭据缺失的腿直接跳过，别浪费一次必败的重跑。
+  const legs = availableLegs(BOOK_LEGS, {
+    kimi: Boolean(BOOK_ANTHROPIC_BASE_URL),
+    claude: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN),
+  });
+  if (!legs.length) return runCodexExec(prompt, onThread); // 全没配：保底还是老路
+  let last: CodexOutcome = { ok: false, threadId: "", reply: "", error: "no leg ran" };
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    console.log(`[book] leg ${i + 1}/${legs.length} = ${legLabel(leg)}`);
+    last = await runLeg(leg, i === 0 ? prompt : prompt + RESUME_HINT, onThread);
+    if (last.ok) {
+      if (i > 0) console.log(`[book] leg ${legLabel(leg)} 写成（前 ${i} 条腿用不了）`);
+      return last;
+    }
+    if (!shouldTryNextLeg(last.error)) {
+      console.log(`[book] leg ${legLabel(leg)} 失败，但不是配额/凭据问题，不换腿 → ${last.error.slice(0, 120)}`);
+      return last;
+    }
     console.log(
-      `[book] window slot ${n} (first ${BOOK_CLAUDE_FIRST_N}/${BOOK_WINDOW_HOURS}h → claude-sub) engine=${injectCompat ? "kimi-compat" : "claude-sub"}`,
+      `[book] leg ${legLabel(leg)} 用不了（配额满或凭据失效）` +
+        (i + 1 < legs.length ? ` → 换 ${legLabel(legs[i + 1])}` : "（已是最后一条腿）"),
     );
   }
-  return runClaudeExec(prompt, onThread, injectCompat);
+  return last;
 };
 
 // 跑一次 codex exec 到结束。事件解析与 codex-agent 的 translate() 同源（实机 fixture
@@ -1019,7 +1044,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       reply = out.reply;
       console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
       if (!ok) {
-        await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+        await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 腿=${BOOK_LEGS.join("→")} · ${String(out.error || "").slice(0, 100)}`);
         await refundBook(auth, { ref: jobId });   // 预扣一口价没写成——原数退回
       }
     } catch (e) {
@@ -1099,7 +1124,7 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
       console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
       if (out.ok) await registerBookPost(auth, slug);   // 标题/hidden/章节数可能变了——刷新书帖
       if (!out.ok) {
-        await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE} · ${String(out.error || "").slice(0, 100)}`);
+        await notifyAdmin("修书任务失败", `${slug} · 腿=${BOOK_LEGS.join("→")} · ${String(out.error || "").slice(0, 100)}`);
         await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40
       }
     } catch (e: any) {
