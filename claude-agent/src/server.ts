@@ -708,7 +708,9 @@ type ThreadEntry = {
   reply?: string;
   error?: string;
 };
-type BookMeta = { slug: string; scope: string; author: string; createdAt: number; thread: ThreadEntry[] };
+// author 只是创建期的引导值，不是真源：书还没发布时线上还没有 _src/book.json，
+// 只能先用它顶着。发布之后一律以 book.json 的 author 为准（见 bookAuthor）。
+type BookMeta = { slug: string; scope: string; author?: string; createdAt: number; thread: ThreadEntry[] };
 
 function metaPath(slug: string): string {
   return join(BOOKMETA_DIR, slug + ".json");
@@ -937,15 +939,24 @@ async function publisherScope(): Promise<string> {
   return cachedPublisherScope;
 }
 
-// 线上 _src 源稿镜像的 book.json（取署名用；老书没有 _src，返回 null 不算书不存在）。
+// 线上 _src 源稿镜像的 book.json（取署名/产权用；老书没有 _src，返回 null 不算书不存在）。
+// ?_= 穿透书页路由的 5 分钟边缘缓存：修书刚改完署名、新书刚发布，主人校验和署名都要
+// 立刻看到新值，不能等缓存过期（与 readBookMeta 同一考虑）。
 async function fetchSrcBook(slug: string): Promise<any | null> {
   try {
-    const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/_src/book.json`);
+    const r = await fetch(`https://jianshuo.dev/voicedrop/books/${slug}/_src/book.json?_=${Date.now()}`);
     if (!r.ok) return null;
     return await r.json();
   } catch {
     return null;
   }
+}
+
+// 署名真源 = book.json 的 author（修书会改它）。登记簿里那份是创建期快照，之后再没
+// 更新过——反过来优先读它就会漂：改了署名，登记簿不跟着变，修书 prompt 还会拿旧名字
+// 去叮嘱 agent「不要动署名」，把已经改对的名字又写回去。老书没有 _src 才回退到它。
+function bookAuthor(srcBook: any | null, meta: BookMeta | null): string {
+  return String(srcBook?.author ?? "") || String(meta?.author ?? "");
 }
 
 // 书存在与否以公开目录页为准——_src 是 2026-08-15 才有的，老书只有 index.html。
@@ -1232,7 +1243,7 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
   const entry: ThreadEntry = { ts: Date.now(), kind: "revise", instruction, status: "running" };
   meta.thread.push(entry);
   await writeBookMeta(meta);
-  runReviseJob(slug, meta.scope, meta.author, instruction, entry.ts, req.headers.authorization);
+  runReviseJob(slug, meta.scope, bookAuthor(srcBook, meta), instruction, entry.ts, req.headers.authorization);
   res.writeHead(202, json).end(
     JSON.stringify({ ok: true, ts: entry.ts, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }),
   );
@@ -1269,7 +1280,7 @@ async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug
     res.writeHead(200, json).end(
       JSON.stringify({
         slug,
-        author: String(srcBook?.author ?? ""),
+        author: bookAuthor(srcBook, meta),
         createdAt: 0,
         running: false,
         thread: [],
@@ -1280,7 +1291,7 @@ async function handleBookHistory(req: IncomingMessage, res: ServerResponse, slug
   res.writeHead(200, json).end(
     JSON.stringify({
       slug: meta.slug,
-      author: meta.author,
+      author: bookAuthor(srcBook, meta),
       createdAt: meta.createdAt,
       running: meta.thread.some((e) => e.status === "running"),
       thread: meta.thread,
