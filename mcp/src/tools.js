@@ -427,19 +427,35 @@ export const TOOLS = [
   // 公开书架 voicedrop.cn/books：写书 agent（lab.jianshuo.dev）长出来的书。
   // 读（list_books / read_book / read_book_chapter）是公开内容，免 token
   // （http.js 的 NO_TOKEN_TOOLS）；写和修走 lab API，扣算力、要 token。
+  // 「免 token」是不强制、不是不用：客户端配了令牌时 vd-client 照样带上去，
+  // 书单路由据此把**请求者自己的 hidden 书**也列出来（条目带 hidden/mine）。
   {
     name: "list_books",
     description:
-      "看公开书架（voicedrop.cn/books）上的全部书。返回每本的 slug、书名、作者、类目、章节数、" +
-      "有无封面、创建时间和阅读 URL。书架是公开内容，不花算力、不需要登录。" +
+      "看公开书架（voicedrop.cn/books）上的书，**按创建时间倒序**（最新的在最前）。返回每本的 " +
+      "slug、书名、作者、类目、章节数、有无封面、创建时间和阅读 URL。" +
+      "要「最近 N 本」传 limit（比如 limit=10）；不传 = 全部（一百多本，别无谓地塞满上下文）。" +
+      "书架是公开内容，不花算力、不需要登录；**带访问令牌调用时，自己隐藏的书也一并列出**，" +
+      "条目带 hidden:true（隐藏只是不上公开书架，直链照样能读；别人看不见你的隐藏书），" +
+      "自己的书还带 mine:true（这本能改能隐藏）。" +
       "读目录用 read_book，读正文用 read_book_chapter。",
-    inputSchema: obj({}),
-    handler: async (_a, { client }) => {
+    inputSchema: obj({ limit: int("只要最近几本（默认全部）") }),
+    handler: async ({ limit }, { client }) => {
       const out = await client.books("GET", "", { query: { format: "json" } });
-      const books = (out.books ?? []).map(({ slug, title, author, category, chapters, cover, createdAt }) => ({
-        slug, title, author, category, chapters, cover, createdAt, url: bookURL(slug),
+      // 服务端（functions/voicedrop/books 的 collectBooks）已按 createdAt 倒序排好，
+      // 所以「最近 N 本」= 取前 N 条，这边不重排——排序口径只有一处，两边不会走岔。
+      const all = out.books ?? [];
+      const picked = limit > 0 ? all.slice(0, limit) : all;
+      const books = picked.map(({ slug, title, author, category, chapters, cover, createdAt, hidden, mine }) => ({
+        slug, title, author, category, chapters, cover, createdAt,
+        // hidden / mine 只在为真时出现，与书单 JSON 同一口径：条目干净，模型也不会
+        // 把一片 false 读成「这本被隐藏了吗」的噪音。
+        ...(hidden ? { hidden: true } : {}),
+        ...(mine ? { mine: true } : {}),
+        url: bookURL(slug),
       }));
-      return { count: books.length, books };
+      // total = 书架上一共多少本（截断前），这样模型知道 limit 之外还有多少。
+      return { count: books.length, total: all.length, books };
     },
   },
   {

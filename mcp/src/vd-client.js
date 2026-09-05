@@ -61,8 +61,9 @@ export function createClient({ token, fetch: fetchImpl = globalThis.fetch }) {
     agent: (method, path, opts) => request(AGENT_ORIGIN, "/agent", method, path, opts),
     reco: (method, path, opts) => request(RECO_ORIGIN, "/reco", method, path, opts),
     lab: (method, path, opts) => request(LAB_ORIGIN, "/api", method, path, opts),
-    // 公开书架（voicedrop.cn/books 的原始路径）。GET-only、无需 token——
-    // 带上 Authorization 也无妨，公开路由不看它。
+    // 公开书架（voicedrop.cn/books 的原始路径）。GET-only、无需 token，
+    // 但**带上 Authorization 有用**：书单（?format=json）认出请求者后，会把他
+    // 自己隐藏的书也列进来并标 hidden/mine（别人的隐藏书永远看不见）。
     books: (method, path, opts) => request(FILES_ORIGIN, "/voicedrop/books", method, path, opts),
   };
 }

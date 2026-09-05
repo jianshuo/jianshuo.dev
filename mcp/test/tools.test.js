@@ -316,6 +316,32 @@ describe("书", () => {
     });
   });
 
+  it("list_books limit → 只要最近 N 本（服务端已倒序，取前 N），total 报全量", async () => {
+    const shelf = { books: [1, 2, 3, 4, 5].map((n) => ({ slug: `b${n}`, title: `书${n}`, createdAt: 100 - n })) };
+    const { out } = await run("list_books", { limit: 2 }, { "books GET ": shelf });
+    expect(out.books.map((b) => b.slug)).toEqual(["b1", "b2"]);
+    expect(out.count).toBe(2);
+    expect(out.total).toBe(5);
+
+    // 不传 limit = 全部（老行为不变）。
+    const { out: full } = await run("list_books", {}, { "books GET ": shelf });
+    expect(full.count).toBe(5);
+  });
+
+  it("list_books 透传 hidden / mine（只在为真时出现）——带令牌时自己的隐藏书也在列表里", async () => {
+    const { out } = await run("list_books", {}, {
+      "books GET ": {
+        books: [
+          { slug: "mine-hidden", title: "藏起来的", createdAt: 2, hidden: true, mine: true },
+          { slug: "public", title: "公开的", createdAt: 1 },
+        ],
+      },
+    });
+    expect(out.books[0]).toMatchObject({ slug: "mine-hidden", hidden: true, mine: true });
+    expect(out.books[1]).not.toHaveProperty("hidden");
+    expect(out.books[1]).not.toHaveProperty("mine");
+  });
+
   it("read_book 优先读 _src/book.json（含每章 brief/status），章号补零成两位", async () => {
     const { calls, out } = await run("read_book", { slug: "s-book" }, {
       "books GET s-book/_src/book.json": {
