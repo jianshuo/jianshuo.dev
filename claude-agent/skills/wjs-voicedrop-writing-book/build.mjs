@@ -80,7 +80,32 @@ async function upload(slug, file, html, ct = "text/html; charset=utf-8") {
 // 放在 books/<slug>/_src/ 子目录（书架统计只看顶层文件，_src 不会被当成章节）。
 // 拉回：build.mjs pull <workdir> <slug>。
 const srcName = f => `_src/${f}`;
-async function syncBookJson(b) { await upload(b.slug, srcName("book.json"), JSON.stringify(b, null, 2) + "\n", "application/json"); }
+
+// hidden 的真源在**线上**那份 `_src/book.json`：书页 ⋯ 菜单的「隐藏本书」只改线上
+// （functions/voicedrop/books 的 setHidden），工作目录这份是写书那会儿生成的、根本
+// 不知道后来有人藏过它。所以每次 sync 前先把线上的 hidden 读回来盖到本地，再整份 PUT
+// ——不这么做的话，任何一次发布（换封面 / 刷目录 / 重发单章）都会把隐藏抹平：
+// 2026-09-06《装睡的人》就是隐藏当晚被「上封面」那一步顶回书架的。
+// 顺手回写工作目录，让本地那份不再继续漂着。
+async function mergeLiveHidden(b) {
+  let live;
+  try {
+    const r = await fetch(`${publicUrl(b.slug, srcName("book.json"))}?_=${Date.now()}`);
+    if (!r.ok) return;                        // 首发：线上还没有 → 用本地的（绘本缺省 hidden 照样生效）
+    live = await r.json();
+  } catch { return; }                         // 读不到线上不卡发布：宁可漏一次也不能让发书失败
+  if (!live || !live.slug) return;            // 不像 book.json 就当没读到
+  const want = live.hidden === true;
+  if (want === (b.hidden === true)) return;
+  if (want) b.hidden = true; else delete b.hidden;
+  try { writeFileSync(join(workdir, "book.json"), JSON.stringify(b, null, 2) + "\n"); } catch {}
+  console.log(`ok  hidden ← 线上（${want}）`);
+}
+
+async function syncBookJson(b) {
+  await mergeLiveHidden(b);
+  await upload(b.slug, srcName("book.json"), JSON.stringify(b, null, 2) + "\n", "application/json");
+}
 
 // ---------- 淡雅样式：暖米纸底 + 宋体正文 + 单一强调色 ----------
 const CSS = book => `

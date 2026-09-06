@@ -1,9 +1,10 @@
 // test/book-hidden.test.js — POST /voicedrop/books/<slug>/hidden（书页 ⋯ 菜单「隐藏本书」）
 // 只有书的主人能改；改的是 _src/book.json 的 hidden 字段——那正是书单 indexJSON 读的真源。
 import { describe, it, expect } from "vitest";
-import { fakeEnv } from "./fakes.js";
+import { fakeEnv, fakeRecoD1 } from "./fakes.js";
 import { onRequest } from "../../functions/voicedrop/books/[[path]].js";
 import { anonScopeFromToken } from "../../functions/lib/auth.js";
+import { corePutReport } from "../../functions/lib/core-db.js";
 
 const PUBLISHER = "users/anon-ae209ac53499d51d513425503bd134b0/books/";
 const SLUG = "dudu-misses-xiaobinggan";
@@ -193,5 +194,53 @@ describe("书单的缓存头", () => {
     const r = await idx(env, OWNER_TOK);
     expect(r.headers.get("Cache-Control")).toBe("no-store");
     expect(r.headers.get("Vary")).toBe("Authorization");
+  });
+});
+
+// ── 隐藏要连社区索引一起改（2026-09-06）────────────────────────────────
+// 书架和社区是两套存储：只改 _src/book.json 的话，书从书架消失了、社区 feed 里那张
+// 书卡还挂着（feed 查的是 community_posts 的 WHERE hidden=0）。《嘟嘟和小考拉》就是
+// 这么在社区里露着的。
+describe("隐藏同步社区索引", () => {
+  async function envWithPost(opts = {}) {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK), ...opts });
+    env.RECO_DB = fakeRecoD1();
+    env.RECO_DB._posts.set("book-" + SLUG, { share_id: "book-" + SLUG, kind: "book", hidden: 0 });
+    return env;
+  }
+  const rowHidden = (env) => env.RECO_DB._posts.get("book-" + SLUG).hidden;
+
+  it("隐藏 → 书帖也 hidden=1", async () => {
+    const env = await envWithPost();
+    const r = await call(env, { token: OWNER_TOK, body: { hidden: true } });
+    expect(r.status).toBe(200);
+    expect(readDoc(env).hidden).toBe(true);
+    expect(rowHidden(env)).toBe(1);
+  });
+
+  it("取消隐藏 → 书帖回 hidden=0", async () => {
+    const env = await envWithPost({ hidden: true });
+    env.RECO_DB._posts.get("book-" + SLUG).hidden = 1;
+    const r = await call(env, { token: OWNER_TOK, body: { hidden: false } });
+    expect(r.status).toBe(200);
+    expect(readDoc(env).hidden).toBeUndefined();
+    expect(rowHidden(env)).toBe(0);
+  });
+
+  it("取消隐藏不能掀掉举报的遮罩——被举报过的书帖仍然 hidden=1", async () => {
+    const env = await envWithPost({ hidden: true });
+    env.RECO_DB._posts.get("book-" + SLUG).hidden = 1;
+    await corePutReport(env, "book-" + SLUG, "pending", Date.now(), ["someone"]);
+    const r = await call(env, { token: OWNER_TOK, body: { hidden: false } });
+    expect(r.status).toBe(200);
+    expect(readDoc(env).hidden).toBeUndefined();   // 书架上放出来（主人说了算）
+    expect(rowHidden(env)).toBe(1);                 // 社区里照旧压着（举报说了算）
+  });
+
+  it("没有 RECO_DB 绑定也不能把隐藏本身弄失败", async () => {
+    const env = await envWithBook({ owner: await anonScopeFromToken(OWNER_TOK) });
+    const r = await call(env, { token: OWNER_TOK, body: { hidden: true } });
+    expect(r.status).toBe(200);
+    expect(readDoc(env).hidden).toBe(true);
   });
 });

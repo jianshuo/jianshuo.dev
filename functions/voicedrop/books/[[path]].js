@@ -12,6 +12,8 @@ import { bearerToken, verifySession, anonScopeFromToken } from '../../lib/auth.j
 // 书没有 <meta name="author"> 时，按书主人 owner 显示作者名——与社区文章同一套
 // （profile.name → id 前 6 位大写），2026-08-27。
 import { readProfileName } from '../../lib/style-store.js';
+import { setCommunityPostHidden } from '../../lib/community-index.js';
+import { coreGetReport } from '../../lib/core-db.js';
 // key 钉死在该 scope 的 books/ 尾段下，桶里其他东西（articles/、WECHAT.json…）
 // 够不着，所以不需要 photo 那样的文件类型白名单。
 //
@@ -540,6 +542,17 @@ async function setHidden(env, request, slug) {
   if (hidden) doc.hidden = true; else delete doc.hidden;
   await env.FILES.put(key, JSON.stringify(doc, null, 2),
     { httpMetadata: { contentType: 'application/json' } });
+  // 社区索引同步（2026-09-06）：书架和社区是两套存储——只改 book.json 的话书从书架
+  // 消失了，社区 feed 里那张书卡还挂着（feed 查的是 community_posts 的 WHERE hidden=0），
+  // 隐藏只做了一半。取消隐藏不能无脑写 0：被举报的帖子也是靠这一列压着的，回落查一次
+  // 举报态，口径与 files API 的 indexUpsert 一致。索引写失败不影响隐藏本身（真源已经
+  // 落了 R2），书帖重登记 / 对账会收敛。
+  try {
+    const hid = hidden ? true : !!(await coreGetReport(env, 'book-' + slug));
+    await setCommunityPostHidden(env.RECO_DB, 'book-' + slug, hid);
+  } catch (e) {
+    console.log('[books] community index sync failed', slug, String(e?.message || e));
+  }
   return jsonResp({ ok: true, slug, hidden });
 }
 
