@@ -10,9 +10,9 @@ import { loadConfig } from "../src/config.ts";
 
 const FAKE = resolve("test/fixtures/fake-gpt-image-2-skill.mjs");
 
-async function setup() {
+async function setup(env: Record<string, string> = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), "paint-worker-"));
-  const cfg = loadConfig({ API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE } as any);
+  const cfg = loadConfig({ API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE, ...env } as any);
   const store = new JobStore(cfg.jobsDir);
   const hub = new EventHub();
   const worker = new Worker(store, hub, cfg);
@@ -210,4 +210,37 @@ test("inputUrl 下载失败 → job 直接 failed（input_download_failed），�
   await waitFor(async () => (await store.get("d2"))?.status === "failed");
   const j = await store.get("d2");
   assert.equal(j?.error?.code, "input_download_failed");
+});
+
+// ── 模型被账号拒绝 → 自动换下一个（2026-09-06）──────────────────────────
+// CLI 自带的默认模型会随账号能开的东西漂：那天 gpt-5.4 突然 400，paint 全线出不了
+// 图，而服务 active、journalctl 无声。所以模型钉死在 config，并且拒了要能换。
+test("账号不认第一个模型 → 换到下一个并出图", async () => {
+  const { store, worker } = await setup({ CODEX_MODELS: "badmodel-a,goodmodel" });
+  await store.create(job("m1"));
+  worker.enqueue("m1");
+  await waitFor(async () => (await store.get("m1"))?.status === "done");
+  const j = await store.get("m1");
+  assert.equal(j?.model, "goodmodel");
+  assert.equal(j?.attempts, 2); // 坏模型 1 次 + 好模型 1 次
+});
+
+test("候选全被拒 → 老老实实失败，错误留的是最后一个模型", async () => {
+  const { store, worker } = await setup({ CODEX_MODELS: "badmodel-a,badmodel-b" });
+  await store.create(job("m2"));
+  worker.enqueue("m2");
+  await waitFor(async () => (await store.get("m2"))?.status === "failed");
+  const j = await store.get("m2");
+  assert.equal(j?.model, "badmodel-b");
+  assert.equal(j?.error?.code, "http_error");
+});
+
+test("不是模型问题就别换模型——普通 http_error 只跑第一个候选", async () => {
+  const { store, worker } = await setup({ CODEX_MODELS: "goodmodel,other" });
+  await store.create(job("m3", { prompt: "please FAIL" }));
+  worker.enqueue("m3");
+  await waitFor(async () => (await store.get("m3"))?.status === "failed");
+  const j = await store.get("m3");
+  assert.equal(j?.attempts, 1);
+  assert.equal(j?.model, "goodmodel");
 });

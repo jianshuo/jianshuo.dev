@@ -1,12 +1,25 @@
 import type { Job } from "./store.js";
 
-export function buildArgs(job: Job, outPath: string): string[] {
+/**
+ * 「这个模型你的账号用不了」——换模型重试的判据，别的错一律不换（换了也是白换）。
+ * 上游长这样：{code:"http_error", message:"HTTP 400",
+ *   detail:'{"detail":"The \'gpt-5.4\' model is not supported when using Codex with a ChatGPT account."}'}
+ */
+export function isModelRejected(error?: { code?: string; message?: string; detail?: unknown }): boolean {
+  if (!error) return false;
+  const blob = `${error.message ?? ""} ${typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail ?? "")}`;
+  return /model is not supported/i.test(blob);
+}
+
+export function buildArgs(job: Job, outPath: string, model?: string): string[] {
   const { prompt, mode, params } = job;
   // `--provider` is a GLOBAL option and must precede the subcommand (verified against
   // gpt-image-2-skill v0.7.1 `--help`): the `images generate|edit` / `transparent generate`
   // subcommands reject `--provider` if it appears after them.
   const globals = ["--json", "--json-events", "--provider", "codex"];
-  const common = ["--prompt", prompt, "--out", outPath];
+  // `-m` 是子命令选项（generate/edit/transparent generate 三个都收），跟 --provider
+  // 那个全局选项不是一回事，位置别搞反。不给就吃 CLI 的默认——那正是会漂的东西。
+  const common = ["--prompt", prompt, "--out", outPath, ...(model ? ["-m", model] : [])];
   const sizeQuality = ["--size", params.size, "--quality", params.quality];
 
   if (params.transparent) {

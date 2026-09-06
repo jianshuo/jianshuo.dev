@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildArgs, parseResult, parseEventLine } from "../src/engine.ts";
+import { buildArgs, parseResult, parseEventLine, isModelRejected } from "../src/engine.ts";
 import type { Job } from "../src/store.ts";
 
 const base: Job = {
@@ -53,6 +53,28 @@ test("parseResult success/error", () => {
 test("parseResult tolerates junk before json", () => {
   assert.equal(parseResult('warn line\n{"ok":true}').ok, true);
   assert.equal(parseResult("not json at all").ok, false);
+});
+
+test("buildArgs 带模型时补 -m，不带就不补（-m 是子命令选项，跟在 --out 后面）", () => {
+  const withModel = buildArgs(base, "/out/j1.png", "gpt-5.4-mini");
+  assert.equal(withModel[withModel.indexOf("-m") + 1], "gpt-5.4-mini");
+  assert.ok(withModel.indexOf("-m") > withModel.indexOf("generate"));
+  assert.equal(buildArgs(base, "/out/j1.png").includes("-m"), false);
+
+  const edit = buildArgs({ ...base, mode: "edit", inputPath: "/in.png" }, "/o.png", "gpt-5.4-mini");
+  assert.equal(edit[edit.indexOf("-m") + 1], "gpt-5.4-mini");
+  const tr = buildArgs({ ...base, params: { ...base.params, transparent: true } }, "/o.png", "gpt-5.4-mini");
+  assert.equal(tr[tr.indexOf("-m") + 1], "gpt-5.4-mini");
+});
+
+test("isModelRejected 只认「模型不被支持」，别的错一概不认", () => {
+  assert.equal(isModelRejected({
+    code: "http_error", message: "HTTP 400",
+    detail: `{"detail":"The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account."}`,
+  }), true);
+  assert.equal(isModelRejected({ code: "http_error", message: "HTTP 401", detail: "refresh_token_invalidated" }), false);
+  assert.equal(isModelRejected({ code: "missing_image_result", message: "no image" }), false);
+  assert.equal(isModelRejected(undefined), false);
 });
 
 test("parseEventLine maps percent, skips sse", () => {

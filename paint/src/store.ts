@@ -26,6 +26,8 @@ export interface Job {
   /** detail 是失败留痕（CLI 返回的原始 detail），只进 job JSON，不进回调 */
   error?: { code: string; message: string; detail?: unknown } | null;
   attempts?: number;
+  /** 这一单最后用的 Codex 外层模型（换过腿的话是换到的那个）——诊断用 */
+  model?: string;
   callbackUrl?: string;
   callbackToken?: string;
   callbackMeta?: unknown;

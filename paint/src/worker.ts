@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import type { Config } from "./config.js";
 import type { JobStore, Job } from "./store.js";
 import type { EventHub } from "./events.js";
-import { buildArgs, parseResult, parseEventLine } from "./engine.js";
+import { buildArgs, parseResult, parseEventLine, isModelRejected } from "./engine.js";
 import { deliver, type CallbackPayload } from "./callback.js";
 import { buildXmp, embedXmp } from "./xmp.js";
 
@@ -75,9 +75,9 @@ export class Worker {
     const ext = job.params.transparent ? "png" : (EXT[job.params.format] ?? "png");
     const outPath = join(this.cfg.resultsDir, `${id}.${ext}`);
 
-    let args: string[];
+    // 参数合法性先验一次（transparent+edit 这种组合直接拒）；模型留到下面循环里填。
     try {
-      args = buildArgs(job, outPath);
+      buildArgs(job, outPath);
     } catch (e: any) {
       if (job.inputPath) await unlink(job.inputPath).catch(() => {});
       await this.fail(job, { code: "invalid_argument", message: e?.message ?? "bad args" }, 0);
@@ -91,20 +91,33 @@ export class Worker {
     let ok = false;
     let bytes = 0;
     let error: { code: string; message: string; detail?: unknown } | undefined;
-    while (attempts < MAX_ATTEMPTS) {
-      attempts++;
-      ({ ok, bytes, error } = await this.attempt(id, args, outPath));
-      if (ok || !RETRYABLE.has(error?.code ?? "")) break;
-      if (attempts < MAX_ATTEMPTS) {
-        await this.store.update(id, { percent: 0 });
-        this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
+    // 外层按模型候选序列走：账号说「这个模型你用不了」就换下一个，其它错一律不换。
+    let model = this.cfg.codexModels[0];
+    for (const candidate of this.cfg.codexModels) {
+      model = candidate;
+      const args = buildArgs(job, outPath, candidate);
+      let tries = 0;
+      while (tries < MAX_ATTEMPTS) {
+        tries++;
+        attempts++;
+        ({ ok, bytes, error } = await this.attempt(id, args, outPath));
+        if (ok || !RETRYABLE.has(error?.code ?? "")) break;
+        if (tries < MAX_ATTEMPTS) {
+          await this.store.update(id, { percent: 0 });
+          this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
+        }
       }
+      if (ok || !isModelRejected(error)) break;
+      console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
+      await this.store.update(id, { percent: 0 });
+      this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
     }
 
     // 输入文件要等重试全部结束再清（edit 的第二次尝试还要用它）
     if (job.inputPath) await unlink(job.inputPath).catch(() => {});
 
     if (!ok) {
+      await this.store.update(id, { model });   // 失败也留痕：栽在哪个模型上
       await this.fail(job, error ?? { code: "unknown", message: "generation failed" }, attempts);
       return;
     }
@@ -128,7 +141,7 @@ export class Worker {
     const done = await this.store.update(id, {
       status: "done", percent: 100, doneAt: new Date().toISOString(), attempts,
       resultPath: outPath, format: ext === "jpg" ? "jpeg" : ext, bytes,
-      size: job.params.size,
+      size: job.params.size, model,
     });
     const resultUrl = `${this.cfg.publicBaseUrl}/results/${id}.${ext}`;
     this.hub.publish(id, "done", { result_url: resultUrl, bytes, format: done.format, size: done.size });

@@ -11,6 +11,21 @@ const outIdx = args.indexOf("--out");
 const out = outIdx >= 0 ? args[outIdx + 1] : null;
 const promptIdx = args.indexOf("--prompt");
 const prompt = promptIdx >= 0 ? args[promptIdx + 1] : "";
+const modelIdx = args.indexOf("-m");
+const model = modelIdx >= 0 ? args[modelIdx + 1] : null;
+
+// 模型名以 "badmodel" 开头 → 复刻账号拒绝那一幕（2026-09-06 的 gpt-5.4 400）。
+if (model && model.startsWith("badmodel")) {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    error: {
+      code: "http_error",
+      message: "HTTP 400",
+      detail: `{"detail":"The '${model}' model is not supported when using Codex with a ChatGPT account."}`,
+    },
+  }));
+  process.exit(1);
+}
 
 process.stderr.write(JSON.stringify({ data: { percent: 0, phase: "request_started" }, kind: "progress", type: "request_started" }) + "\n");
 process.stderr.write(JSON.stringify({ kind: "sse", type: "keepalive", data: {} }) + "\n");
