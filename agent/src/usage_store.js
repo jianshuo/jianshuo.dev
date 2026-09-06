@@ -90,6 +90,68 @@ export async function debit(db, userSub, amountUY, reason, detail, now) {
 
 // 明细翻页：keyset 游标 (ts,id) 双键——ts 会撞（同毫秒多笔），OFFSET 会在新行插入时漂移。
 // before = { ts, id }：只取严格早于该行的记录。
+// 算力转账：把 fromSub 的算力搬给 toSub。与 debit+grantBucket 拼一下的区别是
+// **整笔在同一个 db.batch 里落地**——batch 是一个事务，要么两边都动要么都不动。
+// 转账不像投币那样「少付一笔可事后补发」：中途崩掉就是转出方的钱凭空蒸发，
+// 所以这里不复用那两个各自成事务的原语。
+export async function transferCredits(db, { id, fromSub, toSub, amountUY, note = null, expiresAt = null, now }) {
+  const fromBefore = await balanceUY(db, fromSub, now);
+  const toBefore = await balanceUY(db, toSub, now);
+  const live = (await db.prepare(
+    "SELECT id, remaining_uy FROM bucket WHERE user_sub=? AND remaining_uy > 0 AND (expires_at IS NULL OR expires_at > ?) " +
+    "ORDER BY (expires_at IS NULL) ASC, expires_at ASC, id ASC"
+  ).bind(fromSub, now).all()).results;
+
+  // 与 debit 同一口径：先吃快过期的桶，永不过期的留到最后。
+  let left = amountUY;
+  const stmts = [];
+  for (const b of live) {
+    if (left <= 0) break;
+    const take = Math.min(b.remaining_uy, left);
+    stmts.push(db.prepare("UPDATE bucket SET remaining_uy = remaining_uy - ? WHERE id=?").bind(take, b.id));
+    left -= take;
+  }
+  // 转账不许透支。debit 那边可以留负桶记欠款（是平台在收钱），这里收款方是另一个
+  // 用户——扣不满还照发满额就等于凭空印钱，必须整笔拒绝。
+  if (left > 0) throw new Error("insufficient");
+
+  stmts.push(db.prepare(
+    "INSERT INTO bucket (user_sub,amount_uy,remaining_uy,source,created_at,expires_at) VALUES (?,?,?,?,?,?)"
+  ).bind(toSub, amountUY, amountUY, "transfer_in", now, expiresAt ?? null));
+
+  // 余额快照在 JS 里算：桶才是余额真源，account/ledger 的 balance_uy 是派生快照
+  // （与 debit/grantBucket 同口径）。放进同一个 batch 才不会出现「桶动了、流水没记」。
+  const fromAfter = fromBefore - amountUY;
+  const toAfter = toBefore + amountUY;
+  const detail = (extra) => JSON.stringify({ transfer_id: id, ...extra, ...(note ? { note } : {}) });
+
+  stmts.push(
+    db.prepare("UPDATE account SET spent_uy=spent_uy+?, balance_uy=?, updated_at=? WHERE user_sub=?")
+      .bind(amountUY, fromAfter, now, fromSub),
+    db.prepare("UPDATE account SET granted_uy=granted_uy+?, balance_uy=?, updated_at=? WHERE user_sub=?")
+      .bind(amountUY, toAfter, now, toSub),
+    db.prepare("INSERT INTO ledger (user_sub,ts,kind,amount_uy,reason,detail,balance_uy) VALUES (?,?,?,?,?,?,?)")
+      .bind(fromSub, now, "spend", amountUY, "transfer_out", detail({ to: toSub }), fromAfter),
+    db.prepare("INSERT INTO ledger (user_sub,ts,kind,amount_uy,reason,detail,balance_uy) VALUES (?,?,?,?,?,?,?)")
+      .bind(toSub, now, "grant", amountUY, "transfer_in", detail({ from: fromSub }), toAfter),
+    // 幂等：id 是主键，重复提交撞键 → 整个 batch 回滚 → 上面的钱一分都没动。
+    // 放在最后只是可读性；事务里语句顺序不影响原子性。
+    db.prepare("INSERT INTO transfer (id,from_sub,to_sub,amount_uy,note,ts) VALUES (?,?,?,?,?,?)")
+      .bind(id, fromSub, toSub, amountUY, note, now),
+  );
+
+  try {
+    await db.batch(stmts);
+  } catch (e) {
+    // 只有「这个 id 已经转过了」才算幂等重放；别的错（磁盘、约束改动）照旧抛出去，
+    // 否则一次真正的失败会被伪装成「已经成功过了」。
+    const prior = await db.prepare("SELECT id,from_sub,to_sub,amount_uy,note,ts FROM transfer WHERE id=?").bind(id).first();
+    if (!prior) throw e;
+    return { duplicate: true, transfer: prior };
+  }
+  return { duplicate: false, fromBalanceUY: fromAfter, toBalanceUY: toAfter };
+}
+
 export async function getLedger(db, userSub, limit = 50, before = null) {
   let sql = "SELECT id,ts,kind,amount_uy,reason,detail,balance_uy FROM ledger WHERE user_sub=?";
   const binds = [userSub];

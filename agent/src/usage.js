@@ -99,6 +99,17 @@ export const SUB_PRODUCT_MONTHLY = "com.wangjianshuo.VoiceDrop.sub.monthly_19_9"
 // 200 够写一本、写第二本就不够——「订着但当月烧光」这个时刻推的就是它。
 export const SUB_PRODUCT_PRO = "com.wangjianshuo.VoiceDrop.sub.monthly_199";
 export const SUB_BUCKET_GRACE_MS = 6 * 3600 * 1000;  // 订阅桶过期宽限（续费空窗，spec §12.2）
+
+// ── 用户之间的算力转账（2026-09-06）──────────────────────────────────────────
+// 转账是搬运不是铸币：总量不变，所以限额不为「印多少钱」把关，只为「一次手滑/一个
+// 被盗号能搬走多少」封顶。
+export const TRANSFER_MIN_SUANLI = 1;
+export const TRANSFER_MAX_SUANLI = 5000;     // 单笔上限
+export const TRANSFER_DAILY_SUANLI = 10000;  // 单日累计上限（按 transfer 表近 24h 统计）
+// 收到的算力给固定 90 天。debit 是按到期日 FIFO 吃桶、不回报吃掉的是哪几个，要精确
+// 继承原到期日就得改它的签名，不值得。副作用是把快过期的算力转一手能把到期日刷新
+// ——自转已封、跨号要两个实名身份，量级可接受。
+export const TRANSFER_EXPIRE_DAYS = 90;
 export const expiryAfterDays = (now, days) => now + days * DAY_MS;
 
 // ── 账本 action 的中文名（单一真源）─────────────────────────────────────────
@@ -123,6 +134,8 @@ export const REASON_ZH = {
   "book":          "写书",
   "book-revise":   "修书",
   "referral_author": "邀请奖励",
+  "transfer_out":  "转账转出",
+  "transfer_in":   "转账收到",
   "referral_new":    "受邀赠送",
 };
 export function reasonZH(reason) {

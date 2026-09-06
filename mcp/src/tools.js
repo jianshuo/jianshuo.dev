@@ -400,6 +400,30 @@ export const TOOLS = [
     inputSchema: obj({}),
     handler: (_a, { client }) => client.agent("GET", "usage/summary"),
   },
+  {
+    name: "transfer_credit",
+    description:
+      "把自己的算力转给另一个人。转出方必须是 Apple 或微信登录后的身份（花自己的钱可以匿名，" +
+      "把钱给别人不行）；收款人不需要登录，但账号必须已经存在。" +
+      "转出即时到账、不可撤回；收到的算力 90 天内有效。单笔上限 5000、单日累计上限 10000 算力。",
+    inputSchema: obj({
+      to: str("收款人的 id，形如 anon-8daa69bf…（对方用 whoami 能看到；写完整的 users/anon-…/ 也行）"),
+      suanli: int("转多少算力（正整数）"),
+      note: str("给对方的备注，两边账本里都看得到（可选，最多 40 字）"),
+      idempotency_key: str(
+        "幂等键（可选）：网络不稳时用同一个键重试，只会转一次。不给就由服务端生成，" +
+        "但那样重试会变成转两次。",
+      ),
+    }, ["to", "suanli"]),
+    handler: ({ to, suanli, note, idempotency_key }, { client }) =>
+      client.agent("POST", "usage/transfer", {
+        body: {
+          to, suanli,
+          ...(note ? { note } : {}),
+          ...(idempotency_key ? { idempotency_key } : {}),
+        },
+      }),
+  },
 
   // ─────────────────────────── 发布 ───────────────────────────
   {

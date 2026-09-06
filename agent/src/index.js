@@ -31,6 +31,7 @@ import { proxyVolcAsrWebSocket } from "./asr-proxy.js";
 import { editGate, claudeCostUY, imageCostUY, bookCostUY, BOOK_SUANLI, bookReviseCostUY, BOOK_REVISE_SUANLI, IMAGE_SUANLI, SIGNUP_GRANT_UY, SUB_GRANT_SUANLI, uyToSuanli, uyToYuan, suanliToUY, RATE, DAY_MS, CAMPAIGN_EXPIRE_DAYS, reasonZH, DAILY_POOL_SUANLI, DAILY_POOL_UY, FUSE_MULT, ucToCoins } from "./usage.js";
 import { ensureAccount, balanceUY, debit, editCount, getLedger, grantBucket, allAccounts, mintLedger, referralLedger, usageSummary } from "./usage_store.js";
 import { handleMintRoutes, feedQuote } from "./mint.js";
+import { handleTransferRoute } from "./transfer.js";
 import { handleIapRoute } from "./iap.js";
 import { handleReferralRoutes, publishMintRate } from "./referral.js";
 import { handlePromptShareRoutes, shareStates } from "./prompt-share.js";
@@ -841,6 +842,8 @@ const normSub = (s) => {
 export async function handleUsageRoute(url, request, env) {
   // /agent/push/* 也归这里管：和 book-charge 同一套 bearer→scope 鉴权。
   if (!url.pathname.startsWith("/agent/usage/") && !url.pathname.startsWith("/agent/push/")) return null;
+  // 转账自带一套鉴权（要求实名，比这里的 resolveScope 严），所以先于下面的分派处理。
+  { const r = await handleTransferRoute(url, request, env); if (r) return r; }
   try {
   const tok = bearerToken(request);
   const isAdmin = env.FILES_TOKEN && tok === env.FILES_TOKEN;

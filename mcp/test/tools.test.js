@@ -437,3 +437,30 @@ describe("媒体与身份", () => {
     expect(out).toBe("https://jianshuo.dev/files/api/photo/users/anon-abc/photos/a.jpg");
   });
 });
+
+describe("transfer_credit — 把自己的算力转给别人", () => {
+  it("参数原样递给 agent 的 usage/transfer", async () => {
+    const { out, calls } = await run(
+      "transfer_credit",
+      { to: "anon-bob222", suanli: 23, note: "谢谢" },
+      { "agent POST usage/transfer": { ok: true, transfer_id: "t1", transferred_suanli: 23 } },
+    );
+    expect(calls[0]).toMatchObject({ source: "agent", method: "POST", path: "usage/transfer" });
+    expect(calls[0].body).toEqual({ to: "anon-bob222", suanli: 23, note: "谢谢" });
+    expect(out.transfer_id).toBe("t1");
+  });
+
+  it("没给的可选参数不进 body——服务端不该收到一堆 undefined", async () => {
+    const { calls } = await run("transfer_credit", { to: "anon-bob222", suanli: 23 });
+    expect(calls[0].body).toEqual({ to: "anon-bob222", suanli: 23 });
+  });
+
+  it("to 和 suanli 必填", () => {
+    expect(byName.transfer_credit.inputSchema.required).toEqual(["to", "suanli"]);
+  });
+
+  it("描述必须写明要实名——否则用户以为匿名也能转，白撞一次 403", () => {
+    expect(byName.transfer_credit.description).toMatch(/Apple/);
+    expect(byName.transfer_credit.description).toMatch(/微信/);
+  });
+});
