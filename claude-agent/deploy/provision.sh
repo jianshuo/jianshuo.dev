@@ -31,8 +31,16 @@ mkdir -p /opt/claude-agent/workspace
 chown -R claude-agent:claude-agent /opt/claude-agent
 
 echo "▸ systemd unit"
-install -m 644 "$HERE/claude-agent.service" /etc/systemd/system/claude-agent.service
+# 单元文件里的 /run/user/997 按本机实际 uid 替换（写书靠 systemd-run --user 起单元）。
+UID_CA="$(id -u claude-agent)"
+sed "s#/run/user/997#/run/user/${UID_CA}#g" "$HERE/claude-agent.service" > /etc/systemd/system/claude-agent.service
+chmod 644 /etc/systemd/system/claude-agent.service
 systemctl daemon-reload
 systemctl enable claude-agent >/dev/null
+
+echo "▸ user manager (linger)"
+# 写书/修书跑在 claude-agent 自己的 systemd 用户管理器下的瞬态单元里（与 web 服务不同
+# cgroup，发版 restart 不杀书）。linger = 用户管理器开机常驻、不依赖登录会话。
+loginctl enable-linger claude-agent
 
 echo "✓ provisioned. Next: place /opt/claude-agent/.env (chmod 600) and the hashed Caddyfile, then start."

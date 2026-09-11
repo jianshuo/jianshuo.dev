@@ -10,6 +10,11 @@ Group=claude-agent
 WorkingDirectory=/opt/claude-agent
 Environment=NODE_ENV=production
 Environment=HOME=/opt/claude-agent
+# 写书交给 claude-agent 自己的 systemd 用户管理器跑（systemd-run --user，见
+# src/book-launch.ts）：这两个变量让 systemd-run 找到用户 bus。uid 由 provision.sh
+# 按实际 id 替换（997 是 Tokyo VPS 上的值）。
+Environment=XDG_RUNTIME_DIR=/run/user/997
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/997/bus
 EnvironmentFile=/opt/claude-agent/.env
 ExecStart=/usr/bin/node /opt/claude-agent/dist/server.js
 Restart=always
@@ -19,8 +24,10 @@ RestartSec=3
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/opt/claude-agent
+# ProtectHome=yes 会把 /run/user 整个藏掉，systemd-run --user 连不上用户 bus
+# （Operation not permitted，2026-09-11 二分实测）；read-only + 放行自己的 runtime dir 即可。
+ProtectHome=read-only
+ReadWritePaths=/opt/claude-agent /run/user/997
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
