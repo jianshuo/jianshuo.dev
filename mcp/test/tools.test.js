@@ -464,3 +464,36 @@ describe("transfer_credit — 把自己的算力转给别人", () => {
     expect(byName.transfer_credit.description).toMatch(/微信/);
   });
 });
+
+describe("transfer_book — 把自己的书转给别人", () => {
+  it("slug 和 to 原样递给 agent 的 book/transfer", async () => {
+    const { out, calls } = await run(
+      "transfer_book",
+      { slug: "dudu-koala-quarrel", to: "anon-8daa69bf7d1ecf4ad1f7af665dab4cff" },
+      { "agent POST book/transfer": { ok: true, slug: "dudu-koala-quarrel", title: "两棵树之间", to: "users/anon-8daa69bf7d1ecf4ad1f7af665dab4cff/" } },
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ source: "agent", method: "POST", path: "book/transfer" });
+    expect(calls[0].body).toEqual({ slug: "dudu-koala-quarrel", to: "anon-8daa69bf7d1ecf4ad1f7af665dab4cff" });
+    expect(out.title).toBe("两棵树之间");
+  });
+
+  it("slug 和 to 必填", () => {
+    expect(byName.transfer_book.inputSchema.required).toEqual(["slug", "to"]);
+  });
+
+  it("后端的 403/404 原样抛出，不吞", async () => {
+    const { err } = await run(
+      "transfer_book",
+      { slug: "x", to: "anon-nobody" },
+      { "agent POST book/transfer": new VoiceDropError("no_such_user", 404, { error: "no_such_user" }) },
+    );
+    expect(err).toBeInstanceOf(VoiceDropError);
+    expect(err.status).toBe(404);
+  });
+
+  it("描述必须写明不可撤回、收件人须已存在——这是用户下手前最该知道的两件事", () => {
+    expect(byName.transfer_book.description).toMatch(/不可撤回/);
+    expect(byName.transfer_book.description).toMatch(/已经存在/);
+  });
+});

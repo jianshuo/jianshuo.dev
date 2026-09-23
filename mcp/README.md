@@ -43,7 +43,7 @@ server 是**纯代理，不持有任何凭证**——你的 token 原样透传�
 `initialize` 和 `tools/list` 不需要 token（客户端要先看得见有什么工具）；
 只有 `tools/call` 必须带。
 
-## 38 个工具
+## 46 个工具
 
 | 类 | 工具 |
 |---|---|
@@ -53,7 +53,8 @@ server 是**纯代理，不持有任何凭证**——你的 token 原样透传�
 | **提示词** | `list_prompts` `share_prompt` `unshare_prompt` `prompt_share_status` `preview_prompt_share` `import_prompt` |
 | **挖矿** | `trigger_mining` `restyle_article` |
 | **社区** | `community_feed` `read_community_post` `community_replies` `share_to_community` `unshare_from_community` `is_shared` `feed_coin` |
-| **算力** | `credit_balance` `credit_ledger` `credit_summary` |
+| **算力** | `credit_balance` `credit_ledger` `credit_summary` `transfer_credit` |
+| **书架** | `list_books` `read_book` `read_book_chapter` `write_book` `revise_book` `book_history` `transfer_book` |
 | **发布** | `share_link` `publish_wechat` `xhs_pack` |
 | **其它** | `whoami` `list_files` `photo_url` |
 
@@ -66,7 +67,7 @@ server 是**纯代理，不持有任何凭证**——你的 token 原样透传�
 functions/voicedrop/mcp.js   Pages Function 薄壳（3 行）
 mcp/src/http.js              HTTP 传输：CORS、认证、JSON-RPC 收发
 mcp/src/protocol.js          MCP 协议：initialize / tools/list / tools/call
-mcp/src/tools.js             38 个工具的定义与实现
+mcp/src/tools.js             46 个工具的定义与实现
 mcp/src/vd-client.js         VoiceDrop API 客户端 + 错误翻译
 ```
 

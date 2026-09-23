@@ -110,6 +110,13 @@ async function mergeLiveFields(b) {
     b.category = live.category;
     changed.push(`category ← 线上（${live.category}）`);
   }
+  // owner（2026-09-23 起）**线上为准**：产权真源就是线上 book.json 的 owner，转让
+  // （MCP transfer_book / 手改）只发生在线上，工作目录这份永远是下单时的旧主人；
+  // 不接回来的话下次修书整份 PUT 就把书悄悄还给前主人。
+  if (typeof live.owner === "string" && live.owner.startsWith("users/") && live.owner !== b.owner) {
+    b.owner = live.owner;
+    changed.push(`owner ← 线上（${live.owner}）`);
+  }
   if (!changed.length) return;
   try { writeFileSync(join(workdir, "book.json"), JSON.stringify(b, null, 2) + "\n"); } catch {}
   for (const c of changed) console.log(`ok  ${c}`);

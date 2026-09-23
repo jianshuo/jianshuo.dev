@@ -38,6 +38,7 @@ import { handlePromptShareRoutes, shareStates } from "./prompt-share.js";
 import { handlePromptMarket } from "./prompt-market.js";
 import { handleBookPdf } from "./book-pdf.js";
 import { handleBookCommunityRoute } from "./book-community.js";
+import { handleBookTransferRoute } from "./book-transfer.js";
 import { writeStyleDoc } from "../../functions/lib/style-store.js";
 import { distillStyle, buildStyleIntroArticle, STYLE_INTRO_STEM, corpusChars, MIN_CORPUS_CHARS } from "./style-extract.js";
 import { silentM4aBytes } from "../../functions/lib/silent-m4a.js";
@@ -1737,6 +1738,8 @@ export default {
 
     // 书帖登记（写书/修书收尾把书登记成社区一等帖）—— src/book-community.js
     { const r = await handleBookCommunityRoute(url, request, env, resolveScope); if (r) return r; }
+    // 转书（主人把书的产权转给别人，MCP transfer_book 的后端）—— src/book-transfer.js
+    { const r = await handleBookTransferRoute(url, request, env, resolveScope); if (r) return r; }
 
     // 整本书下载 PDF（现生成/缓存直出）—— src/book-pdf.js
     { const r = await handleBookPdf(url, request, env); if (r) return r; }

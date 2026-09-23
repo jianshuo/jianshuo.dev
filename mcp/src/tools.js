@@ -560,6 +560,19 @@ export const TOOLS = [
     inputSchema: obj({ slug: SLUG }, ["slug"]),
     handler: ({ slug }, { client }) => client.lab("GET", "book/history", { query: { slug } }),
   },
+  {
+    name: "transfer_book",
+    description:
+      "把自己的书转给另一个人（产权转让）。转出方必须是这本书的主人；不扣算力、不要求实名，" +
+      "但收件人的账号必须已经存在（对方用 whoami 能看到自己的 id）。转出即时生效、不可撤回——" +
+      "从此书架上的「我的」、隐藏开关、修书和看历史都归对方，author 署名不变。" +
+      "403 not_owner = 不是这本书的主人；404 no_such_user = 收件人 id 写错或账号不存在。",
+    inputSchema: obj({
+      slug: SLUG,
+      to: str("收件人的 id，形如 anon-8daa69bf…（写完整的 users/anon-…/ 也行）"),
+    }, ["slug", "to"]),
+    handler: ({ slug, to }, { client }) => client.agent("POST", "book/transfer", { body: { slug, to } }),
+  },
 
   // ────────────────────── 媒体与身份 ──────────────────────
   {
