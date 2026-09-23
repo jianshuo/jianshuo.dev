@@ -264,6 +264,7 @@ await pipeline(batchOf(book.chapters),
 - 把整本攒到一个长 workflow 最后一次性 return / 一次性发 → 长书会话切换会全丢。必须每章过审即 `build.mjs done NN`；长书**分批**跑。
 - 长书首选长时后台 Workflow / 以为进程会连续活到跑完 → 会话被切就成孤儿。长书**默认走主循环并行 spawn + 每章前台即发**。
 - 被打断后从头重跑 → 先探 R2（curl 各章 200/404）再 `build.mjs status` 对账，只补没做的。别只信本地 `status`。
+- 把 `paint` / `build.mjs` 用 `run_in_background`、`nohup`、`Monitor` 丢到后台，然后写一段「出图后我会……」的总结结束回合 → **回合结束 = 进程退出，后台任务全被杀**（2026-09-23《一封一封的写》14 页只发了 1 页，runner 还照常推送了「书写好了」）。画图/发布一律前台同步跑到出结果；**全部章节 done + 封面上传 + index 刷新之后才许结束回合**。服务器收尾会对账 `book.json`，没齐会把你叫回来续写，续写仍不齐按失败退款。
 - 死循环重写 >3 轮 → 降级该章，记录短板，放行。
 - 发完 `/voicedrop/books/<slug>/index.html` 还是 404 → 不是没发成，是路由没读本账号的 `books/` 前缀（读写 store 没对上）；`PUT /files/api/upload/books/...` 返回 200 就算成功，别反复重传，去对齐后端。
 - 直接对 `/voicedrop/books` 发 PUT/POST → 405，它只读；写一律走 `/files/api/upload/books/...`。

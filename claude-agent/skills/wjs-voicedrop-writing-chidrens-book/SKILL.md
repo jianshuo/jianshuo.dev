@@ -90,6 +90,7 @@ Spawn 一个 agent，产出书名、slug、subtitle（一句话故事钩子）�
   - HTML 的 `<p>` 正文**照旧保留**（与图里文字一致）——有声书管线和搜索/复制靠 DOM 文字，不能只存在图里。
 - **画面描述**来自写手给的那一句；paint 提示词 = 统一风格前缀 + 主角/道具参照要点 + 本页画面 + 图内文字（引号原句）。
 - 尺寸随版式（绘本图可用较方或横构图，`--size 1024x1024` 或 `1536x1024`）。
+- **十几张图也要一张一张在前台画完**：每页 paint → 校字 → asset → done，不许把批量 paint 脚本丢后台（`run_in_background`/`nohup`/`Monitor`）再去写别的——回合一结束后台就被杀，剩下的页永远不会画（通用 skill Red Flags 有案例）。
 - 流程：`paint "<统一风格 + 本页画面 + 无字>" book-<slug>/p01.jpg --quality high` → `build.mjs asset book-<slug> p01.jpg p01.jpg` → 该页 HTML 已引用 `p01.jpg` → `build.mjs done book-<slug> NN`。
 - **插图一律 JPG q80，不出 PNG**：paint 按输出扩展名定格式，存成 `.jpg` 就是 JPEG、压缩默认 80，不用另加参数。同一张图 PNG 约 2.4MB、JPG q80 约 0.5MB，读者弱网翻页和离线下载都靠这个差价。`build.mjs` 有硬闸：`asset` 拒收 `.png`（也拒收改了扩展名的假 JPG），正文引用 `.png` 的页拒绝发布——被拒了就重出成 `.jpg`，别绕。`refs.png` 是不上传的工作文件，保持 PNG 无妨。
 

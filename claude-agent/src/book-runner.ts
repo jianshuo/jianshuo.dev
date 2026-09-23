@@ -13,10 +13,14 @@ import { join } from "node:path";
 import { INFLIGHT_DIR } from "./env.js";
 import { removeInflight, writeInflight, type Inflight, type InflightCreate, type InflightRevise } from "./inflight.js";
 import { BOOK_LEGS, CODEX_BOOK_PREAMBLE, resumeAfterRestartHint, runBookEngine } from "./book-engine.js";
+import { bookGap, continueHint, isHardGap } from "./book-complete.js";
 import {
   findBookByJobId, notifyAdmin, notifyBookDone, patchThreadEntry, readBookMetaRetry, refundBook,
   registerBookPost, writeBookMeta, writeUnmatched, type ThreadEntry,
 } from "./bookmeta.js";
+
+// 完成度闸门最多喂回引擎续写几轮（0 = 只对账不续写）。
+const BOOK_CONTINUE_MAX = Math.max(0, Number(process.env.BOOK_CONTINUE_MAX ?? 2) || 0);
 
 async function runCreate(rec: InflightCreate): Promise<void> {
   const { jobId, seed, scope, author, auth, startedAt } = rec;
@@ -87,7 +91,33 @@ async function runCreate(rec: InflightCreate): Promise<void> {
   let ok = false;
   let reply = "";
   try {
-    const out = await runBookEngine(prompt, (id) => { sessionId = id; });
+    let out = await runBookEngine(prompt, (id) => { sessionId = id; });
+    // 完成度闸门（2026-09-23）：引擎说「写完了」不算数，book.json 里章节全 done 才算。
+    // 没齐就把「还差什么」喂回引擎续写（最多 BOOK_CONTINUE_MAX 轮，文件是真源、不 resume）；
+    // 续写后仍有章节没发 → 按失败走（退款 + 告警、不推「书写好了」）。只缺封面不判失败。
+    // 起因：《一封一封的写》——腿把 13 页画图丢后台就交卷，runner 照常推送了 1/14 的书。
+    for (let round = 1; out.ok && round <= BOOK_CONTINUE_MAX; round++) {
+      const gap = await bookGap(jobId);
+      if (!gap) break;
+      console.log(`[book] incomplete after engine round ${round}: ${gap.summary} → 续写 ${round}/${BOOK_CONTINUE_MAX}`);
+      const prev = out;
+      out = await runBookEngine(prompt + continueHint(gap, round), (id) => { sessionId = id; });
+      if (!out.ok && !isHardGap(gap)) {
+        // 只是为补封面开的续写轮倒在配额上——书本身已经齐了，不能因此退款。
+        console.warn(`[book] 补封面续写失败（${out.error.slice(0, 100)}），成书不受影响`);
+        out = prev;
+        break;
+      }
+    }
+    if (out.ok) {
+      const gap = await bookGap(jobId);
+      if (isHardGap(gap)) {
+        out = { ...out, ok: false, error: `incomplete（续写 ${BOOK_CONTINUE_MAX} 轮后仍）${gap!.summary}` };
+      } else if (gap) {
+        console.warn(`[book] 收尾仍${gap.summary}（只缺封面，不判失败）slug=${gap.slug}`);
+        await notifyAdmin("写书收尾缺封面", `${seed.slice(0, 40)} · ${gap.slug} · ${gap.summary}`).catch(() => {});
+      }
+    }
     finished = true;
     clearInterval(reg);
     // 引擎一返回就销档：后面的收尾都是幂等的快 HTTP 调用；登记留着反而会在收尾

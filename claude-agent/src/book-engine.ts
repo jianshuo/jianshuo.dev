@@ -49,7 +49,10 @@ export const CODEX_BOOK_PREAMBLE =
   `你没有并行子代理，也没有 Workflow——skill 里说 spawn 写手/评审 subagent 的地方，一律由你自己分步串行扮演：` +
   `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
   `不过就照 must_fix 重写（最多 3 轮），过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
-  `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。`;
+  `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。\n` +
+  `paint 和 build.mjs 一律在前台同步跑到出结果，绝不用 run_in_background / nohup / Monitor 丢到后台再写总结——` +
+  `你的回合一结束进程就退出，后台任务会被一起杀掉，书就停在半路（2026-09-23《一封一封的写》14 页只发了 1 页）。` +
+  `全部章节 build.mjs done、封面上传、目录刷新之后才能结束回合；服务器会对账 book.json，没齐会把你叫回来续写。`;
 
 export type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: string };
 
