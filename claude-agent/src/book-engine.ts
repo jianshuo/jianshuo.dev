@@ -11,7 +11,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { parseLegs, availableLegs, shouldTryNextLeg, type BookLeg } from "./book-legs.js";
+import { parseLegs, availableLegs, shouldTryNextLeg, apiErrorFromMessage, classifyResult, type BookLeg } from "./book-legs.js";
 import { APP_ROOT, CODEX_BIN, CODEX_HOME, HOME, MODEL, WORKSPACE } from "./env.js";
 
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
@@ -119,27 +119,22 @@ async function runClaudeExec(
   let ok = false;
   let reply = "";
   let error = "";
+  let lastApiError = "";
   try {
     for await (const msg of q as AsyncIterable<any>) {
       if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
         threadId = msg.session_id;
         onThread?.(threadId);
       }
+      // SDK 把 401/403/429 当成一条 assistant 文本消息发下来，随后的 result 只有
+      // is_error=true 而 errors[] 为空（2026-10-01 Kimi 周配额事故）——记住它。
+      const apiErr = apiErrorFromMessage(msg);
+      if (apiErr) lastApiError = apiErr;
       if (msg.type === "result") {
-        ok = msg.subtype === "success" && !msg.is_error;
         reply = typeof msg.result === "string" ? msg.result : "";
-        // CLI 正常退出但第一轮就是 API 错误（401/无效 key 等）时 subtype 仍是
-        // success——按文本识别，别把认证失败当成书写完了（2026-08-24 自检踩到）。
-        if (ok && /Failed to authenticate|API Error: \d{3}/i.test(reply.slice(0, 300))) {
-          ok = false;
-          error = reply.slice(0, 200);
-        }
-        // 真正的报错文案在 result.errors[]（配额/认证/状态码都在这里），subtype 只是
-        // 分类名——只记 subtype 的话换腿判别看不到「403 usage limit」这些字样。
-        if (!ok && !error) {
-          const errs = Array.isArray(msg.errors) ? msg.errors.map(String).filter(Boolean) : [];
-          error = errs.length ? `${msg.subtype ?? "error"}: ${errs.join("; ").slice(0, 400)}` : String(msg.subtype ?? "error");
-        }
+        // 真正的报错文案在 result.errors[] 或流里的 API 错误消息，subtype 只是分类名——
+        // 只记 subtype 的话换腿判别看不到「403 usage limit」这些字样。
+        ({ ok, error } = classifyResult(msg, lastApiError));
         console.log(
           `[book] claude-engine done model=${model} compat=${useCompat} turns=${msg.num_turns} cost=${msg.total_cost_usd ?? "-"}` +
             (ok ? "" : ` ERROR=${error}`),

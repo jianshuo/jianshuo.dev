@@ -90,6 +90,61 @@ export function shouldTryNextLeg(error: string | undefined | null): boolean {
   return QUOTA_PATTERNS.some((re) => re.test(s));
 }
 
+// ── 从 SDK 消息流里抠真正的报错文案（2026-10-01）────────────────────────
+//
+// 第四次被同一个形状的洞咬：10/1 凌晨 Kimi 周配额打穿，SDK 把 403 当成一条
+// assistant 文本消息（isApiErrorMessage / error:"authentication_failed"）发下来，
+// 随后的 result 是 subtype=success + is_error=true，而 errors[] 是空的——引擎把
+// error 记成了字面 "success"，shouldTryNextLeg("success") 自然判 false，codex 和
+// claude 两条腿一次没试就整单退款，4 本书 + 2 次修书 20 分钟内全灭。
+// 修法：流里每条 assistant 消息都过一遍这个函数，记住最后一条 API 错误；result
+// 不带 errors[] 时拿它当 error。
+
+const API_ERROR_TEXT = /Failed to authenticate|API Error: \d{3}|usage limit|rate limit/i;
+
+function messageText(msg: any): string {
+  const content = msg?.message?.content ?? msg?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((c: any) => c && c.type === "text" && typeof c.text === "string")
+    .map((c: any) => c.text)
+    .join("\n");
+}
+
+/** 一条 SDK 消息若是「API 错误伪装成的 assistant 文本」就返回其文案，否则返回 ""。 */
+export function apiErrorFromMessage(msg: any): string {
+  if (!msg || msg.type !== "assistant") return "";
+  const text = messageText(msg).trim();
+  const flagged = msg.isApiErrorMessage === true || (typeof msg.error === "string" && msg.error);
+  if (!flagged && !API_ERROR_TEXT.test(text.slice(0, 300))) return "";
+  const head = typeof msg.error === "string" && msg.error && !text.includes(msg.error) ? `${msg.error}: ` : "";
+  return (head + (text || String(msg.error ?? "api error"))).slice(0, 400);
+}
+
+/**
+ * 把 SDK 的 result 消息归结成 {ok, error}。lastApiError 是流里最后一条 API 错误
+ * 文案（apiErrorFromMessage），result.errors[] 为空时顶上——这样换腿判据看到的
+ * 永远是带状态码/配额字样的原话，而不是 "success"/"error" 这种分类名。
+ */
+export function classifyResult(
+  msg: { subtype?: string; is_error?: boolean; errors?: unknown; result?: unknown },
+  lastApiError = "",
+): { ok: boolean; error: string } {
+  const reply = typeof msg.result === "string" ? msg.result : "";
+  let ok = msg.subtype === "success" && !msg.is_error;
+  // CLI 正常退出但第一轮就是 API 错误（401/无效 key 等）时 subtype 仍是 success、
+  // is_error 也可能是 false——按文本识别（2026-08-24 自检踩到）。
+  if (ok && (lastApiError || API_ERROR_TEXT.test(reply.slice(0, 300)))) ok = false;
+  if (ok) return { ok, error: "" };
+  const errs = Array.isArray(msg.errors) ? msg.errors.map(String).filter(Boolean) : [];
+  const subtype = String(msg.subtype ?? "error");
+  if (errs.length) return { ok, error: `${subtype}: ${errs.join("; ").slice(0, 400)}` };
+  if (lastApiError) return { ok, error: `${subtype}: ${lastApiError}` };
+  if (API_ERROR_TEXT.test(reply.slice(0, 300))) return { ok, error: reply.slice(0, 400) };
+  return { ok, error: subtype };
+}
+
 /**
  * 按可用性过滤腿：没配凭据的腿直接跳过，别浪费一次重跑去撞必然的失败。
  * - kimi   需要兼容端点的 BASE_URL（API_KEY 空也允许，某些端点不校验）
