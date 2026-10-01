@@ -71,7 +71,7 @@ export function continueHint(gap: BookGap, round: number): string {
     todo.join("；") +
     `；最后 build.mjs index 刷目录。` +
     `**不要另起一本新书、不要换 slug、不要重画已有的插图、不要重写已过审的章节。** ` +
-    `**paint 和 build.mjs 一律前台同步跑到出结果，绝不用 run_in_background / nohup / Monitor 丢到后台**——` +
+    `**paint / paint-batch 和 build.mjs 一律前台同步跑到出结果（多张图用 paint-batch 一批并发画），绝不用 run_in_background / nohup / Monitor 丢到后台**——` +
     `你的回合一结束进程就退出，后台任务会被一起杀掉，这正是上一回合没写完的原因。` +
     `全部章节 done、封面上传、目录刷新之后才能结束回合。`
   );

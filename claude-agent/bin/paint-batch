@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# paint-batch — 一条前台命令并发画一批图。用法与说明见同目录 paint-batch.mjs。
+exec node "$(dirname "$0")/paint-batch.mjs" "$@"

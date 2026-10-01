@@ -90,8 +90,21 @@ Spawn 一个 agent，产出书名、slug、subtitle（一句话故事钩子）�
   - HTML 的 `<p>` 正文**照旧保留**（与图里文字一致）——有声书管线和搜索/复制靠 DOM 文字，不能只存在图里。
 - **画面描述**来自写手给的那一句；paint 提示词 = 统一风格前缀 + 主角/道具参照要点 + 本页画面 + 图内文字（引号原句）。
 - 尺寸随版式（绘本图可用较方或横构图，`--size 1024x1024` 或 `1536x1024`）。
-- **十几张图也要一张一张在前台画完**：每页 paint → 校字 → asset → done，不许把批量 paint 脚本丢后台（`run_in_background`/`nohup`/`Monitor`）再去写别的——回合一结束后台就被杀，剩下的页永远不会画（通用 skill Red Flags 有案例）。
-- 流程：`paint "<统一风格 + 本页画面 + 无字>" book-<slug>/p01.jpg --quality high` → `build.mjs asset book-<slug> p01.jpg p01.jpg` → 该页 HTML 已引用 `p01.jpg` → `build.mjs done book-<slug> NN`。
+- **出图用 `paint-batch` 一批一批并发画（2026-10-01 起）**：paint 服务同时能画 3 张，一张一张串行画会白白浪费 2/3 的时间（《嘟嘟说再见》16 页串行画了 39 分钟）。`/opt/claude-agent/bin/paint-batch 清单.json` 是**一条前台命令**：内部 3 张并发，自带失败/429 重试，**整批画完才返回**，逐张打印 `ok` / `FAIL`。它不是后台任务，照样守「绝不 `run_in_background`/`nohup`/`Monitor`」的铁律（通用 skill Red Flags 有案例）。
+- **节拍**：
+  1. **先把全部页的字写完、评审通过**（只落盘 `chapters/NN.html`，**先不 done**——`done` 不检查图，没图就发读者会看到裂图）。同时把每页的画面描述定下来。
+  2. 做 `refs.png` 并验收（见下「道具设定图」）。
+  3. 写一份清单 `book-<slug>/paint-1.json`，**每批最多 6 张**（3 并发跑两轮约 5 分钟，不碰单条命令 10 分钟超时），**封面放进第一批**一起画：
+     ```json
+     [
+       {"out":"<绝对路径>/book-<slug>/p01.jpg","prompt":"<统一风格前缀 + 角色形象要点 + 本页画面 + 图内文字原句>","image":"<绝对路径>/book-<slug>/refs.png","quality":"high"},
+       {"out":"<绝对路径>/book-<slug>/cover.jpg","prompt":"<封面提示词>","image":"<绝对路径>/book-<slug>/refs.png","size":"1024x1536","quality":"high"}
+     ]
+     ```
+     Bash 的 timeout 给 600000ms，然后跑 `/opt/claude-agent/bin/paint-batch book-<slug>/paint-1.json`。
+  4. 这一批画完后**逐张看图校字**。字错了或走样的页，写一份只含这几页的小清单，加 `--force` 重画。只是 `FAIL` 的页直接重跑原清单就行，已画好的会自动跳过。
+  5. 本批每页都确认过后：`build.mjs asset book-<slug> pNN.jpg pNN.jpg` → `build.mjs done book-<slug> NN`（封面只 asset）。然后写下一批的清单，直到全部页 done。
+- 单张补画（修书改一页、个别重画）仍可直接用 `paint "<提示词>" book-<slug>/pNN.jpg --image refs.png --quality high`。
 - **插图一律 JPG q80，不出 PNG**：paint 按输出扩展名定格式，存成 `.jpg` 就是 JPEG、压缩默认 80，不用另加参数。同一张图 PNG 约 2.4MB、JPG q80 约 0.5MB，读者弱网翻页和离线下载都靠这个差价。`build.mjs` 有硬闸：`asset` 拒收 `.png`（也拒收改了扩展名的假 JPG），正文引用 `.png` 的页拒绝发布——被拒了就重出成 `.jpg`，别绕。`refs.png` 是不上传的工作文件，保持 PNG 无妨。
 
 ---

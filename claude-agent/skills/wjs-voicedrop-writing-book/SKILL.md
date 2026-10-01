@@ -228,7 +228,11 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 - **默认大标题排版**：整张封面**以文字为主角**——主标题非常大、粗、占据上部约满宽（长了分两行）；副标题约为主标题一半大小、紧跟其下；作者中等、底部居中。背景退为衬托。
 - **尺寸固定用 `--size 1024x1536 --format jpeg`（竖版 1:1.5）**，压缩默认 80 不用另给。书里所有上传的图（封面、插图）一律 JPG q80，`build.mjs asset` 拒收 PNG。gpt-image 只吃 `1024x1024`/`1024x1536`/`1536x1024` 三种，别乱填。
 
-封面/插图都是最后一遍，别打乱正文「过审即发」的节奏。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
+封面/插图都是最后一遍，别打乱正文「过审即发」的节奏。
+
+### 多张图一起画：`paint-batch`（2026-10-01 起）
+
+paint 服务同时能画 3 张。凡是一次要画两张以上（绘本的页图、带插图的书的几张插图加封面），都用 `/opt/claude-agent/bin/paint-batch 清单.json` 一批并发画，别一张一张串行地等。清单是 JSON 数组，每项 `{"out","prompt"}` 必填，`image/size/quality` 可选，与 `paint` 的参数同义。它是**前台命令**，整批画完才返回，逐张报 `ok`/`FAIL`，失败和 429 会自动重试；已存在的图自动跳过，`--force` 才重画。**每批最多 6 张**，Bash timeout 给 600000ms。只画一张封面时直接用 `paint` 就行。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
 
 ---
 
@@ -264,7 +268,7 @@ await pipeline(batchOf(book.chapters),
 - 把整本攒到一个长 workflow 最后一次性 return / 一次性发 → 长书会话切换会全丢。必须每章过审即 `build.mjs done NN`；长书**分批**跑。
 - 长书首选长时后台 Workflow / 以为进程会连续活到跑完 → 会话被切就成孤儿。长书**默认走主循环并行 spawn + 每章前台即发**。
 - 被打断后从头重跑 → 先探 R2（curl 各章 200/404）再 `build.mjs status` 对账，只补没做的。别只信本地 `status`。
-- 把 `paint` / `build.mjs` 用 `run_in_background`、`nohup`、`Monitor` 丢到后台，然后写一段「出图后我会……」的总结结束回合 → **回合结束 = 进程退出，后台任务全被杀**（2026-09-23《一封一封的写》14 页只发了 1 页，runner 还照常推送了「书写好了」）。画图/发布一律前台同步跑到出结果；**全部章节 done + 封面上传 + index 刷新之后才许结束回合**。服务器收尾会对账 `book.json`，没齐会把你叫回来续写，续写仍不齐按失败退款。
+- 把 `paint` / `build.mjs` 用 `run_in_background`、`nohup`、`Monitor` 丢到后台，然后写一段「出图后我会……」的总结结束回合 → **回合结束 = 进程退出，后台任务全被杀**（2026-09-23《一封一封的写》14 页只发了 1 页，runner 还照常推送了「书写好了」）。画图/发布一律前台同步跑到出结果（多张图要提速就用前台的 `paint-batch` 一批并发画，不是丢后台）；**全部章节 done + 封面上传 + index 刷新之后才许结束回合**。服务器收尾会对账 `book.json`，没齐会把你叫回来续写，续写仍不齐按失败退款。
 - 死循环重写 >3 轮 → 降级该章，记录短板，放行。
 - 发完 `/voicedrop/books/<slug>/index.html` 还是 404 → 不是没发成，是路由没读本账号的 `books/` 前缀（读写 store 没对上）；`PUT /files/api/upload/books/...` 返回 200 就算成功，别反复重传，去对齐后端。
 - 直接对 `/voicedrop/books` 发 PUT/POST → 405，它只读；写一律走 `/files/api/upload/books/...`。
