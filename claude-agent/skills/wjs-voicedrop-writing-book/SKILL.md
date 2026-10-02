@@ -215,7 +215,11 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 
 ## 第 6 步：最后一遍——封面（+ 必要时插图）
 
-**所有图片一律用 `/opt/claude-agent/bin/paint`（背后是 GPT 出图）生成**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）——包括封面上的文字，也让 GPT 直接画进图里。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。
+**所有图片一律用 `/opt/claude-agent/bin/paint` / `paint-batch` 生成——动手前先完整读 `paint` skill（`~/.claude/skills/paint/SKILL.md`，出图说明书：选项、输出、错误码、引擎与降级）**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）——包括封面上的文字，也让出图模型直接画进图里。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。
+
+**整本书一个画风（硬规则）**：paint 背后有两个引擎（Codex gpt-image-2 优先，额度满自动降级 Seedream），画风明显不同。所以：
+- 这本书的**每一张图**（封面、refs.png、每页插图）都带 `--group <slug>`（paint-batch 用 `--group <slug>`）。组里一旦有图走了 Seedream，服务端会让这本书后面的图都走 Seedream。
+- **全部图画完、上传之前**跑 `/opt/claude-agent/bin/paint --engines <workdir>/*.jpg` 对账。若 codex 和 seedream 混用：把**少数派**的图删掉，用多数派的 `--engine`（平票用 `seedream`）重画，再对一次账；全书上传的图必须同一个引擎。
 
 > **插图密度按类型走**：科普书默认**不配**插图（除非某概念不画就讲不清）；绘本**以图为主**、几乎每页都要图；小说一般不配图或只配少量氛围图。具体规则见各写作 skill。这里只讲通用的封面。
 
@@ -224,15 +228,15 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 一张竖版封面，存成 `<workdir>/cover.jpg`、用 `build.mjs asset` 传成 `books/<slug>/cover.jpg`。
 
 - **它只是放在书目录里的一个文件，供别的工具（voicedrop 客户端）取用显示——不嵌进正文页/目录页**（`build.mjs` 不会把它渲染进任何 HTML）。
-- **必须有明显的书名**，有作者就写上作者；文字放在**抽象背景的空白区之上**。让 GPT 直接把文字画进图：提示词里描述抽象背景（随书配色、留白充足）+ **一字不差列出**书名/副标题/作者，并写明「画面上只允许出现这些文字，不要多余字符/水印/乱码」。中文书名 GPT 能画准，糊了就重跑或精简书名。
+- **必须有明显的书名**，有作者就写上作者；文字放在**抽象背景的空白区之上**。让出图模型直接把文字画进图：提示词里描述抽象背景（随书配色、留白充足）+ **一字不差列出**书名/副标题/作者，并写明「画面上只允许出现这些文字，不要多余字符/水印/乱码」。中文书名一般能画准，糊了就重跑或精简书名。
 - **默认大标题排版**：整张封面**以文字为主角**——主标题非常大、粗、占据上部约满宽（长了分两行）；副标题约为主标题一半大小、紧跟其下；作者中等、底部居中。背景退为衬托。
-- **尺寸固定用 `--size 1024x1536 --format jpeg`（竖版 1:1.5）**，压缩默认 80 不用另给。书里所有上传的图（封面、插图）一律 JPG q80，`build.mjs asset` 拒收 PNG。gpt-image 只吃 `1024x1024`/`1024x1536`/`1536x1024` 三种，别乱填。
+- **尺寸固定用 `--size 1024x1536 --group <slug>`、输出存 `.jpg`（竖版 1:1.5）**，格式和压缩 80 按扩展名自动定。书里所有上传的图（封面、插图）一律 JPG q80，`build.mjs asset` 拒收 PNG。插图尺寸常用 `1024x1024`/`1536x1024`，别的比例服务端也会自动规整，但全书尽量统一。
 
 封面/插图都是最后一遍，别打乱正文「过审即发」的节奏。
 
 ### 多张图一起画：`paint-batch`（2026-10-01 起）
 
-paint 服务同时能画 3 张。凡是一次要画两张以上（绘本的页图、带插图的书的几张插图加封面），都用 `/opt/claude-agent/bin/paint-batch 清单.json` 一批并发画，别一张一张串行地等。清单是 JSON 数组，每项 `{"out","prompt"}` 必填，`image/size/quality` 可选，与 `paint` 的参数同义。它是**前台命令**，整批画完才返回，逐张报 `ok`/`FAIL`，失败和 429 会自动重试；已存在的图自动跳过，`--force` 才重画。**每批最多 6 张**，Bash timeout 给 600000ms。只画一张封面时直接用 `paint` 就行。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
+paint 服务同时能画 3 张。凡是一次要画两张以上（绘本的页图、带插图的书的几张插图加封面），都用 `/opt/claude-agent/bin/paint-batch 清单.json --group <slug>` 一批画，别一张一张串行地等。清单是 JSON 数组，每项 `{"out","prompt"}` 必填，`image/size/quality/engine` 可选，与 `paint` 的参数同义。它是**前台命令**，整批一次提交、服务端 3 张并发，约 9 分钟内必返回，逐张报 `ok …(引擎)` / `FAIL <code>: <message>`；限流/降级由服务端处理，失败的照 paint skill 的错误码表处理后原样重跑同一清单（已存在的图自动跳过，`--force` 才全部重画）。结尾会报引擎分布，混用时点名少数派。**每批最多 6 张**，Bash timeout 给 600000ms。只画一张封面时直接用 `paint` 就行。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
 
 ---
 
@@ -275,7 +279,8 @@ await pipeline(batchOf(book.chapters),
 - 正文片段里写内联 `style` / `<h1>` → 破坏淡雅基调，交给模板。
 - 内链出现根绝对路径 `/voicedrop/books/…` → 违反硬约束 1，改回相对文件名。
 - 页面出现 Google Fonts 或任何外部 CSS/JS/字体 → 违反硬约束 2，删掉、只用系统字体栈。
-- 用了本地生图/改图/叠字工具 → 违反「图片全走 paint(GPT)」，重做；封面文字也让 GPT 画进图。
+- 用了本地生图/改图/叠字工具 → 违反「图片全走 paint」，重做；封面文字也让出图模型画进图。
+- 出图没带 `--group <slug>`，或发布前没跑 `paint --engines` 对账、书里 codex/seedream 两种画风混着 → 把少数派用多数派的 `--engine` 重画。
 - 把 cover.jpg 渲染进正文/目录页 → 封面只是文件、供别的工具取用，不进 HTML。
 - 封面没有清晰可读的书名 → 不合格，重画。
 

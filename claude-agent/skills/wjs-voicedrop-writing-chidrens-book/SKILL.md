@@ -79,32 +79,33 @@ Spawn 一个 agent，产出书名、slug、subtitle（一句话故事钩子）�
 
 ## 插图：绘本以图为主（每页都要，最后一遍统一出）
 
-跟科普书相反，绘本**几乎每页都要一张图**。仍守通用 skill 的规矩：**全部用 `/opt/claude-agent/bin/paint`（GPT 出图）**，timeout 600000ms，`build.mjs asset` 上传，内链相对，绝不用本地生图/叠字工具。
+跟科普书相反，绘本**几乎每页都要一张图**。仍守通用 skill 的规矩：**全部用 `/opt/claude-agent/bin/paint` / `paint-batch`（出图说明书见 `paint` skill：`~/.claude/skills/paint/SKILL.md`，动手前读完）**，timeout 600000ms，`build.mjs asset` 上传，内链相对，绝不用本地生图/叠字工具。**每一次出图（refs.png、每页、封面）都带 `--group <slug>`**——paint 背后有 Codex 与 Seedream 两个引擎、画风不同，同组一旦走了 Seedream，服务端会让后面的页都走 Seedream；绘本对画风一致最敏感。
 
 - **风格统一**：全书用**同一套画风关键词**（同一句风格前缀 + 同一主角外形描述），逐页只换画面内容，让主角在每页看起来是同一个。把这套风格前缀固定下来，每页 paint 时都带上。
 - **图文一体（2026-08-20 起）**：本页那一两句正文要**用合适的字体画进图里**，像真正印刷的绘本页。要求：
   - 字体气质：温柔圆润的中文童趣手写体/圆体，颜色随该页画面配色（深色字配浅背景），大小适中可读；
   - 位置：放在画面的**留白处**（天空/地面/水面的安静区域），绝不压角色的脸和主体；
   - 内容：与 book.json 里该页的正文**一字不差**，提示词里把这句话原样引出并写明「画面上只允许出现这句文字，不要多余字符/水印」；
-  - 画完必须**逐字检查**图里的字——GPT 画中文偶有错字/乱码，错一个字就重画（字少，重画便宜）；
+  - 画完必须**逐字检查**图里的字——出图模型画中文偶有错字/乱码，错一个字就重画（字少，重画便宜）；
   - HTML 的 `<p>` 正文**照旧保留**（与图里文字一致）——有声书管线和搜索/复制靠 DOM 文字，不能只存在图里。
 - **画面描述**来自写手给的那一句；paint 提示词 = 统一风格前缀 + 主角/道具参照要点 + 本页画面 + 图内文字（引号原句）。
 - 尺寸随版式（绘本图可用较方或横构图，`--size 1024x1024` 或 `1536x1024`）。
-- **出图用 `paint-batch` 一批一批并发画（2026-10-01 起）**：paint 服务同时能画 3 张，一张一张串行画会白白浪费 2/3 的时间（《嘟嘟说再见》16 页串行画了 39 分钟）。`/opt/claude-agent/bin/paint-batch 清单.json` 是**一条前台命令**：内部 3 张并发，自带失败/429 重试，**整批画完才返回**，逐张打印 `ok` / `FAIL`。它不是后台任务，照样守「绝不 `run_in_background`/`nohup`/`Monitor`」的铁律（通用 skill Red Flags 有案例）。
+- **出图用 `paint-batch` 一批一批并发画（2026-10-01 起）**：paint 服务同时能画 3 张，一张一张串行画会白白浪费 2/3 的时间（《嘟嘟说再见》16 页串行画了 39 分钟）。`/opt/claude-agent/bin/paint-batch 清单.json --group <slug>` 是**一条前台命令**：整批一次提交、服务端 3 张并发（限流/降级都在服务端），**整批画完才返回**（约 9 分钟内必返回），逐张打印 `ok …(引擎)` / `FAIL <code>: <message>`，结尾报引擎分布。它不是后台任务，照样守「绝不 `run_in_background`/`nohup`/`Monitor`」的铁律（通用 skill Red Flags 有案例）。
 - **节拍**：
   1. **先把全部页的字写完、评审通过**（只落盘 `chapters/NN.html`，**先不 done**——`done` 不检查图，没图就发读者会看到裂图）。同时把每页的画面描述定下来。
   2. 做 `refs.png` 并验收（见下「道具设定图」）。
-  3. 写一份清单 `book-<slug>/paint-1.json`，**每批最多 6 张**（3 并发跑两轮约 5 分钟，不碰单条命令 10 分钟超时），**封面放进第一批**一起画：
+  3. 写一份清单 `book-<slug>/paint-1.json`，**每批最多 6 张**（3 并发跑两轮约 5 分钟；服务端每张 8 分钟期限从提交算，多了后面的会 `deadline_exceeded`），**封面放进第一批**一起画：
      ```json
      [
        {"out":"<绝对路径>/book-<slug>/p01.jpg","prompt":"<统一风格前缀 + 角色形象要点 + 本页画面 + 图内文字原句>","image":"<绝对路径>/book-<slug>/refs.png","quality":"high"},
        {"out":"<绝对路径>/book-<slug>/cover.jpg","prompt":"<封面提示词>","image":"<绝对路径>/book-<slug>/refs.png","size":"1024x1536","quality":"high"}
      ]
      ```
-     Bash 的 timeout 给 600000ms，然后跑 `/opt/claude-agent/bin/paint-batch book-<slug>/paint-1.json`。
-  4. 这一批画完后**逐张看图校字**。字错了或走样的页，写一份只含这几页的小清单，加 `--force` 重画。只是 `FAIL` 的页直接重跑原清单就行，已画好的会自动跳过。
-  5. 本批每页都确认过后：`build.mjs asset book-<slug> pNN.jpg pNN.jpg` → `build.mjs done book-<slug> NN`（封面只 asset）。然后写下一批的清单，直到全部页 done。
-- 单张补画（修书改一页、个别重画）仍可直接用 `paint "<提示词>" book-<slug>/pNN.jpg --image refs.png --quality high`。
+     Bash 的 timeout 给 600000ms，然后跑 `/opt/claude-agent/bin/paint-batch book-<slug>/paint-1.json --group <slug>`。
+  4. 这一批画完后**逐张看图校字**。字错了或走样的页，写一份只含这几页的小清单，加 `--force` 重画。只是 `FAIL` 的页照 paint skill 错误码表处理后重跑原清单就行，已画好的会自动跳过。
+  5. **引擎对账**：`/opt/claude-agent/bin/paint --engines book-<slug>/p*.jpg book-<slug>/cover.jpg`。若 codex 和 seedream 混用（常见于中途 Codex 额度打满）：把**少数派**删掉，用多数派的 `--engine`（平票 `seedream`）重画（`paint-batch 清单 --group <slug> --engine <多数派>`，已在的跳过），重画后再对账——**包括前面批次已经 asset/done 过的页**：重画后用同名再 `build.mjs asset` 覆盖即可。
+  6. 本批每页都确认过后：`build.mjs asset book-<slug> pNN.jpg pNN.jpg` → `build.mjs done book-<slug> NN`（封面只 asset）。然后写下一批的清单，直到全部页 done；**全部画完后再跑一次第 5 步的全书对账**，全书上传的图同一个引擎才算完。
+- 单张补画（修书改一页、个别重画）仍可直接用 `paint "<提示词>" book-<slug>/pNN.jpg --image refs.png --quality high --group <slug>`；书已经是 seedream 画的，补画时加 `--engine seedream`（codex 画的书加 `--engine codex`）保证同一画风。
 - **插图一律 JPG q80，不出 PNG**：paint 按输出扩展名定格式，存成 `.jpg` 就是 JPEG、压缩默认 80，不用另加参数。同一张图 PNG 约 2.4MB、JPG q80 约 0.5MB，读者弱网翻页和离线下载都靠这个差价。`build.mjs` 有硬闸：`asset` 拒收 `.png`（也拒收改了扩展名的假 JPG），正文引用 `.png` 的页拒绝发布——被拒了就重出成 `.jpg`，别绕。`refs.png` 是不上传的工作文件，保持 PNG 无妨。
 
 ---
@@ -149,7 +150,7 @@ Spawn 一个 agent，产出书名、slug、subtitle（一句话故事钩子）�
 
 ## 封面
 
-同通用 skill 的封面规则（竖版 1024x1536、书名画进图、GPT 出字），但气质要**童趣、明亮、可爱**，和内页画风一致；主角可以出现在封面上。
+同通用 skill 的封面规则（竖版 1024x1536、书名画进图、`--group <slug>`），但气质要**童趣、明亮、可爱**，和内页画风一致；主角可以出现在封面上。
 
 ---
 
@@ -159,6 +160,7 @@ Spawn 一个 agent，产出书名、slug、subtitle（一句话故事钩子）�
 - 出现超龄难词/长复句 / 抽象道理 → 降到目标年龄段能懂的具体词。
 - 结尾贴「这个故事告诉我们……」的说教 → 删掉，让故事自己说。
 - 主角在不同页画风/外形不一致 → 没用统一风格前缀，重出图。
+- 页图一部分 codex、一部分 seedream 画的（`paint --engines` 报混用）→ 少数派用多数派的 `--engine` 重画、同名重新 asset。
 - 故事里出现嘟嘟/小杰，出图却没带对应 CRS `--image` 参照、或形象跑偏（衣着/配色/体型不对）→ 违反固定角色库，按 CRS 重画。
 - 画面里出现 CRS 设定图的排版/标注/多视图网格 → 提示词没申明「只取形象」，重画。
 - 图里的文字与该页正文不一致 / 有错字乱码 / 出现正文之外的多余字符或水印 → 逐字校对后重画。
