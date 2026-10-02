@@ -48,6 +48,7 @@ import { handlePromptsRoute, handlePromptImport } from "./prompt-routes.js";
 import { handlePromptRegistry } from "./prompt-registry.js";
 import { xhsPack } from "./xhs.js";
 import { handlePromptLab } from "./prompt-lab.js";
+import { paintBase } from "./paint-client.js";
 import { handleRealtimeSession, probeOpenAI, RT_RELAY_LOCATION_HINT } from "./realtime.js";
 import { REVISE_SYSTEM, EDIT_SYSTEM as SYSTEM } from "./prompts/edit.js";
 export { AnthropicRelay, RealtimeRelay } from "./relay.js";
@@ -1568,8 +1569,9 @@ export default {
       // 幂等：结果键已存在 → 回调重送，直接成功不重复写/扣费
       if (await env.FILES.head(fullNew)) return J({ ok: true, dedup: true });
       if (body.status === "done" && body.result_url) {
-        const paintBase = env.PAINT_BASE || "https://paint.jianshuo.dev";
-        if (!String(body.result_url).startsWith(paintBase + "/")) return J({ error: "bad result_url" }, 400);
+        if (!String(body.result_url).startsWith(paintBase(env) + "/")) return J({ error: "bad result_url" }, 400);
+        // 2026-10-02 起回调带 engine/model/fallback_reason：降级到 Seedream 时在日志里留痕
+        if (body.engine && body.engine !== "codex") console.log(`[paint-callback] job=${body.job_id} engine=${body.engine} model=${body.model} reason=${body.fallback_reason || ""}`);
         const r = await globalThis.fetch(body.result_url);
         if (!r.ok) return J({ error: `fetch_result_${r.status}` }, 502);
         // R2.put 要求 body 有已知长度；fetch 的响应体流长度未知（paint /results 无 Content-Length），

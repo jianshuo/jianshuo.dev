@@ -8,7 +8,7 @@
 // GET  /agent/prompt-lab/paint/<jobId>    → 转发 paint 任务状态（含 result_url）
 import { bearerToken } from "../../functions/lib/auth.js";
 import { TITLE_FALLBACK, readArticleDoc, withTopLevelArticles } from "../../functions/lib/article-store.js";
-import { snapSize } from "./paint-size.js";
+import { paintSubmit, paintGetJob } from "./paint-client.js";
 
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 
@@ -47,32 +47,21 @@ export async function handlePromptLab(request, env, url) {
     return J({ articles: await listArticles(env, limit) });
   }
 
-  const paintBase = env.PAINT_BASE || "https://paint.jianshuo.dev";
-
   if (url.pathname === "/agent/prompt-lab/paint" && request.method === "POST") {
     const body = await request.json().catch(() => null);
     if (!body || typeof body.prompt !== "string" || !body.prompt.trim()) return J({ error: "expected {prompt}" }, 400);
-    const size = snapSize(body.size, "1536x1024"); // 对齐 16 的倍数：paint 拒绝非 16 倍数的宽高
     // XMP 溯源（paint spec 2026-07-19 §5）：标来源 + 页面选中的指令 id（尽力而为，非法即丢）
     const xmpMeta = { source: "prompt-lab" };
     if (typeof body.prompt_id === "string" && /^[\w.-]{1,64}$/.test(body.prompt_id)) xmpMeta.prompt_id = body.prompt_id;
-    let resp;
-    try {
-      resp = await globalThis.fetch(`${paintBase}/api/jobs`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.PAINT_API_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: body.prompt, size, format: "jpeg", compression: 80, xmp_meta: xmpMeta }),
-      });
-    } catch { resp = null; }
+    // 尺寸规整在 paint 服务端；不合语法的由 paintSubmit 换成题图缺省 1536x1024
+    const resp = await paintSubmit(env, { prompt: body.prompt, size: body.size, format: "jpeg", compression: 80, xmp_meta: xmpMeta }, { defaultSize: "1536x1024" });
     if (!resp || (resp.status !== 202 && resp.status !== 200)) return J({ error: "paint-unavailable", status: resp?.status || 0 }, 502);
     return J(await resp.json());
   }
 
   const m = url.pathname.match(/^\/agent\/prompt-lab\/paint\/([A-Za-z0-9-]+)$/);
   if (m && request.method === "GET") {
-    let resp;
-    try { resp = await globalThis.fetch(`${paintBase}/api/jobs/${m[1]}`, { headers: { Authorization: `Bearer ${env.PAINT_API_TOKEN}` } }); }
-    catch { resp = null; }
+    const resp = await paintGetJob(env, m[1]);
     if (!resp) return J({ error: "paint-unavailable" }, 502);
     return J(await resp.json(), resp.status);
   }

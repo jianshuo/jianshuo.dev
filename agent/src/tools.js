@@ -8,7 +8,8 @@ import { imageCostUY, IMAGE_SUANLI } from "./usage.js";
 import { ensureAccount } from "./usage_store.js";
 import { restyleArticle, ensurePhotoMarkers } from "./miner.js";
 import { silentM4aBytes } from "../../functions/lib/silent-m4a.js";
-import { snapSize, jpegDims, fitSize } from "./paint-size.js";
+import { jpegDims, fitSize } from "./paint-size.js";
+import { paintSubmit } from "./paint-client.js";
 import { magicForItem, resolvePromptShare, sanitizeMagicCode, sharedPromptUsageNote } from "./prompt-share.js";
 import { MERGE_ARTICLES_DESC, ADD_FOLLOWUPS_DESC, EDIT_PHOTO_DESC, NEW_PHOTO_DESC } from "./prompts/tool-desc.js";
 import { loadPromptTemplate } from "./prompt-template.js";
@@ -382,9 +383,9 @@ register(
 // Shared paint-job POST for both edit_photo (oldKey present → edit mode with
 // image_url) and new_photo (no oldKey → generate mode, no image_url). Returns
 // the fetch Response, or null on network failure (caller checks status).
+// 真正的 HTTP 走 paint-client.js 的 paintSubmit（与 prompt-lab 共用）；尺寸规整在 paint 服务端。
 async function postPaintJob(ctx, { prompt, newKey, oldKey, size }) {
   const { env, scope, articleKey, origin, editId } = ctx;
-  const paintBase = env.PAINT_BASE || "https://paint.jianshuo.dev";
   const meta = { scope, newKey, articleKey, editId: editId || null };
   // 魔法数字进图：口播分享码优先；否则用客户端随 payload 带的 item_id 精确解析
   // （老客户端不带 item_id → 无码，正常）。查过一次记在 ctx 上，同轮多图不重查。
@@ -394,7 +395,7 @@ async function postPaintJob(ctx, { prompt, newKey, oldKey, size }) {
   }
   const body = {
     prompt,
-    size: snapSize(size, "1024x1024"), // 对齐 16 的倍数：paint 拒绝非 16 倍数的宽高
+    size, // 任意合理 WxH，paint 服务端规整（16 倍数/像素上下限）；不合语法的由 paintSubmit 换缺省
     format: "jpeg",
     // 显式钉 q80（2026-09-18，与书架插图同一标准）。不传就吃出图 CLI 的默认（实测 75），
     // 那是会随 CLI 升级漂走的东西；只对 jpeg/webp 有效，format 改回 png 时必须一起删。
@@ -411,15 +412,7 @@ async function postPaintJob(ctx, { prompt, newKey, oldKey, size }) {
     body.image_url = `${origin}/files/api/photo/${scope}${oldKey}`;
     meta.oldKey = oldKey;
   }
-  try {
-    return await globalThis.fetch(`${paintBase}/api/jobs`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.PAINT_API_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return null;
-  }
+  return paintSubmit(env, body, { defaultSize: "1024x1024" });
 }
 
 register(
