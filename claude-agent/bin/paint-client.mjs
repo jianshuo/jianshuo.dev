@@ -102,7 +102,10 @@ export async function paintOne(opts, onTick) {
     const j = await waitJob(sub.job_id, sub.deadline_at, onTick);
     const info = { ...base, job_id: sub.job_id, engine: j.engine ?? null, model: j.model ?? null, fallback_reason: j.fallback_reason ?? null };
     if (j.status !== "done") return { ...info, error: j.error || { code: "unknown", message: j.status }, secs: (Date.now() - t0) / 1000 };
-    const img = await fetch(j.result_url);
+    // 从 API 同一个地址拉结果（/results 在 paint 服务上，公开 URL 只是它经 Caddy 的外名）：
+    // VPS 上 node 解析不了自己的公网域名（ENOTFOUND，2026-10-02 实测），走 127.0.0.1 也省一趟出网。
+    const ru = new URL(j.result_url);
+    const img = await fetch(`${API}${ru.pathname}${ru.search}`);
     if (!img.ok) return { ...info, error: { code: "download_failed", message: `HTTP ${img.status} ${j.result_url}` }, secs: (Date.now() - t0) / 1000 };
     writeFileSync(opts.out, Buffer.from(await img.arrayBuffer()));
     return { ...info, ok: true, result_url: j.result_url, secs: (Date.now() - t0) / 1000 };
