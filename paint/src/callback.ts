@@ -9,6 +9,12 @@ export interface CallbackPayload {
   bytes: number | null;
   error: { code: string; message: string } | null;
   callback_meta: unknown;
+  /** 实际出图（或栽在）哪个引擎：codex | seedream（2026-10-02 起） */
+  engine: "codex" | "seedream" | null;
+  /** codex = 外层 Codex 模型（出图的是它委托的 gpt-image-2）；seedream = 方舟模型 id */
+  model: string | null;
+  /** 为什么没走 codex（额度/冷却/模型全拒/瞬时限流/group 粘性）；正常走 codex 或显式 seedream 时为 null */
+  fallback_reason: string | null;
 }
 
 export function sign(body: string, secret: string): string {

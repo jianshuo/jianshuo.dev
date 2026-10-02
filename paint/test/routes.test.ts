@@ -202,3 +202,40 @@ test("POST /api/jobs 校验 engine：非法值 400、seedream+transparent 400", 
   assert.equal((await post({ prompt: "a cat", engine: "seedream", transparent: true })).status, 400);
   app.close();
 });
+
+test("POST /api/jobs：engine=seedream 但服务端没配 ARK_API_KEY → 提交即 400（不排队再失败）", async () => {
+  const { app, base } = await boot();
+  const post = (b: unknown) => fetch(`${base}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer secret" }, body: JSON.stringify(b) });
+  const r = await post({ prompt: "a cat", engine: "seedream" });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /ARK_API_KEY/);
+  assert.equal((await post({ prompt: "a cat", engine: "auto" })).status, 202); // auto 照收
+  app.close();
+});
+
+test("POST /api/jobs：size 服务端规整、group 校验；GET 回 engine/model/fallback_reason/group/deadline_at", async () => {
+  const { app, base } = await boot();
+  const H = { "Content-Type": "application/json", Authorization: "Bearer secret" };
+  const post = (b: unknown) => fetch(`${base}/api/jobs`, { method: "POST", headers: H, body: JSON.stringify(b) });
+  assert.equal((await post({ prompt: "a cat", size: "garbage" })).status, 400);
+  assert.equal((await post({ prompt: "a cat", group: "bad group!" })).status, 400);
+  const sub = await post({ prompt: "a cat", size: "1365x1024", group: "book-abc" });
+  assert.equal(sub.status, 202);
+  const s = await sub.json();
+  assert.equal(s.size, "1360x1024");
+  assert.ok(s.deadline_at);
+  let j: any;
+  for (let i = 0; i < 200; i++) {
+    j = await (await fetch(`${base}/api/jobs/${s.job_id}`, { headers: H })).json();
+    if (j.status === "done" || j.status === "failed") break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(j.status, "done");
+  assert.equal(j.size, "1360x1024");
+  assert.equal(j.engine, "codex");
+  assert.equal(j.model, "gpt-5.4-mini");
+  assert.equal(j.fallback_reason, null);
+  assert.equal(j.group, "book-abc");
+  assert.equal(j.engine_pref, "auto");
+  app.close();
+});

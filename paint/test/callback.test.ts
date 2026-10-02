@@ -7,6 +7,7 @@ const payload: CallbackPayload = {
   job_id: "j1", status: "done", result_url: "https://x/r.png",
   format: "png", size: "2048x2048", bytes: 10, error: null,
   callback_meta: { note_id: "n1", orig_key: "k1" },
+  engine: "codex", model: "gpt-5.4-mini", fallback_reason: null,
 };
 
 test("sign is stable hmac", () => {

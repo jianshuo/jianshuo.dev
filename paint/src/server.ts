@@ -9,6 +9,7 @@ import { JobStore, type Job } from "./store.js";
 import { EventHub } from "./events.js";
 import { Worker } from "./worker.js";
 import { sweep } from "./cleanup.js";
+import { normalizeSize } from "./size.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -126,7 +127,7 @@ export function createApp(cfg: Config, deps: { store: JobStore; hub: EventHub; w
             : `<span style="color:#9ca3af">—</span>`;
           const err = j.error ? `<div style="color:#b91c1c;font-size:12px">${esc(j.error.code)}: ${esc(j.error.message)}</div>` : "";
           const thumb = p.result_url ? `<a href="${esc(p.result_url)}" target="_blank"><img src="${esc(p.result_url)}" style="height:48px;border-radius:6px" loading="lazy"></a>` : "";
-          return `<tr><td style="white-space:nowrap;color:#555">${t}</td><td>${esc(j.mode)}${j.engine === "seedream" ? `<div style="color:#b45309;font-size:12px">seedream</div>` : ""}</td><td>${st}</td><td>${cb}</td><td style="max-width:420px;white-space:pre-wrap">${esc(j.prompt || "")}${err}</td><td>${thumb}</td></tr>`;
+          return `<tr><td style="white-space:nowrap;color:#555">${t}</td><td>${esc(j.mode)}${j.engine === "seedream" ? `<div style="color:#b45309;font-size:12px" title="${esc(j.fallbackReason)}">seedream</div>` : ""}${j.group ? `<div style="color:#6b7280;font-size:12px">${esc(j.group)}</div>` : ""}</td><td>${st}</td><td>${cb}</td><td style="max-width:420px;white-space:pre-wrap">${esc(j.prompt || "")}${err}</td><td>${thumb}</td></tr>`;
         }).join("");
         const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>paint log</title>
 <style>body{font:14px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;background:#f7f7f8;color:#1a1a1a;margin:0;padding:20px}h1{font-size:17px}table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e6e6e9;border-radius:10px;overflow:hidden}th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top;font-size:13px}th{background:#faf9f7;color:#666;font-weight:600}tr:last-child td{border-bottom:0}</style></head>
@@ -191,6 +192,16 @@ async function submitJob(body: any, cfg: Config, store: JobStore, worker: Worker
   const enginePref = body.engine ?? "auto";
   if (!VALID_ENGINE.has(enginePref)) return sendJson(res, 400, { error: "bad engine" });
   if (enginePref === "seedream" && transparent) return sendJson(res, 400, { error: "seedream cannot do transparent" });
+  if (enginePref === "seedream" && !worker.seedreamConfigured()) return sendJson(res, 400, { error: "seedream not configured on this server (ARK_API_KEY)" });
+  // 风格一致性分组（如书的 slug），见 groups.ts
+  let group: string | undefined;
+  if (body.group !== undefined && body.group !== null && body.group !== "") {
+    if (typeof body.group !== "string" || !/^[\w.:-]{1,80}$/.test(body.group)) return sendJson(res, 400, { error: "bad group (1-80 chars of [A-Za-z0-9_.:-])" });
+    group = body.group;
+  }
+  // 尺寸规整收归服务端（2026-10-02）：任意合理 WxH 吸附成 CLI 能收的形状，两个引擎出同一尺寸
+  const size = normalizeSize(body.size ?? "2K");
+  if (!size) return sendJson(res, 400, { error: "bad size (WxH like 1024x1536, or auto/2K/4K)" });
 
   // XMP 溯源参数（spec: docs/superpowers/specs/2026-07-19-paint-xmp-provenance-design.md）
   let xmpMeta: Record<string, string> | undefined;
@@ -245,7 +256,7 @@ async function submitJob(body: any, cfg: Config, store: JobStore, worker: Worker
 
   const job: Job = {
     id, status: "queued", mode, prompt,
-    params: { size: body.size ?? "2K", format, quality, compression: body.compression, transparent },
+    params: { size, format, quality, compression: body.compression, transparent },
     inputPath, inputUrl, percent: 0, error: null,
     callbackUrl: typeof body.callback_url === "string" ? body.callback_url : undefined,
     callbackToken: typeof body.callback_token === "string" ? body.callback_token : undefined,
@@ -253,11 +264,15 @@ async function submitJob(body: any, cfg: Config, store: JobStore, worker: Worker
     xmpPrompt: body.xmp_prompt !== false,
     xmpMeta,
     enginePref: enginePref === "auto" ? undefined : enginePref,
+    group,
     createdAt: new Date().toISOString(),
   };
   await store.create(job);
   worker.enqueue(id);
-  sendJson(res, 202, { job_id: id, status: "queued", poll_url: `/api/jobs/${id}`, events_url: `/api/jobs/${id}/events` });
+  sendJson(res, 202, {
+    job_id: id, status: "queued", poll_url: `/api/jobs/${id}`, events_url: `/api/jobs/${id}/events`,
+    size, deadline_at: new Date(Date.parse(job.createdAt) + cfg.jobDeadlineMs).toISOString(),
+  });
 }
 
 function publicJob(j: Job, cfg: Config) {
@@ -268,8 +283,10 @@ function publicJob(j: Job, cfg: Config) {
     result_url: j.status === "done" && ext ? `${cfg.publicBaseUrl}/results/${j.id}.${ext}` : null,
     format: j.format ?? null, size: j.size ?? null, bytes: j.bytes ?? null,
     error: j.error ?? null, attempts: j.attempts ?? null,
-    engine: j.engine ?? null, model: j.model ?? null,
+    engine: j.engine ?? null, model: j.model ?? null, fallback_reason: j.fallbackReason ?? null,
+    engine_pref: j.enginePref ?? "auto", group: j.group ?? null,
     created_at: j.createdAt, done_at: j.doneAt ?? null,
+    deadline_at: new Date(Date.parse(j.createdAt) + cfg.jobDeadlineMs).toISOString(),
   };
 }
 

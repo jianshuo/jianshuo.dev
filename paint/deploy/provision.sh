@@ -21,6 +21,12 @@ if ! command -v caddy >/dev/null; then
 fi
 caddy version
 
+echo "▸ ImageMagick（Seedream 降级出图后裁缩/转格式、HEIC 参考图转 JPEG 都靠 convert）"
+if ! command -v convert >/dev/null; then
+  apt-get install -y imagemagick
+fi
+convert -version | head -1
+
 echo "▸ gpt-image-2-skill (npm 全局)"
 npm i -g gpt-image-2-skill@latest
 gpt-image-2-skill --version || true

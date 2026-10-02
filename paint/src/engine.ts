@@ -38,19 +38,29 @@ function errorBlob(error: { message?: string; detail?: unknown }): string {
  *   {code:"http_error", message:"HTTP 429", detail:'{"error":{"type":"usage_limit_reached",
  *     "message":"The usage limit has been reached","plan_type":"plus","resets_at":1790915206,
  *     "limit_window_minutes":300,"resets_in_seconds":8295}}'}
- * 只认额度/限流类，调用方参数错（invalid_argument / transparent+edit 等）绝不降级。
+ * 只认「真额度」：usage_limit_reached 字样，或响应里带了重置时刻（resets_at / resets_in_seconds）。
+ * 泛泛的 HTTP 429 / too many requests 是瞬时限流（见 isRateLimited），不能据此长冷却——
+ * 那会让后面一串单白白走 Seedream 花钱（2026-10-02 评审）。
+ * 调用方参数错（invalid_argument / transparent+edit 等）绝不降级。
  */
 const QUOTA_EXHAUSTED: RegExp[] = [
   /usage_limit_reached/i,
   /usage limit has been reached/i,
-  /rate_limit_exceeded/i,
-  /\bHTTP 429\b/,
-  /too many requests/i,
+  /"resets_(at|in_seconds)"\s*:/i,
 ];
 
 export function isQuotaExhausted(error?: { code?: string; message?: string; detail?: unknown }): boolean {
   if (!error) return false;
-  return QUOTA_EXHAUSTED.some((re) => re.test(errorBlob(error)));
+  const blob = errorBlob(error).replace(/\\"/g, '"');
+  return QUOTA_EXHAUSTED.some((re) => re.test(blob));
+}
+
+/** 瞬时限流：429 / too many requests / rate limit，但不是真额度。原地短等重试，不进长冷却。 */
+const RATE_LIMITED: RegExp[] = [/\bHTTP 429\b/, /too many requests/i, /rate[_ ]limit/i];
+
+export function isRateLimited(error?: { code?: string; message?: string; detail?: unknown }): boolean {
+  if (!error || isQuotaExhausted(error)) return false;
+  return RATE_LIMITED.some((re) => re.test(errorBlob(error)));
 }
 
 /** 额度错误里带的重置时刻（ms epoch）；拿不到返回 undefined */

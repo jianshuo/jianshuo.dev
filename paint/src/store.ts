@@ -32,8 +32,10 @@ export interface Job {
   engine?: "codex" | "seedream";
   /** 调用方指定的引擎偏好（缺省 auto = codex 优先、额度满降级 seedream） */
   enginePref?: "auto" | "codex" | "seedream";
-  /** 降级到 seedream 的原因（codex 的错误摘要 / 冷却中），诊断用 */
+  /** 降级到 seedream 的原因（codex 的错误摘要 / 冷却中 / group 粘性），诊断用 */
   fallbackReason?: string;
+  /** 风格一致性分组（如书的 slug）：组里有一张走了 seedream，后续 auto 单同走 seedream */
+  group?: string;
   callbackUrl?: string;
   callbackToken?: string;
   callbackMeta?: unknown;

@@ -45,6 +45,20 @@ if (prompt.includes("QUOTA")) {
   process.exit(1);
 }
 
+// prompt 含 "RATELIMIT"：泛泛的 HTTP 429（不带 usage_limit_reached / resets_*）= 瞬时限流。
+// "RATELIMIT_ONCE"：第一次 429，第二次成功（out 旁 marker 记次数）。
+if (prompt.includes("RATELIMIT")) {
+  const marker = out + ".rl-marker";
+  if (!prompt.includes("RATELIMIT_ONCE") || !existsSync(marker)) {
+    writeFileSync(marker, "1");
+    process.stdout.write(JSON.stringify({ ok: false, error: { code: "http_error", message: "HTTP 429", detail: "Too Many Requests" } }));
+    process.exit(1);
+  }
+}
+
+// prompt 含 "SLOW"：卡 3 秒（测整单期限会把它杀掉）
+if (prompt.includes("SLOW")) await new Promise((r) => setTimeout(r, 3000));
+
 if (prompt.includes("FAIL")) {
   process.stdout.write(JSON.stringify({ ok: false, error: { code: "http_error", message: "stub failure" } }));
   process.exit(1);

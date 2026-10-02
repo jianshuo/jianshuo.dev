@@ -70,8 +70,9 @@ export class SeedreamError extends Error {
 export async function seedreamGenerate(
   cfg: SeedreamConfig,
   model: string,
-  opts: { prompt: string; size: string; image?: string },
+  opts: { prompt: string; size: string; image?: string; /** 整单期限（ms epoch）：请求与下载的超时都不越过它 */ deadline?: number },
 ): Promise<Buffer> {
+  const budget = (cap: number) => Math.max(1, Math.min(cap, (opts.deadline ?? Infinity) - Date.now()));
   const body: Record<string, unknown> = {
     model, prompt: opts.prompt, size: opts.size, response_format: "url", watermark: false,
   };
@@ -80,7 +81,7 @@ export async function seedreamGenerate(
     method: "POST",
     headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(cfg.timeoutMs),
+    signal: AbortSignal.timeout(budget(cfg.timeoutMs)),
   });
   const text = await r.text();
   let json: any;
@@ -90,7 +91,7 @@ export async function seedreamGenerate(
   }
   const url = json?.data?.[0]?.url;
   if (typeof url !== "string") throw new SeedreamError("no image url in response", text.slice(0, 500));
-  const img = await fetch(url, { signal: AbortSignal.timeout(120000) });
+  const img = await fetch(url, { signal: AbortSignal.timeout(budget(120000)) });
   if (!img.ok) throw new SeedreamError(`image download HTTP ${img.status}`);
   return Buffer.from(await img.arrayBuffer());
 }

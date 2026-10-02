@@ -13,6 +13,8 @@ const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+// 输出路径含 "convfail"（即 job id 含它）→ 复刻 ImageMagick 后处理失败
+if (out.includes("convfail")) { process.stderr.write("convert: stub failure"); process.exit(1); }
 writeFileSync(out, fmt === "png" ? TINY_PNG : Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from("FAKEJPEG")]));
 writeFileSync(out + ".args.json", JSON.stringify(args));
 process.exit(0);
