@@ -19,7 +19,7 @@ const cap = (k: string) => k.charAt(0).toUpperCase() + k.slice(1);
 
 export function buildXmp(f: XmpFields): string {
   const attrs = [
-    `xmp:CreatorTool="gpt-image-2 via paint.jianshuo.dev"`,
+    `xmp:CreatorTool="${esc(f.model)} via paint.jianshuo.dev"`, // seedream 降级时是方舟模型名
     `xmp:CreateDate="${esc(f.createDate)}"`,
     `paint:JobId="${esc(f.jobId)}"`,
     `paint:Model="${esc(f.model)}"`,

@@ -28,6 +28,12 @@ export interface Job {
   attempts?: number;
   /** 这一单最后用的 Codex 外层模型（换过腿的话是换到的那个）——诊断用 */
   model?: string;
+  /** 实际出图的引擎（2026-10-02 起）：codex 额度打满自动降级到 seedream */
+  engine?: "codex" | "seedream";
+  /** 调用方指定的引擎偏好（缺省 auto = codex 优先、额度满降级 seedream） */
+  enginePref?: "auto" | "codex" | "seedream";
+  /** 降级到 seedream 的原因（codex 的错误摘要 / 冷却中），诊断用 */
+  fallbackReason?: string;
   callbackUrl?: string;
   callbackToken?: string;
   callbackMeta?: unknown;

@@ -5,7 +5,8 @@ import { createInterface } from "node:readline";
 import type { Config } from "./config.js";
 import type { JobStore, Job } from "./store.js";
 import type { EventHub } from "./events.js";
-import { buildArgs, parseResult, parseEventLine, isModelRejected } from "./engine.js";
+import { buildArgs, parseResult, parseEventLine, isModelRejected, isQuotaExhausted, quotaResetAt } from "./engine.js";
+import { seedreamSize, refImageDataUri, seedreamGenerate, finalizeImage } from "./seedream.js";
 import { deliver, type CallbackPayload } from "./callback.js";
 import { buildXmp, embedXmp } from "./xmp.js";
 
@@ -35,6 +36,8 @@ export async function downloadInput(url: string, inputPath: string, maxBytes: nu
 export class Worker {
   private queue: string[] = [];
   private active = 0;
+  /** codex 额度打满后到这个时刻（ms epoch）前，auto 单直接走 seedream（进程内存，重启即清） */
+  codexBlockedUntil = 0;
 
   constructor(private store: JobStore, private hub: EventHub, private cfg: Config) {}
 
@@ -87,37 +90,78 @@ export class Worker {
     await this.store.update(id, { status: "running", startedAt: new Date().toISOString(), percent: 0 });
     this.hub.publish(id, "progress", { percent: 0, phase: "queued" });
 
+    const pref = job.enginePref ?? "auto";
+    const sd = this.cfg.seedream;
+    // seedream 能不能接：开关开着 + 有 key + 不是透明图（方舟没有透明背景）
+    const seedreamUsable = sd.enabled && !!sd.apiKey && !job.params.transparent;
+
     let attempts = 0;
     let ok = false;
     let bytes = 0;
     let error: { code: string; message: string; detail?: unknown } | undefined;
-    // 外层按模型候选序列走：账号说「这个模型你用不了」就换下一个，其它错一律不换。
     let model = this.cfg.codexModels[0];
-    for (const candidate of this.cfg.codexModels) {
-      model = candidate;
-      const args = buildArgs(job, outPath, candidate);
-      let tries = 0;
-      while (tries < MAX_ATTEMPTS) {
-        tries++;
-        attempts++;
-        ({ ok, bytes, error } = await this.attempt(id, args, outPath));
-        if (ok || !RETRYABLE.has(error?.code ?? "")) break;
-        if (tries < MAX_ATTEMPTS) {
-          await this.store.update(id, { percent: 0 });
-          this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
-        }
-      }
-      if (ok || !isModelRejected(error)) break;
-      console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
-      await this.store.update(id, { percent: 0 });
-      this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
+    let engine: "codex" | "seedream" = "codex";
+    let fallbackReason: string | undefined;
+
+    // 额度冷却中：上一单刚被 429 过，重置前别再白打一枪 codex，直接走 seedream
+    let runCodex = pref !== "seedream";
+    if (runCodex && pref === "auto" && seedreamUsable && Date.now() < this.codexBlockedUntil) {
+      runCodex = false;
+      fallbackReason = `codex quota cooldown until ${new Date(this.codexBlockedUntil).toISOString()}`;
     }
 
-    // 输入文件要等重试全部结束再清（edit 的第二次尝试还要用它）
+    if (runCodex) {
+      // 外层按模型候选序列走：账号说「这个模型你用不了」就换下一个，其它错一律不换。
+      for (const candidate of this.cfg.codexModels) {
+        model = candidate;
+        const args = buildArgs(job, outPath, candidate);
+        let tries = 0;
+        while (tries < MAX_ATTEMPTS) {
+          tries++;
+          attempts++;
+          ({ ok, bytes, error } = await this.attempt(id, args, outPath));
+          if (ok || !RETRYABLE.has(error?.code ?? "")) break;
+          if (tries < MAX_ATTEMPTS) {
+            await this.store.update(id, { percent: 0 });
+            this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
+          }
+        }
+        if (ok || !isModelRejected(error)) break;
+        console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
+        await this.store.update(id, { percent: 0 });
+        this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
+      }
+      // 自动降级只认两种：额度打满（429 usage_limit_reached）/ 候选模型全被账号拒。
+      // 参数错、安全拦截（missing_image_result）、401 等一律原样失败。
+      if (!ok && pref === "auto" && seedreamUsable) {
+        if (isQuotaExhausted(error)) {
+          const until = quotaResetAt(error) ?? Date.now() + 10 * 60 * 1000;
+          this.codexBlockedUntil = Math.min(until, Date.now() + 7 * 24 * 3600 * 1000);
+          fallbackReason = `codex quota: ${error?.message ?? ""} (cooldown until ${new Date(this.codexBlockedUntil).toISOString()})`;
+        } else if (isModelRejected(error)) {
+          fallbackReason = `codex models all rejected: ${error?.message ?? ""}`;
+        }
+      }
+    }
+
+    if (!ok && (pref === "seedream" || fallbackReason)) {
+      if (!seedreamUsable) {
+        error = { code: "seedream_unavailable", message: job.params.transparent ? "seedream cannot do transparent output" : "seedream not configured (ARK_API_KEY / SEEDREAM_FALLBACK)" };
+      } else {
+        engine = "seedream";
+        if (fallbackReason) console.warn(`[worker] job ${id}: 降级 seedream —— ${fallbackReason}`);
+        const r = await this.runSeedream(id, job, outPath);
+        attempts += r.attempts;
+        ({ ok, bytes, error } = r);
+        model = r.model;
+      }
+    }
+
+    // 输入文件要等重试全部结束再清（edit 的第二次尝试 / seedream 降级还要用它）
     if (job.inputPath) await unlink(job.inputPath).catch(() => {});
 
     if (!ok) {
-      await this.store.update(id, { model });   // 失败也留痕：栽在哪个模型上
+      await this.store.update(id, { model, engine, fallbackReason });   // 失败也留痕：栽在哪个引擎/模型上
       await this.fail(job, error ?? { code: "unknown", message: "generation failed" }, attempts);
       return;
     }
@@ -127,7 +171,7 @@ export class Worker {
       const xmp = buildXmp({
         prompt: job.xmpPrompt === false ? undefined : job.prompt,
         jobId: id,
-        model: "gpt-image-2",
+        model: engine === "seedream" ? model : "gpt-image-2",
         createDate: new Date().toISOString(),
         meta: job.xmpMeta,
       });
@@ -141,11 +185,50 @@ export class Worker {
     const done = await this.store.update(id, {
       status: "done", percent: 100, doneAt: new Date().toISOString(), attempts,
       resultPath: outPath, format: ext === "jpg" ? "jpeg" : ext, bytes,
-      size: job.params.size, model,
+      size: job.params.size, model, engine, fallbackReason,
     });
     const resultUrl = `${this.cfg.publicBaseUrl}/results/${id}.${ext}`;
     this.hub.publish(id, "done", { result_url: resultUrl, bytes, format: done.format, size: done.size });
     await this.maybeCallback(done, "done", resultUrl, null);
+  }
+
+  /** Seedream 降级：按 SEEDREAM_MODELS 候选序列试，任一成功即止 */
+  private async runSeedream(
+    id: string,
+    job: Job,
+    outPath: string,
+  ): Promise<{ ok: boolean; bytes: number; attempts: number; model: string; error?: { code: string; message: string; detail?: unknown } }> {
+    const sd = this.cfg.seedream;
+    const size = seedreamSize(job.params.size, sd.minPixels, sd.maxPixels);
+    let image: string | undefined;
+    if (job.mode === "edit" && job.inputPath) {
+      try {
+        image = await refImageDataUri(job.inputPath, this.cfg.convertBin);
+      } catch (e: any) {
+        return { ok: false, bytes: 0, attempts: 0, model: sd.models[0], error: { code: "seedream_error", message: `reference image: ${e?.message ?? e}` } };
+      }
+    }
+    let attempts = 0;
+    let error: { code: string; message: string; detail?: unknown } | undefined;
+    let model = sd.models[0];
+    for (const candidate of sd.models) {
+      model = candidate;
+      attempts++;
+      await this.store.update(id, { percent: 10 }).catch(() => {});
+      this.hub.publish(id, "progress", { percent: 10, phase: `seedream:${candidate}` });
+      try {
+        const buf = await seedreamGenerate(sd, candidate, { prompt: job.prompt, size: size.request, image });
+        this.hub.publish(id, "progress", { percent: 90, phase: "seedream:finalize" });
+        await finalizeImage(this.cfg.convertBin, buf, outPath, {
+          target: size.target, format: job.params.format, compression: job.params.compression,
+        });
+        return { ok: true, bytes: (await stat(outPath)).size, attempts, model };
+      } catch (e: any) {
+        error = { code: "seedream_error", message: e?.message ?? String(e), detail: e?.detail };
+        console.warn(`[worker] job ${id}: seedream ${candidate} 失败：${error.message}`);
+      }
+    }
+    return { ok: false, bytes: 0, attempts, model, error };
   }
 
   /** 跑一次 CLI：spawn → 进度转发 → 解析结果 → 校验产物文件 */

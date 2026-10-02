@@ -26,7 +26,32 @@ export interface Config {
   codexModels: string[];
   maxInputBytes: number;
   maxPromptChars: number;
+  /**
+   * Codex 额度打满（429 usage_limit_reached）时的自动降级：火山方舟 Seedream。
+   * 2026-10-02 起。enabled=false 或没配 apiKey 就不降级（原样失败）。
+   */
+  seedream: SeedreamConfig;
+  /** ImageMagick `convert`：Seedream 出图后裁/缩到调用方要的尺寸 + 转格式 */
+  convertBin: string;
 }
+
+export interface SeedreamConfig {
+  enabled: boolean;
+  apiKey?: string;
+  baseUrl: string;
+  /** 按顺序试，前一个失败换下一个（env SEEDREAM_MODELS 逗号分隔） */
+  models: string[];
+  /** 方舟要求 宽×高 ≥ 921,600（2026-10-02 实测 5.0 pro / 4.0 同一个下限） */
+  minPixels: number;
+  maxPixels: number;
+  timeoutMs: number;
+}
+
+/**
+ * 2026-10-02 实测账号已开通：5.0 pro ✅、4.0 ✅；4.5 / 5.0-flash ❌ 404 ModelNotOpen。
+ * 5.0 pro 不收 sequential_image_generation（400），别传。
+ */
+const DEFAULT_SEEDREAM_MODELS = ["doubao-seedream-5-0-pro-260628", "doubao-seedream-4-0-20260415"];
 
 /**
  * 候选序列。账号能开哪些模型**会变**，所以这里记的是「最后一次实测」而非定论：
@@ -38,9 +63,9 @@ export interface Config {
  */
 const DEFAULT_CODEX_MODELS = ["gpt-5.4-mini", "gpt-5.4"];
 
-function parseModels(raw: string | undefined): string[] {
+function parseModels(raw: string | undefined, fallback: string[] = DEFAULT_CODEX_MODELS): string[] {
   const list = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  return list.length ? list : DEFAULT_CODEX_MODELS;
+  return list.length ? list : fallback;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -66,5 +91,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     codexModels: parseModels(env.CODEX_MODELS),
     maxInputBytes: Number(env.MAX_INPUT_BYTES ?? 26214400),
     maxPromptChars: Number(env.MAX_PROMPT_CHARS ?? 4000),
+    seedream: {
+      enabled: !/^(0|false|off|no)$/i.test(env.SEEDREAM_FALLBACK ?? "on"),
+      apiKey: env.ARK_API_KEY || undefined,
+      baseUrl: (env.ARK_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, ""),
+      models: parseModels(env.SEEDREAM_MODELS, DEFAULT_SEEDREAM_MODELS),
+      minPixels: Number(env.SEEDREAM_MIN_PIXELS ?? 921600),
+      maxPixels: Number(env.SEEDREAM_MAX_PIXELS ?? 4096 * 4096),
+      timeoutMs: Number(env.SEEDREAM_TIMEOUT_MS ?? 300000),
+    },
+    convertBin: env.CONVERT_BIN ?? "convert",
   };
 }

@@ -194,3 +194,11 @@ test("POST /api/jobs 400 on bad xmp_meta", async () => {
   assert.equal((await post({ prompt: "a cat", xmp_meta: { magic: "1", Magic: "2" } })).status, 400);
   app.close();
 });
+
+test("POST /api/jobs 校验 engine：非法值 400、seedream+transparent 400", async () => {
+  const { app, base } = await boot();
+  const post = (b: unknown) => fetch(`${base}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer secret" }, body: JSON.stringify(b) });
+  assert.equal((await post({ prompt: "a cat", engine: "dalle" })).status, 400);
+  assert.equal((await post({ prompt: "a cat", engine: "seedream", transparent: true })).status, 400);
+  app.close();
+});

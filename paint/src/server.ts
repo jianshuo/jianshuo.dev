@@ -18,6 +18,7 @@ process.on("uncaughtException", (e) => console.error("[uncaughtException]", e));
 const MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
 const VALID_FORMAT = new Set(["png", "jpeg", "webp"]);
 const VALID_QUALITY = new Set(["low", "medium", "high", "auto"]);
+const VALID_ENGINE = new Set(["auto", "codex", "seedream"]);
 
 // Direct-literal-IP SSRF guard for server-side image_url fetch. Blocks loopback,
 // private, and link-local (incl. cloud metadata 169.254.x) hosts, including
@@ -125,7 +126,7 @@ export function createApp(cfg: Config, deps: { store: JobStore; hub: EventHub; w
             : `<span style="color:#9ca3af">—</span>`;
           const err = j.error ? `<div style="color:#b91c1c;font-size:12px">${esc(j.error.code)}: ${esc(j.error.message)}</div>` : "";
           const thumb = p.result_url ? `<a href="${esc(p.result_url)}" target="_blank"><img src="${esc(p.result_url)}" style="height:48px;border-radius:6px" loading="lazy"></a>` : "";
-          return `<tr><td style="white-space:nowrap;color:#555">${t}</td><td>${esc(j.mode)}</td><td>${st}</td><td>${cb}</td><td style="max-width:420px;white-space:pre-wrap">${esc(j.prompt || "")}${err}</td><td>${thumb}</td></tr>`;
+          return `<tr><td style="white-space:nowrap;color:#555">${t}</td><td>${esc(j.mode)}${j.engine === "seedream" ? `<div style="color:#b45309;font-size:12px">seedream</div>` : ""}</td><td>${st}</td><td>${cb}</td><td style="max-width:420px;white-space:pre-wrap">${esc(j.prompt || "")}${err}</td><td>${thumb}</td></tr>`;
         }).join("");
         const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>paint log</title>
 <style>body{font:14px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;background:#f7f7f8;color:#1a1a1a;margin:0;padding:20px}h1{font-size:17px}table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e6e6e9;border-radius:10px;overflow:hidden}th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top;font-size:13px}th{background:#faf9f7;color:#666;font-weight:600}tr:last-child td{border-bottom:0}</style></head>
@@ -186,6 +187,10 @@ async function submitJob(body: any, cfg: Config, store: JobStore, worker: Worker
   if (!VALID_FORMAT.has(format)) return sendJson(res, 400, { error: "bad format" });
   if (!VALID_QUALITY.has(quality)) return sendJson(res, 400, { error: "bad quality" });
   const transparent = body.transparent === true;
+  // 引擎偏好（2026-10-02）：auto=codex 优先、额度满自动降级 seedream；codex=不降级；seedream=直走方舟
+  const enginePref = body.engine ?? "auto";
+  if (!VALID_ENGINE.has(enginePref)) return sendJson(res, 400, { error: "bad engine" });
+  if (enginePref === "seedream" && transparent) return sendJson(res, 400, { error: "seedream cannot do transparent" });
 
   // XMP 溯源参数（spec: docs/superpowers/specs/2026-07-19-paint-xmp-provenance-design.md）
   let xmpMeta: Record<string, string> | undefined;
@@ -247,6 +252,7 @@ async function submitJob(body: any, cfg: Config, store: JobStore, worker: Worker
     callbackMeta: body.callback_meta,
     xmpPrompt: body.xmp_prompt !== false,
     xmpMeta,
+    enginePref: enginePref === "auto" ? undefined : enginePref,
     createdAt: new Date().toISOString(),
   };
   await store.create(job);
@@ -262,6 +268,7 @@ function publicJob(j: Job, cfg: Config) {
     result_url: j.status === "done" && ext ? `${cfg.publicBaseUrl}/results/${j.id}.${ext}` : null,
     format: j.format ?? null, size: j.size ?? null, bytes: j.bytes ?? null,
     error: j.error ?? null, attempts: j.attempts ?? null,
+    engine: j.engine ?? null, model: j.model ?? null,
     created_at: j.createdAt, done_at: j.doneAt ?? null,
   };
 }

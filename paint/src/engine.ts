@@ -17,7 +17,7 @@ const MODEL_REJECTED: RegExp[] = [
 
 export function isModelRejected(error?: { code?: string; message?: string; detail?: unknown }): boolean {
   if (!error) return false;
-  const blob = `${error.message ?? ""} ${typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail ?? "")}`;
+  const blob = errorBlob(error);
   // 「模型被账号拒」有两种措辞、两种状态码（2026-09-07 在 VPS 上逐个实测）：
   //   400  The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account.
   //   404  The model `gpt-5.5` does not exist or you do not have access to it.
@@ -27,6 +27,41 @@ export function isModelRejected(error?: { code?: string; message?: string; detai
   // supported for edit"，泛泛的 /is not supported/ 会把它误判成模型问题，
   // 于是拿下一个模型再跑一遍必然的失败。单测钉了这条边界。
   return MODEL_REJECTED.some((re) => re.test(blob));
+}
+
+function errorBlob(error: { message?: string; detail?: unknown }): string {
+  return `${error.message ?? ""} ${typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail ?? "")}`;
+}
+
+/**
+ * 「Codex 额度打满了」——自动降级到 Seedream 的判据（2026-10-02）。长相：
+ *   {code:"http_error", message:"HTTP 429", detail:'{"error":{"type":"usage_limit_reached",
+ *     "message":"The usage limit has been reached","plan_type":"plus","resets_at":1790915206,
+ *     "limit_window_minutes":300,"resets_in_seconds":8295}}'}
+ * 只认额度/限流类，调用方参数错（invalid_argument / transparent+edit 等）绝不降级。
+ */
+const QUOTA_EXHAUSTED: RegExp[] = [
+  /usage_limit_reached/i,
+  /usage limit has been reached/i,
+  /rate_limit_exceeded/i,
+  /\bHTTP 429\b/,
+  /too many requests/i,
+];
+
+export function isQuotaExhausted(error?: { code?: string; message?: string; detail?: unknown }): boolean {
+  if (!error) return false;
+  return QUOTA_EXHAUSTED.some((re) => re.test(errorBlob(error)));
+}
+
+/** 额度错误里带的重置时刻（ms epoch）；拿不到返回 undefined */
+export function quotaResetAt(error: { message?: string; detail?: unknown } | undefined, now = Date.now()): number | undefined {
+  if (!error) return undefined;
+  const blob = errorBlob(error).replace(/\\"/g, '"');
+  const secs = blob.match(/"resets_in_seconds"\s*:\s*(\d+)/);
+  if (secs) return now + Number(secs[1]) * 1000;
+  const at = blob.match(/"resets_at"\s*:\s*(\d+)/);
+  if (at) return Number(at[1]) * 1000;
+  return undefined;
 }
 
 export function buildArgs(job: Job, outPath: string, model?: string): string[] {
