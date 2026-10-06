@@ -599,12 +599,14 @@ async function setHidden(env, request, slug) {
 
   const body = await request.json().catch(() => ({}));
   const hidden = body && body.hidden === true;
+  const before = doc.hidden === true;
   // 取消隐藏是**删字段**而不是写 false：源稿保持干净，build.mjs 重发时也不会
   // 凭空多出一行（collectBooks 判的是 `=== true`，两种写法都能工作）。
   if (hidden) doc.hidden = true; else delete doc.hidden;
   await env.FILES.put(key, JSON.stringify(doc, null, 2),
     { httpMetadata: { contentType: 'application/json' } });
   await invalidateShelf(env);   // 这里直接写 R2、不经 files API，得自己作废书架缓存
+  await auditHidden(env, request, slug, scope, before, hidden);
   // 社区索引同步（2026-09-06）：书架和社区是两套存储——只改 book.json 的话书从书架
   // 消失了，社区 feed 里那张书卡还挂着（feed 查的是 community_posts 的 WHERE hidden=0），
   // 隐藏只做了一半。取消隐藏不能无脑写 0：被举报的帖子也是靠这一列压着的，回落查一次
@@ -617,6 +619,26 @@ async function setHidden(env, request, slug) {
     console.log('[books] community index sync failed', slug, String(e?.message || e));
   }
   return jsonResp({ ok: true, slug, hidden });
+}
+
+/// 隐藏开关的审计（2026-10-06）：谁、何时、从什么改成什么。以前不留痕——
+/// dudu-guoqing-trip 被主人取消隐藏后查不出时间。Pages Functions 的日志不保留，
+/// 所以除 console.log 外再追加一行到 R2 `audit/book-hidden/<slug>.jsonl`：桶根、
+/// 不在 books/ 公开前缀下（_src/ 是公开可读的，含 scope/IP 不能放那），只有 admin
+/// token 能读。读改写非原子，同一本书同一毫秒两次点开关会丢一行，可以接受。
+/// 审计失败不影响开关本身。
+async function auditHidden(env, request, slug, scope, from, to) {
+  const rec = { ts: new Date().toISOString(), slug, scope, from, to,
+    ip: request.headers.get('cf-connecting-ip') || '', ua: request.headers.get('user-agent') || '' };
+  console.log('[books] hidden audit', JSON.stringify(rec));
+  try {
+    const k = `audit/book-hidden/${slug}.jsonl`;
+    const prev = await env.FILES.get(k);
+    await env.FILES.put(k, (prev ? await prev.text() : '') + JSON.stringify(rec) + '\n',
+      { httpMetadata: { contentType: 'application/x-ndjson' } });
+  } catch (e) {
+    console.log('[books] hidden audit write failed', slug, String(e?.message || e));
+  }
 }
 
 /// JSON 索引（iOS 图书馆）。cover / chapters / createdAt 已在 collectBooks 里
