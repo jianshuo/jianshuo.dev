@@ -87,7 +87,10 @@ export async function handleBookCommunityRoute(url, request, env, resolveScope) 
     const owner = await ownerOf(env, b.slug);
     // 非 admin：只许书主人给自己的书登记/刷新。
     if (!isAdmin && owner !== scope) continue;
-    await upsertCommunityPost(env.RECO_DB, rowOf(b, owner));
+    // 封面以 R2 实物为准：书架 JSON 是 stale-while-revalidate 缓存，封面刚传完
+    // 就来登记会拿到「cover:false」的旧清单（2026-10 实测 70 个书帖 46 个因此无封面）。
+    const cover = b.cover || !!(await env.FILES.head(`${BOOKS_STORE_SCOPE}books/${b.slug}/cover.jpg`).catch(() => null));
+    await upsertCommunityPost(env.RECO_DB, rowOf({ ...b, cover }, owner));
     done.push(b.slug);
   }
   const missing = wantAll ? [] : slugs.filter((s) => !done.includes(s));
