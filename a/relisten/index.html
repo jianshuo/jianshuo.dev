@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relisten · 隐私政策与支持</title>
+<meta name="description" content="Relisten — Mac 英语精听播放器的隐私政策与使用支持 / Privacy policy and support for Relisten, an English listening player for Mac.">
+<style>
+  :root { --bg:#f7f6fb; --card:#ffffff; --ink:#1c1e3c; --muted:#5a5e82; --line:#e6e4f0; --accent:#5b4bdb; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 72px; }
+  header { display:flex; gap:18px; align-items:center; margin-bottom: 28px; }
+  header img { width:84px; height:84px; }
+  h1 { font-size: 30px; margin:0; letter-spacing: -0.01em; }
+  header p { margin: 2px 0 0; color: var(--muted); }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 16px; padding: 22px 26px; margin: 18px 0; }
+  h2 { font-size: 20px; margin: 0 0 8px; }
+  h3 { font-size: 16px; margin: 18px 0 4px; }
+  ul { padding-left: 1.2em; margin: 6px 0; }
+  kbd { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background:#f1effa; border:1px solid var(--line);
+    border-radius: 6px; padding: 1px 6px; }
+  .en { color: var(--muted); }
+  footer { color: var(--muted); font-size: 14px; text-align:center; margin-top: 28px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="Relisten 图标">
+    <div>
+      <h1>Relisten</h1>
+      <p>Mac 英语精听播放器：一句一句听，听不清就再来一遍。</p>
+    </div>
+  </header>
+
+  <section id="privacy">
+    <h2>隐私政策</h2>
+    <p><b>Relisten 不收集、不上传、不分享任何数据。</b></p>
+    <ul>
+      <li>你打开的视频、音频和字幕文件只在你的 Mac 上读取和处理，不会离开这台电脑。</li>
+      <li>App 没有账号系统，没有统计分析、广告或第三方 SDK；它在 App Sandbox 中运行，并且没有申请网络访问权限。</li>
+      <li>收藏的句子、播放进度和快捷键设置保存在本机的 App 容器里，删除 App 即一并删除。</li>
+      <li>为了播放 mkv 等格式，App 会在本机缓存目录生成转换后的副本，可随时在「访达」中删除。</li>
+    </ul>
+    <h3 class="en">Privacy Policy (English)</h3>
+    <p class="en"><b>Relisten does not collect, upload or share any data.</b> Media and subtitle files you open are read and
+      processed only on your Mac. There are no accounts, analytics, ads or third-party SDKs; the app runs in the App Sandbox
+      without network access. Favorites, playback positions and settings stay in the app's local container and are removed
+      with the app. Converted copies of formats such as MKV are cached locally and can be deleted at any time.</p>
+    <p class="en">最后更新 / Last updated: 2026-10-13</p>
+  </section>
+
+  <section id="support">
+    <h2>使用支持</h2>
+    <h3>它能做什么</h3>
+    <ul>
+      <li>打开带字幕的视频或音频：支持内封字幕（mp4、mkv 等）和同名外挂 .srt / .vtt / .ass。</li>
+      <li>按句子跳转、重听、单句循环、逐句暂停；盲听时按住键临时看字幕或中文翻译。</li>
+      <li>片段循环：把一句里最难的半句抠出来反复听，可配合 0.5x–2x 变速（音调不变）。</li>
+    </ul>
+    <h3>常用快捷键</h3>
+    <p><kbd>空格</kbd> 播放/暂停 · <kbd>←</kbd>/<kbd>→</kbd> 上一句/下一句 · <kbd>↓</kbd> 重听本句 ·
+      <kbd>L</kbd> 单句循环 · <kbd>P</kbd> 逐句暂停 · 按住 <kbd>↑</kbd> 看字幕 · 按住 <kbd>C</kbd> 看翻译 ·
+      <kbd>R</kbd> 循环刚才 3 秒 · <kbd>A</kbd> 标记片段 · <kbd>[</kbd>/<kbd>]</kbd> 变速 · <kbd>F</kbd> 收藏。
+      所有快捷键都可在「设置 → 快捷键」中修改。</p>
+    <h3>常见问题</h3>
+    <ul>
+      <li><b>外挂字幕没有自动加载？</b> 沙盒只允许读取你选择的文件。点右侧列表顶部的「允许读取同目录的字幕文件」授权一次即可，或直接把字幕文件拖进窗口。</li>
+      <li><b>为什么 mkv 第一次打开要等一会儿？</b> 系统播放器不直接支持 mkv，App 会在本机转换一次封装，之后再打开就是秒开。</li>
+    </ul>
+    <h3>开源组件</h3>
+    <p>Relisten 内置 <a href="https://ffmpeg.org">FFmpeg</a>（LGPL v2.1+）的 ffmpeg / ffprobe 命令行工具，许可文本见 App 内「帮助 → 第三方开源许可」。</p>
+  </section>
+
+  <footer>Relisten © 2026 王建硕 · <a href="https://jianshuo.dev/">jianshuo.dev</a></footer>
+</main>
+</body>
+</html>
