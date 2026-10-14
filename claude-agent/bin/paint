@@ -5,7 +5,7 @@
 //   文生图:  paint "提示词" 输出.jpg
 //   改图:    paint "提示词" 输出.jpg --image 输入.jpg
 //   选项:    --size WxH(默认1024x1024，任意合理比例，服务端自动规整) --transparent
-//            --quality low|medium|high --format png|jpeg|webp --compression 0-100
+//            --quality low|medium|high(默认medium) --format png|jpeg|webp --compression 0-100
 //            --engine auto|codex|seedream（默认 auto）  --group <书的slug>（同组统一画风）
 //   查引擎:  paint --engines a.jpg b.jpg …   （读图里 XMP，报每张是 codex 还是 seedream + 少数派）
 //

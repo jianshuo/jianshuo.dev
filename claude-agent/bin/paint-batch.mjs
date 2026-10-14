@@ -3,7 +3,7 @@
 //   paint-batch 清单.json [--group <书的slug>] [--engine auto|codex|seedream] [--force]
 //
 // 清单 = JSON 数组，每项一张图：
-//   {"out":"/abs/book-x/p01.jpg","prompt":"…","image":"/abs/book-x/refs.png","size":"1024x1024","quality":"high"}
+//   {"out":"/abs/book-x/p01.jpg","prompt":"…","image":"/abs/book-x/refs.png","size":"1024x1024","quality":"medium"}
 // out / prompt 必填；image/size/quality/transparent/format/compression/engine/group 与 bin/paint 同义。
 // 命令行的 --group / --engine 作用于清单里没写这两项的条目。
 //

@@ -59,12 +59,12 @@ async function fakePaint(t) {
   return { bodies, run, dir: mkdtempSync(join(tmpdir(), "paint-cli-")) };
 }
 
-test("paint：请求体（尺寸/格式/q80/engine/group）+ 输出带 engine/model", async (t) => {
+test("paint：请求体（尺寸/格式/q80/默认 medium/engine/group）+ 输出带 engine/model", async (t) => {
   const { bodies, run, dir } = await fakePaint(t);
   const out = join(dir, "c.jpg");
   const r = await run(PAINT, ["a cover", out, "--size", "1024x1536", "--engine", "auto", "--group", "book-x"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(bodies[0], { prompt: "a cover", size: "1024x1536", format: "jpeg", compression: 80, engine: "auto", group: "book-x" });
+  assert.deepEqual(bodies[0], { prompt: "a cover", size: "1024x1536", format: "jpeg", quality: "medium", compression: 80, engine: "auto", group: "book-x" });
   assert.ok(existsSync(out));
   assert.match(r.stdout, /^saved: /m);
   assert.match(r.stdout, /^result_url: http/m);
@@ -101,6 +101,7 @@ test("paint-batch：一次全提交、跳过已存在、--group 作用于没写 
   assert.equal(bodies.filter((b) => b.group === "book-x").length, 4);
   assert.equal(bodies.find((b) => b.prompt === "page 9").group, "other");
   assert.equal(bodies[0].quality, "high");
+  assert.equal(bodies.find((b) => b.prompt === "page 9").quality, "medium"); // 不写 quality 一律 medium
   assert.ok(bodies[0].image_b64);
   // --force 才重画已存在的
   bodies.length = 0;

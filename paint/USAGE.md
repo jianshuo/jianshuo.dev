@@ -31,7 +31,7 @@ group 画风粘性、整单期限——**全在服务端**（`src/worker.ts`）�
 | `size` | | 缺省 `2K`。任意合理 `宽x高`，服务端规整：两边吸附到 16 倍数、总像素 ≥655,360 且 ≤8,294,400、单边 ≤3840、长短边比 ≤3:1（等比调整）；或关键字 `auto` / `2K` / `4K`。实际尺寸看 202 回包与结果里的 `size`。乱填（`huge`）→ 400 |
 | `format` | | `png`（缺省）/ `jpeg` / `webp` |
 | `compression` | | 0–100，jpeg/webp 用；书和 VoiceDrop 一律 80 |
-| `quality` | | `low` / `medium` / `high`（缺省）/ `auto`，只对 Codex 有效 |
+| `quality` | | `low` / `medium` / `high`（服务端缺省）/ `auto`，只对 Codex 有效；claude-agent 的 `bin/paint`/`paint-batch` 不传时一律 `medium` |
 | `transparent` | | `true` = 透明底 PNG。**只有 Codex 能做**；不能和改图同用 |
 | `engine` | | `auto`（缺省）/ `codex` / `seedream`，见下 |
 | `group` | | 画风一致性分组，如书的 slug（`[A-Za-z0-9_.:-]{1,80}`），见下 |
@@ -127,7 +127,7 @@ Codex（gpt-image-2）和 Seedream 画风明显不同，一本书混着用会很
 
 # 一批（≤6 张一批，一条前台命令，整批 ~9 分钟内必返回）
 /opt/claude-agent/bin/paint-batch 清单.json --group book-slug [--engine …] [--force]
-#   清单：[{"out":"/abs/p01.jpg","prompt":"…","image":"/abs/refs.png","size":"1024x1024","quality":"high"}, …]
+#   清单：[{"out":"/abs/p01.jpg","prompt":"…","image":"/abs/refs.png","size":"1024x1024","quality":"medium"}, …]
 #   逐张 ok/FAIL <code>: <message>；已存在跳过；结尾报引擎分布，混用时点名少数派
 
 # 对账：一组图各是哪个引擎画的

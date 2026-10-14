@@ -37,13 +37,14 @@ export function formatFor(out) {
 
 /**
  * 一张图的参数 → 请求体。opts: {prompt, out, image?, size?, transparent?, quality?, format?,
- * compression?, engine?, group?}。jpeg/webp 不给 compression 一律 80（书里统一 JPG q80）。
+ * compression?, engine?, group?}。jpeg/webp 不给 compression 一律 80（书里统一 JPG q80）；
+ * 不给 quality 一律 medium（2026-10-14 起，high 太吃 Codex 额度，书里的图统一 medium）。
  */
 export function buildBody(opts) {
   const format = opts.format || formatFor(opts.out);
   const b = { prompt: opts.prompt, size: opts.size || "1024x1024", format };
   if (opts.transparent) b.transparent = true;
-  if (opts.quality) b.quality = opts.quality;
+  b.quality = opts.quality || "medium";
   if (format !== "png") b.compression = opts.compression != null && opts.compression !== "" ? Number(opts.compression) : 80;
   if (opts.engine) b.engine = opts.engine;
   if (opts.group) b.group = opts.group;

@@ -22,7 +22,7 @@ description: 出图说明书——凡是要生成图片、改图、画封面/插
 | `--size WxH` | 缺省 1024x1024。任意合理比例都行，服务端自动吸附成合法尺寸（如 1365x1024 → 1360x1024） |
 | `--engine auto\|codex\|seedream` | 缺省 `auto`：Codex 优先，额度满/限流用尽/模型被拒时自动改用 Seedream。`codex` = 绝不降级；`seedream` = 直走方舟 |
 | `--group <slug>` | 画风分组。**写书必带，值 = 书的 slug** |
-| `--quality low\|medium\|high` | 只对 Codex 有效 |
+| `--quality low\|medium\|high` | 缺省 `medium`，**一律用 medium，别写 high**（high 一张就吃掉 Codex 每周额度约 5%，书里的图 medium 足够）。只对 Codex 有效 |
 | `--transparent` | 透明底 PNG，只有 Codex 能画（额度满时只能等） |
 | `--format` / `--compression` | 缺省按扩展名：.jpg → JPEG q80（书里一律用 .jpg） |
 
@@ -52,7 +52,7 @@ job: <id> (95s)
 - 单张通常 1–3 分钟；降级 Seedream 约多 1 分钟。服务端整单期限 8 分钟（从提交算），`paint` 最长约 9 分钟必返回。
 - **Bash timeout 一律给 600000ms，前台同步跑**。绝不 `run_in_background` / `nohup` / `Monitor`——回合结束后台进程全被杀。
 - 两张以上用 `paint-batch`：整批一次提交，服务端 3 张并发，**每批 ≤6 张**（多了排在后面的会 `deadline_exceeded`）。已存在的 out 自动跳过，所以失败了原样重跑同一清单即可。
-- 清单：`[{"out":"/abs/book-x/p01.jpg","prompt":"…","image":"/abs/book-x/refs.png","size":"1024x1024","quality":"high"}, …]`，`out`/`prompt` 必填，其余同 `paint` 选项（也可逐项写 `engine` / `group`）。
+- 清单：`[{"out":"/abs/book-x/p01.jpg","prompt":"…","image":"/abs/book-x/refs.png","size":"1024x1024","quality":"medium"}, …]`，`out`/`prompt` 必填，其余同 `paint` 选项（也可逐项写 `engine` / `group`）。
 
 ## 费用
 
