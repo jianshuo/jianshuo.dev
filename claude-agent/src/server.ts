@@ -534,6 +534,7 @@ async function handleBook(req: IncomingMessage, res: ServerResponse, payload: an
     (await fetchAuthorName(req.headers.authorization));
   const rec: InflightCreate = {
     kind: "create", jobId: randomUUID(), seed, scope: String(charge.body.scope ?? ""), author,
+    ...(payload?.hidden === true ? { hidden: true } : {}),
     auth: req.headers.authorization, startedAt: Date.now(), attempts: 0,
   };
   await writeInflight(INFLIGHT_DIR, rec);   // 落档即入队；起不起得来由泵说了算

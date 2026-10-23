@@ -25,6 +25,7 @@ export type InflightCreate = {
   seed: string;
   scope: string;
   author: string;
+  hidden?: boolean;      // 提交时勾了「隐藏」：book.json 强制 hidden:true，只有主人看得到
   auth?: string;
   startedAt: number;     // = 登记簿 thread 条目的 ts，续跑时靠它对上同一条
   slug?: string;         // early-register 拿到后回填，续跑/放弃时省一次反查

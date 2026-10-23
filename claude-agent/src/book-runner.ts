@@ -23,7 +23,7 @@ import {
 const BOOK_CONTINUE_MAX = Math.max(0, Number(process.env.BOOK_CONTINUE_MAX ?? 2) || 0);
 
 async function runCreate(rec: InflightCreate): Promise<void> {
-  const { jobId, seed, scope, author, auth, startedAt } = rec;
+  const { jobId, seed, scope, author, hidden, auth, startedAt } = rec;
   const resumed = rec.attempts > 1;
   console.log(`[book] ${resumed ? `resume(第 ${rec.attempts} 次)` : "start"} scope=${scope} author=${author || "-"} job=${jobId} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author
@@ -33,6 +33,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
     `${CODEX_BOOK_PREAMBLE}\n\n` +
     `任务：写一本书。${byline}\n` +
     `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
+    (hidden ? `提交者选了「隐藏」——建 book.json 时顶层写 "hidden": true（不上公开书架，只有主人看得到）。\n` : "") +
     (scope ? `这本书的产权归属 owner=「${scope}」——建 book.json 时把它原样写进顶层 "owner" 字段（谁能在线修改这本书以此为准）。\n` : "") +
     `种子：\n${seed}` +
     (resumed ? resumeAfterRestartHint(jobId) : "");
@@ -56,8 +57,10 @@ async function runCreate(rec: InflightCreate): Promise<void> {
       // 确定性兜底注入（skill 已要求写，这里保证一定有；只在创建期，修书不受影响；
       // build.mjs 每次发布都从盘上重读 book.json，注入不会被冲掉）：
       //   - 绘本缺省不上架：type=childrens 没写 hidden → 补 "hidden": true；
+      //   - 提交时勾了「隐藏」→ 强制 "hidden": true（skill 漏写也不会上公开书架）；
       //   - 产权：没写 owner → 补 "owner" = 下单人 scope。
       let inject = false;
+      if (hidden && hit.book?.hidden !== true) { hit.book.hidden = true; inject = true; }
       if (hit.book?.type === "childrens" && !("hidden" in hit.book)) { hit.book.hidden = true; inject = true; }
       if (scope && !hit.book.owner) { hit.book.owner = scope; inject = true; }
       if (inject) {
