@@ -73,8 +73,21 @@ test("书本身写坏了的错误不判为配额", () => {
   ]) assert.equal(shouldTryNextLeg(s), false, String(s));
 });
 
-test("Kimi 内容风控 400 high risk 不换腿：换了必然重蹈覆辙", () => {
-  assert.equal(shouldTryNextLeg("API Error: 400 high risk content detected"), false);
+test("内容审核拒答换腿：Kimi 拒的题 codex/claude 能写（10/24《拥抱战败》原话）", () => {
+  const real = "success: invalid_request: API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Try rephrasing the request in a new session or change your model.";
+  assert.equal(shouldTryNextLeg(real), true);
+  for (const s of [
+    "API Error: 400 high risk content detected",
+    "stop_reason: refusal",
+  ]) assert.equal(shouldTryNextLeg(s), true, s);
+});
+
+test("拒答模式不误伤：普通崩溃/超时仍不换腿", () => {
+  for (const s of [
+    "error_during_execution: ENOENT",
+    "timeout after 3600000ms",
+    "connection refused",
+  ]) assert.equal(shouldTryNextLeg(s), false, s);
 });
 
 test("否定模式优先于配额模式：撞轮数上限即便文中带 quota 也不换腿", () => {

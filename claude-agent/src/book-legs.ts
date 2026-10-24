@@ -26,7 +26,8 @@ export function parseLegs(spec: string | undefined): BookLeg[] {
 //   ② 凭据失效（没登录/key 过期）——腿一样是废的，一样该换。漏了这类的话，
 //      codex 订阅哪天掉登录，链就会在第二条腿上直接认输，用户照样白等。
 //   ③ 模型被账号拒（模型不存在/不给这个账号用）——同理，腿是废的，该换。
-// 不命中 = 书本身写坏了（轮数耗尽、崩溃、超时、内容风控），换腿只会再烧一份
+//   ④ 内容审核拒答——各家口径不同，这家拒的别家能写（见 REFUSAL_PATTERNS）。
+// 不命中 = 书本身写坏了（轮数耗尽、崩溃、超时），换腿只会再烧一份
 // 别人的配额重蹈覆辙，直接认输。
 //
 // 宁可宽松：漏判=退回「一条腿倒下全线瘫痪」的老样子，误判=多花一条腿重跑一次。
@@ -74,18 +75,32 @@ const MODEL_REJECTED_PATTERNS: RegExp[] = [
   /model[ _-]?not[ _-]?found/i,         // 机器码版
 ];
 
+// ④ 内容审核拒答 —— 换腿（2026-10-24）。以前当成「换了必然重蹈覆辙」不换，
+// 但三家的审核口径根本不一样：Kimi 拒的是中国政治口径的题（10/11《李登辉》、
+// 10/24《拥抱战败》，还有台湾问题、宗教划分世界等一串 _unmatched），codex/claude
+// 照写不误。两单都是头几轮 stop_reason=refusal，被 Claude Code 渲染成
+//   API Error: Claude Code is unable to respond to this request, which appears to
+//   violate our Usage Policy …
+// 判据只认配额/凭据/模型 → 判成书写坏了 → 下单半分钟到两分钟就整单退款。
+// 最后一条腿也拒，链自然走完退款，不会多烧。
+const REFUSAL_PATTERNS: RegExp[] = [
+  /violate.{0,20}usage policy/i,
+  /unable to respond to this request/i,
+  /\brefusal\b/i,                        // stop_reason 原文
+  /high risk/i,                          // Kimi 内容风控 400
+];
+
 // 明确「不是配额」的错误：这些词出现时，即便文本里混进了上面某个词也不换腿。
-// error_max_turns 是书写太长撞轮数上限，high risk 是 Kimi 内容风控——
-// 两者换腿重跑必然重蹈覆辙。
+// error_max_turns 是书写太长撞轮数上限，换腿重跑必然重蹈覆辙。
 const NOT_QUOTA_PATTERNS: RegExp[] = [
   /error_max_turns/i,
-  /high risk/i,
 ];
 
 export function shouldTryNextLeg(error: string | undefined | null): boolean {
   const s = String(error ?? "");
   if (!s) return false;
   if (NOT_QUOTA_PATTERNS.some((re) => re.test(s))) return false;
+  if (REFUSAL_PATTERNS.some((re) => re.test(s))) return true;
   if (MODEL_REJECTED_PATTERNS.some((re) => re.test(s))) return true;
   return QUOTA_PATTERNS.some((re) => re.test(s));
 }
