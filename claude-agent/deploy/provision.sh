@@ -31,9 +31,10 @@ mkdir -p /opt/claude-agent/workspace
 chown -R claude-agent:claude-agent /opt/claude-agent
 
 echo "▸ systemd unit"
-# 单元文件里的 /run/user/997 按本机实际 uid 替换（写书靠 systemd-run --user 起单元）。
+# 单元文件里的 /run/user/997、user@997.service 按本机实际 uid 替换（写书靠 systemd-run --user 起单元）。
 UID_CA="$(id -u claude-agent)"
-sed "s#/run/user/997#/run/user/${UID_CA}#g" "$HERE/claude-agent.service" > /etc/systemd/system/claude-agent.service
+sed -e "s#/run/user/997#/run/user/${UID_CA}#g" -e "s#user@997\.service#user@${UID_CA}.service#g" \
+  "$HERE/claude-agent.service" > /etc/systemd/system/claude-agent.service
 chmod 644 /etc/systemd/system/claude-agent.service
 systemctl daemon-reload
 systemctl enable claude-agent >/dev/null

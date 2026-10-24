@@ -2,6 +2,10 @@
 Description=Claude Agent SDK web chat
 After=network-online.target
 Wants=network-online.target
+# 下面 ReadWritePaths 里的 /run/user/997 由用户管理器开机时才建；不等它，首启就
+# 226/NAMESPACE（2026-10-24 重启实测，靠 Restart=always 3 秒后才自愈）。
+After=user@997.service
+Wants=user@997.service
 
 [Service]
 Type=simple
