@@ -20,6 +20,11 @@ export const THREADS_DIR = join(STATE_DIR, "threads");
 // 每个 thread 一个稳定的落脚目录：Claude Code 按 cwd 存会话，resume 必须同一 cwd；
 // 也是 auto-memory 隔离区（每次开跑前清掉，见 adapters.ts）。
 export const CWD_ROOT = join(STATE_DIR, "cwd");
+// 每个 attempt 一个临时目录（TMPDIR / CLAUDE_CODE_TMPDIR）。不能用 /tmp：unit 开了 PrivateTmp，
+// 重启时 systemd 会删掉旧的私有 /tmp，而 KillMode=process 留下来的引擎还在用它——
+// 2026-10-25 r_oUYBcOsDaWON 写到第 12 章时 router 发版，之后每条 Bash 都报
+// "task output swap refused (tasks dir moved or linked)"。
+export const TMP_ROOT = join(STATE_DIR, "tmp");
 // 调用方没给 workdir 时的默认工作目录根。
 export const WORK_ROOT = process.env.WORK_ROOT ?? join(APP_ROOT, "work");
 
