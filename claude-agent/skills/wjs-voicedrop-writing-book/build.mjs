@@ -117,6 +117,12 @@ async function mergeLiveFields(b) {
     b.owner = live.owner;
     changed.push(`owner ← 线上（${live.owner}）`);
   }
+  // video（2026-10-26 起）**线上为准**：动画版做完由 motion-book skill 的 publish_video.mjs 合并进线上
+  // book.json（{url, publishedAt, duration}），工作目录这份永远不知道；不接回来的话修书一发就把标志抹掉。
+  if (live.video && typeof live.video === "object" && JSON.stringify(live.video) !== JSON.stringify(b.video)) {
+    b.video = live.video;
+    changed.push(`video ← 线上（${live.video.url || ""}）`);
+  }
   if (!changed.length) return;
   try { writeFileSync(join(workdir, "book.json"), JSON.stringify(b, null, 2) + "\n"); } catch {}
   for (const c of changed) console.log(`ok  ${c}`);
