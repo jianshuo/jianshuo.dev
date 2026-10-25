@@ -50,11 +50,13 @@ export const videoUnit = (slug: string) => `video-${slug}`;
 /** 只看事实做决定：已发布 → done；在做 → 进度；排队 → 第几位；失败冷却中 → failed；不触发 → none；否则入队。 */
 export function decideVideo(slug: string, f: VideoFacts): VideoDecision {
   if (f.published) return { kind: "answer", status: 200, body: { state: "done", url: videoUrl(slug) } };
-  if (f.running) return { kind: "answer", status: 202, body: { state: f.state?.state && f.state.state !== "failed" && f.state.state !== "done" ? f.state.state : "booting",
-    step: f.state?.step ?? "开机中", startedAt: f.state?.startedAt, updatedAt: f.state?.updatedAt } };
+  const fresh = f.state?.state && f.state.state !== "failed" && f.state.state !== "done";   // state.json 还是上一轮的就不拿它的步骤
+  if (f.running) return { kind: "answer", status: 202, body: { state: fresh ? f.state!.state : "booting",
+    step: (fresh && publicText(f.state!.step)) || "开机中", startedAt: f.state?.startedAt, updatedAt: f.state?.updatedAt } };
   if (f.queued !== null) return { kind: "answer", status: 202, body: { state: "queued", position: f.queued } };
   const failedRecently = f.state?.state === "failed" && f.now - (f.state.updatedAt ?? 0) < FAIL_COOLDOWN_MS;
-  if (failedRecently) return { kind: "answer", status: 200, body: { state: "failed", step: f.state!.step, error: f.state!.error,
+  // 失败只给一句步骤（过 publicText），不给 error / logTail——那里面是内部日志
+  if (failedRecently) return { kind: "answer", status: 200, body: { state: "failed", step: publicText(f.state!.step) || "这次没做成",
     retryAfter: (f.state!.updatedAt ?? 0) + FAIL_COOLDOWN_MS } };
   if (!f.trigger) return { kind: "answer", status: 200, body: { state: "none" } };
   return { kind: "enqueue" };
@@ -75,12 +77,21 @@ async function bookReady(slug: string): Promise<{ ok: boolean; title?: string; w
     return left ? { ok: false, why: `还有 ${left} 章没写完` } : { ok: true, title: String(b.title ?? slug) };
   } catch (e: any) { return { ok: false, why: `读书架失败：${e?.message ?? e}` }; }
 }
-/** 对外日志（run_book.sh 写的 events.json）：只给时间＋一句步骤；再过滤一道路径/IP，防哪天脚本漏写进去。
- *  路径至少两段才删（「13/13 章」这种分数不动），段里可以有中文。 */
+/** 对外文字的最后一道过滤：删路径（至少两段才算，「13/13 章」这种分数不动，段里可以有中文）、IP、UUID（机器 ID）、内部文件名。
+ *  2026-10-25 第一单的旧脚本把 cloud.log 尾巴写进了 error，带着服务器路径和机器 ID 漏到了公开接口上。 */
+export function publicText(s: unknown): string {
+  return String(s ?? "")
+    .replace(/(?:~|\.{0,2})?(?:\/[^\s/，。：；、（）《》"'“”]+){2,}\/?/g, "")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
+    .replace(/[\w.-]+\.(?:log|err|json|jsonl|sh|mjs|js|py|txt|env)\b/gi, "")
+    .replace(/（\s*[/／、,，\s]*）/g, "").replace(/\s{2,}/g, " ").trim().slice(0, 200);
+}
+/** 对外日志（run_book.sh 写的 events.json）：只给时间＋一句步骤，每句再过 publicText。 */
 export function publicEvents(raw: unknown): { t: number; text: string }[] {
   if (!Array.isArray(raw)) return [];
   return raw.slice(-300).filter((e: any) => e && typeof e.text === "string" && Number.isFinite(e.t))
-    .map((e: any) => ({ t: Number(e.t), text: e.text.replace(/(?:~|\.{0,2})?(?:\/[^\s/，。：；、（）《》"'“”]+){2,}\/?/g, "").replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "").replace(/\s{2,}/g, " ").trim().slice(0, 200) }))
+    .map((e: any) => ({ t: Number(e.t), text: publicText(e.text) }))
     .filter((e) => e.text);
 }
 async function readEvents(slug: string) {

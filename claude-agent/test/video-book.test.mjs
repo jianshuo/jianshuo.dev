@@ -17,6 +17,14 @@ test("对外日志：只留时间和文字，路径、IP 被滤掉，非法条�
   assert.deepEqual(publicEvents("not array"), []);
 });
 
+test("2026-10-25 真实泄露的旧 state.json：答复里没有路径、文件名、机器 ID、error", () => {
+  const leaked = { state: "failed", step: "没有做出 HTML（看 cloud.log / claude.err）", updatedAt: 9, instance: "2e5452bc-b5d4-4d94-b3d9-c5ab18cdc226",
+    error: "没有发布 === 结束，产物 /opt/claude-agent/motion-book/books/us-wars-markets === 已销毁 2e5452bc-b5d4-4d94-b3d9-c5ab18cdc226" };
+  const s = JSON.stringify(decideVideo("us-wars-markets", { published: false, running: false, queued: null, trigger: true, now: 10, state: leaked }));
+  for (const bad of ["/opt", "cloud.log", "claude.err", "2e5452bc", "error", "instance"]) assert.equal(s.includes(bad), false, bad);
+  assert.match(s, /没有做出 HTML/);
+});
+
 test("logTail（内部日志尾巴，可能带路径）不会出现在失败答复里", () => {
   const d = decideVideo("x", { published: false, running: false, queued: null, trigger: true, now: 10, state: { state: "failed", step: "开机超时", updatedAt: 9, logTail: "/opt/claude-agent/secrets.env" } });
   assert.equal(JSON.stringify(d).includes("logTail"), false); assert.equal(JSON.stringify(d).includes("/opt"), false);
