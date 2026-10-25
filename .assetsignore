@@ -8,3 +8,4 @@ claude-agent/
 .claude/
 paint/
 codex-agent/
+engine-router/

@@ -1,0 +1,37 @@
+[Unit]
+Description=engine-router - quota-aware scheduler for Codex / Claude Code / Kimi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=engine-router
+Group=engines
+WorkingDirectory=/opt/engine-router
+Environment=NODE_ENV=production
+Environment=HOME=/opt/engine-router
+# 不用 EnvironmentFile：密钥只由 router 自己读 /opt/engine-router/.env（reload 不用重启），
+# 也就不会经由环境变量漏给引擎 CLI 跑的 shell 命令。
+ExecStart=/usr/bin/node /opt/engine-router/dist/server.js
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+# 发版重启只杀 server：runner（detached 子进程，一个 attempt 一个）照跑，跑完写结果文件，
+# 新 server 启动后从 state/runs/ 接手。
+KillMode=process
+
+# 不开 TCP 端口：只听 /run/engine-router/router.sock，属组 engines（caddy 与本机调用方在组里）。
+RuntimeDirectory=engine-router
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0007
+
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+# 写书迁移（P4）时在这里加调用方的工作目录，例如 /opt/claude-agent/workspace
+ReadWritePaths=/opt/engine-router
+
+[Install]
+WantedBy=multi-user.target

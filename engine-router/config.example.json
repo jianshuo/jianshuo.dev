@@ -1,0 +1,34 @@
+{
+  "engines": {
+    "claude": {
+      "accounts": [
+        { "id": "claude-1", "token_env": "CLAUDE_TOKEN_1" },
+        { "id": "claude-2", "token_env": "CLAUDE_TOKEN_2", "disabled": true }
+      ]
+    },
+    "codex": {
+      "accounts": [{ "id": "codex-1", "codex_home": "/opt/engine-router/accounts/codex-1", "disabled": true }]
+    },
+    "kimi": {
+      "accounts": [{ "id": "kimi-1", "key_env": "KIMI_KEY_1", "base_url": "https://api.kimi.com/coding/" }]
+    }
+  },
+  "models": {
+    "claude": { "best": "claude-opus-4-8", "fast": "claude-haiku-4-5" },
+    "codex": { "best": "gpt-6-astra", "fast": "gpt-6-astra" },
+    "kimi": { "best": "k3", "fast": "k3" }
+  },
+  "limits": { "cap_5h": 85, "cap_7d": 92, "weekly_slack": 10, "probe_every_s": 300, "claude_probe_every_s": 900 },
+  "policies": {
+    "default": { "engines": "headroom", "keys": "headroom" }
+  },
+  "estimates": {
+    "book": {
+      "kimi": { "d5h": 20, "d7d": 4 },
+      "codex": { "d5h": 30, "d7d": 5 },
+      "claude": { "d5h": 25, "d7d": 4 }
+    }
+  },
+  "concurrency": { "global_text": 2, "global_image": 3, "per_account": 1 },
+  "portable": { "claude_family": true, "codex": false }
+}

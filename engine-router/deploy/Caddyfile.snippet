@@ -1,0 +1,13 @@
+# 加进 /etc/caddy/Caddyfile 的 lab.jianshuo.dev { … } 块里（不开新端口、不加新域名）。
+#
+# 1) basic_auth 的豁免名单加上 /router/v1/*（API 用 Bearer token 鉴权）；
+#    状态页 /router/ 仍在 basic_auth 后面：
+#	@needsauth not path /api/book /api/book/* /jd9KudMVNA.txt /router/v1/*
+#
+# 2) 加反代（handle_path 会剥掉 /router 前缀；比 catch-all 的 handle 更具体，自动排在前面）：
+	redir /router /router/
+	handle_path /router/* {
+		reverse_proxy unix//run/engine-router/router.sock {
+			flush_interval -1
+		}
+	}
