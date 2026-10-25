@@ -532,7 +532,9 @@ async function buildShelf(env) {
     // 归属口径与 setHidden 一致：owner 缺失的老书算发布者的。
     return { slug, title, author, category, hidden: b.hidden === true, owner: b.owner || PUBLISHER_SCOPE,
              cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
-             chapters, createdAt: Number(b.createdAt) || 0, subtitle, intro, toc };
+             chapters, createdAt: Number(b.createdAt) || 0, subtitle, intro, toc,
+             // 动画版（2026-10-26）：motion-book 的 publish_video.mjs 发布后在 book.json 写 video.url
+             ...(b.video && typeof b.video.url === 'string' ? { video: b.video.url } : {}) };
   }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
   books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
@@ -616,6 +618,7 @@ async function collectBooks(env, viewerScope = '', waitUntil) {
     return { slug: b.slug, title: b.title, main, sub, c, c2, author: b.author, category: b.category,
              cover: b.cover, coverAt: b.coverAt, chapters: b.chapters, createdAt: b.createdAt,
              ...(b.hidden ? { hidden: true } : {}),
+             ...(b.video ? { video: b.video } : {}),
              ...(mine ? { mine: true } : {}) };
   });
 }
@@ -774,8 +777,12 @@ async function index(env, waitUntil) {
     const face = b.cover
       ? `<img src="${href}cover.jpg?v=${b.coverAt}" alt="" loading="lazy">`
       : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
+    // 有动画版：封面正中一个大播放键，点它直进视频（a 里不能再套 a，用 span + 下面脚本里的委托点击）。
+    const play = b.video
+      ? `<span class="play" role="link" tabindex="0" aria-label="看动画版" data-video="${href}video/"><svg viewBox="0 0 30 34" aria-hidden="true"><path d="M3 2.5v29a2 2 0 0 0 3 1.7l22.6-14.5a2 2 0 0 0 0-3.4L6 .8A2 2 0 0 0 3 2.5z" fill="#fff"/></svg></span>`
+      : '';
     return `<a class="cell" href="${href}" title="${esc(b.title)}" data-cat="${esc(b.category)}" data-slug="${esc(b.slug)}" data-author="${esc(b.author)}">` +
-      `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i></span>` +
+      `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i>${play}</span>` +
       `<span class="cap"><b>${esc(b.main)}</b><small>${metaLine(b)}</small></span></a>`;
   };
   // 第一格固定是「写书」入口（App 里开 BookWritingSheet，网页上进 VoiceDrop 落地页）。
@@ -828,6 +835,13 @@ async function index(env, waitUntil) {
     background:linear-gradient(90deg,rgba(0,0,0,.36) 0,rgba(0,0,0,.10) 55%,rgba(255,255,255,.12) 100%)}
   .edge{position:absolute;inset:0 0 0 auto;width:3px;pointer-events:none;
     background:repeating-linear-gradient(180deg,rgba(255,255,255,.85) 0 1px,rgba(214,202,180,.9) 1px 2px)}
+  /* 动画版播放键：同动画版播放器的毛玻璃大圆键，按封面宽度的百分比，任何屏宽比例一致。 */
+  .play{position:absolute;left:50%;top:50%;width:46%;aspect-ratio:1;transform:translate(-50%,-50%);
+    border-radius:50%;background:rgba(30,30,30,.5);border:1px solid rgba(255,255,255,.3);
+    -webkit-backdrop-filter:blur(12px) saturate(1.4);backdrop-filter:blur(12px) saturate(1.4);
+    box-shadow:0 6px 20px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .1s}
+  .play:active{transform:translate(-50%,-50%) scale(.94)}
+  .play svg{width:36%;margin-left:7%}
   .coverW{background:#F3ECE0;border:1.5px dashed #CFC0A6;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px}
   .plus{width:34px;height:34px;border-radius:50%;background:#E5392E;color:#fff;
@@ -885,6 +899,11 @@ ${rows.join('\n')}
   var tabs=document.querySelectorAll('.tabs a');
   var shelf=document.getElementById('shelf');
   var form=document.getElementById('search'),q=document.getElementById('q'),qclr=document.getElementById('qclr');
+  // 封面上的动画版播放键：截下这次点击，直进视频，不进目录页。
+  function goVideo(e){var p=e.target.closest&&e.target.closest('.play');if(!p)return;
+    if(e.type==='keydown'&&e.key!=='Enter'&&e.key!==' ')return;
+    e.preventDefault();e.stopPropagation();location.href=p.getAttribute('data-video');}
+  shelf.addEventListener('click',goVideo);shelf.addEventListener('keydown',goVideo);
   var all=[].slice.call(shelf.querySelectorAll('a.cell'));
   var write=all.shift();                       // 第一格「写书」入口，任何类目下都在
   var cat='';                                  // 当前类目 tab
