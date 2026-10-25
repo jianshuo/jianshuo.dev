@@ -47,6 +47,11 @@ export interface Config {
   modelRejectedCooldownMs: number;
   /** group 粘性（某组一旦走了 Seedream，后续 auto 单同走 Seedream）的保留期 */
   groupTtlMs: number;
+  /**
+   * engine-router（2026-10-25）：配了就由它决定每张图用 Codex 还是 Seedream（额度统一裁决），
+   * 没配 / 连不上就走本地老逻辑。url 形如 unix:/run/engine-router/router.sock。
+   */
+  router?: { url: string; token: string };
 }
 
 export interface SeedreamConfig {
@@ -121,5 +126,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     quotaCooldownMs: Number(env.QUOTA_COOLDOWN_MS ?? 30 * 60 * 1000),
     modelRejectedCooldownMs: Number(env.MODEL_REJECTED_COOLDOWN_MS ?? 30 * 60 * 1000),
     groupTtlMs: Number(env.GROUP_TTL_MS ?? 7 * 24 * 3600 * 1000),
+    router: env.ROUTER_URL && env.ROUTER_TOKEN ? { url: env.ROUTER_URL, token: env.ROUTER_TOKEN } : undefined,
   };
 }

@@ -10,6 +10,7 @@ import { Worker } from "../src/worker.ts";
 import { loadConfig } from "../src/config.ts";
 import { isQuotaExhausted, isRateLimited, quotaResetAt, isModelRejected } from "../src/engine.ts";
 import { seedreamSize } from "../src/seedream.ts";
+import type { EngineRouter, DecideRequest, RouterDecision, CompleteRequest } from "../src/router.ts";
 
 // ── Codex 额度打满 → 自动降级火山方舟 Seedream（2026-10-02）─────────────────
 // 那天 Plus 的 5h 窗口被打满，paint 每一单都 429 usage_limit_reached，全线出不了图。
@@ -92,15 +93,31 @@ async function fakeArk(t: any) {
   return { calls, baseUrl: `http://127.0.0.1:${(srv.address() as any).port}/api/v3` };
 }
 
-async function setup(env: Record<string, string> = {}) {
+async function setup(env: Record<string, string> = {}, router?: EngineRouter) {
   const dataDir = await mkdtemp(join(tmpdir(), "paint-seedream-"));
   const cfg = loadConfig({
     API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE,
     CONVERT_BIN: FAKE_CONVERT, ...env,
   } as any);
   const store = new JobStore(cfg.jobsDir);
-  const worker = new Worker(store, new EventHub(), cfg);
+  const worker = new Worker(store, new EventHub(), cfg, router);
   return { cfg, store, worker };
+}
+
+/** 假 engine-router：按脚本回答 decide，记下所有 decide / complete。 */
+function fakeRouter(answer: (r: DecideRequest) => RouterDecision | undefined) {
+  const decided: DecideRequest[] = [];
+  const completed: { leaseId: string; res: CompleteRequest }[] = [];
+  const router: EngineRouter = {
+    async decide(r) {
+      decided.push(r);
+      return answer(r);
+    },
+    async complete(leaseId, res) {
+      completed.push({ leaseId, res });
+    },
+  };
+  return { router, decided, completed };
 }
 
 function job(id: string, over: Partial<Job> = {}): Job {
@@ -402,4 +419,91 @@ test("透明图不降级（方舟没有透明背景）", async (t) => {
   const j = await settle(store, "tp");
   assert.equal(j?.status, "failed");
   assert.equal(ark.calls.length, 0);
+});
+
+// ── engine-router 统一裁决（2026-10-25）──────────────────────────────────────
+// 配了 router 就由它决定 codex 还是 seedream；router 出问题（decide 返回 undefined）退回本地逻辑。
+
+test("router 说给 seedream：不碰 codex，直接方舟出图；回报 ok + engineUsed=seedream", async (t) => {
+  const ark = await fakeArk(t);
+  const fr = fakeRouter(() => ({ leaseId: "l_1", engine: "seedream", reason: "router lease l_1 → seedream/ark-1" }));
+  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
+  await store.create(job("r1", { prompt: "a cat" }));
+  worker.enqueue("r1");
+  const j = await settle(store, "r1");
+  assert.equal(j?.status, "done");
+  assert.equal(j?.engine, "seedream");
+  assert.equal(j?.attempts, 1, "codex 一次都没跑");
+  assert.match(j?.fallbackReason ?? "", /router lease l_1/);
+  assert.deepEqual(fr.decided[0].require, []);
+  assert.equal(fr.decided[0].force, false);
+  assert.deepEqual(fr.completed, [{ leaseId: "l_1", res: { ok: true, engineUsed: "seedream", codexError: undefined } }]);
+});
+
+test("router 说给 codex，codex 撞额度 → 照旧降级 seedream；回报带 codex 报错原文（router 据此冷却）", async (t) => {
+  const ark = await fakeArk(t);
+  const fr = fakeRouter(() => ({ leaseId: "l_2", engine: "codex", reason: "router lease l_2 → gpt-image/codex-1" }));
+  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
+  await store.create(job("r2")); // prompt 含 QUOTA
+  worker.enqueue("r2");
+  const j = await settle(store, "r2");
+  assert.equal(j?.status, "done");
+  assert.equal(j?.engine, "seedream");
+  assert.equal(fr.completed[0].res.engineUsed, "seedream");
+  assert.match(fr.completed[0].res.codexError ?? "", /usage limit|usage_limit/i);
+});
+
+test("router 说谁都不合格 → engine_unavailable 失败，不跑任何引擎，不回报", async (t) => {
+  const ark = await fakeArk(t);
+  const fr = fakeRouter(() => ({ leaseId: null, engine: null, reason: "router: no engine available (seedream/ark-1: daily cap reached)" }));
+  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
+  await store.create(job("r3", { prompt: "a cat" }));
+  worker.enqueue("r3");
+  const j = await settle(store, "r3");
+  assert.equal(j?.status, "failed");
+  assert.equal(j?.error?.code, "engine_unavailable");
+  assert.match(j?.error?.message ?? "", /daily cap/);
+  assert.equal(ark.calls.length, 0);
+  assert.equal(fr.completed.length, 0);
+});
+
+test("router 挂了（decide 返回 undefined）→ 退回本地老逻辑：codex 额度满照样降级 seedream", async (t) => {
+  const ark = await fakeArk(t);
+  const fr = fakeRouter(() => undefined);
+  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
+  await store.create(job("r4"));
+  worker.enqueue("r4");
+  const j = await settle(store, "r4");
+  assert.equal(j?.status, "done");
+  assert.equal(j?.engine, "seedream");
+  assert.match(j?.fallbackReason ?? "", /codex quota/);
+  assert.equal(fr.completed.length, 0);
+});
+
+test("租什么由请求决定：显式 codex / 透明图 → 只租 gpt-image 且 force；显式 seedream / group 粘性 → 只租 seedream", async (t) => {
+  const ark = await fakeArk(t);
+  const fr = fakeRouter((r) => ({ leaseId: "l", engine: r.require[0] === "seedream" ? "seedream" : "codex", reason: "x" }));
+  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
+  await store.create(job("e1", { prompt: "a cat", enginePref: "codex" }));
+  worker.enqueue("e1");
+  await settle(store, "e1");
+  await store.create(job("e2", { prompt: "a cat", params: { size: "1024x1024", format: "png", quality: "high", transparent: true } }));
+  worker.enqueue("e2");
+  await settle(store, "e2");
+  await store.create(job("e3", { prompt: "a cat", enginePref: "seedream" }));
+  worker.enqueue("e3");
+  await settle(store, "e3");
+  await worker.groups.stick("book-y");
+  await store.create(job("e4", { prompt: "a cat", group: "book-y" }));
+  worker.enqueue("e4");
+  await settle(store, "e4");
+  assert.deepEqual(
+    fr.decided.map((d) => [d.require, d.force]),
+    [
+      [["gpt-image"], true],
+      [["gpt-image"], true],
+      [["seedream"], true],
+      [["seedream"], false],
+    ],
+  );
 });

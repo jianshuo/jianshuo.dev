@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { parseLegs, availableLegs, shouldTryNextLeg, apiErrorFromMessage, classifyResult, type BookLeg } from "./book-legs.js";
 import { APP_ROOT, CODEX_BIN, CODEX_HOME, HOME, MODEL, WORKSPACE } from "./env.js";
+import { followRun, submitRun } from "./router-client.js";
 
 const BOOK_CODEX_MODEL = process.env.BOOK_CODEX_MODEL ?? ""; // 空 = 用该链 config.toml 的默认模型
 // 兜底防挂死，写整本书要给足。三条腿同用：codex 腿 SIGKILL 子进程，claude/kimi 腿
@@ -200,7 +201,63 @@ export function resumeAfterRestartHint(jobId?: string): string {
   );
 }
 
-export async function runBookEngine(prompt: string, onThread?: (id: string) => void): Promise<CodexOutcome> {
+// --- 走 engine-router（2026-10-25）-------------------------------------------
+//
+// BOOK_ENGINE_ROUTER=1：整本书交给同机的 engine-router（Unix socket，见 engine-router/README）。
+// router 统一管 Codex / Claude 订阅（两个账号）/ Kimi 的额度：挑余量最大、且没超周配速的账号，
+// 跑到一半撞墙自动换账号重跑（判据就是本仓 book-legs 搬过去的那套）。本文件里的三腿链
+// 保留作回退：开关关掉，或 router 根本连不上（提交就失败）时自动走老路。
+// 契约不变：返回 { ok, threadId, reply, error }，book-runner 的退款/告警/登记全部照旧。
+export const BOOK_ENGINE_ROUTER = /^(1|true|on|yes)$/i.test(process.env.BOOK_ENGINE_ROUTER ?? "");
+export const BOOK_ENGINE_LABEL = BOOK_ENGINE_ROUTER ? "router" : BOOK_LEGS.join("→");
+
+export type BookEngineOpts = {
+  key?: string; // 幂等键：book-runner 重启后重提交会接回同一个 router 任务，不会两个引擎写同一本书
+  taskClass?: "book" | "revise";
+};
+
+async function runViaRouter(prompt: string, onThread: ((id: string) => void) | undefined, opts: BookEngineOpts): Promise<CodexOutcome | null> {
+  let run: any;
+  try {
+    run = await submitRun({
+      prompt:
+        prompt +
+        `\n\n补充：skill 里说的「工作目录 book-<slug>」一律用绝对路径 ${WORKSPACE}/book-<slug>。`,
+      task_class: opts.taskClass ?? "book",
+      workdir: WORKSPACE,
+      context_dirs: [SKILLS_DIR],
+      env: process.env.PAINT_API_TOKEN ? { PAINT_API_TOKEN: process.env.PAINT_API_TOKEN } : {},
+      budget: { max_turns: BOOK_MAX_TURNS, timeout_ms: BOOK_TIMEOUT_MS, size: "large" },
+      priority: "user",
+      continuity: "none", // 每轮都是新会话，文件是真源（与老路「不 resume」一致）
+      resume_hint: RESUME_HINT.trim(),
+      idempotency_key: opts.key,
+    });
+  } catch (e: any) {
+    // router 连不上（服务没起 / socket 不在 / token 错）：退回老的三腿链，书照写
+    console.error(`[book] router 提交失败，退回三腿链：${e?.message ?? e}`);
+    return null;
+  }
+  const threadId = `router:${run.run_id}`;
+  onThread?.(threadId);
+  console.log(`[book] router run=${run.run_id} key=${opts.key ?? "-"}`);
+  try {
+    const out = await followRun(run.run_id, (ev) => {
+      if (ev.type === "started") console.log(`[book] router attempt ${ev.attempt} → ${ev.account}`);
+      if (ev.type === "switched") console.log(`[book] router 换账号：${ev.from} 用不了 → ${String(ev.reason ?? "").slice(0, 120)}`);
+      if (ev.type === "queued" && ev.reason) console.log(`[book] router 排队：${String(ev.reason).slice(0, 160)}`);
+    });
+    return { ok: out.ok, threadId, reply: out.reply ?? "", error: out.ok ? "" : out.error || `router run ${out.status}` };
+  } catch (e: any) {
+    return { ok: false, threadId, reply: "", error: `router: ${e?.message ?? e}` };
+  }
+}
+
+export async function runBookEngine(prompt: string, onThread?: (id: string) => void, opts: BookEngineOpts = {}): Promise<CodexOutcome> {
+  if (BOOK_ENGINE_ROUTER) {
+    const out = await runViaRouter(prompt, onThread, opts);
+    if (out) return out;
+  }
   // 凭据缺失的腿直接跳过，别浪费一次必败的重跑。
   const legs = availableLegs(BOOK_LEGS, {
     kimi: Boolean(BOOK_ANTHROPIC_BASE_URL),

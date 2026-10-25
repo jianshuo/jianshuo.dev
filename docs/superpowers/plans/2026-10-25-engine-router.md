@@ -1,6 +1,11 @@
 # engine-router：Tokyo VPS 上的 AI 引擎调度器（计划）
 
-> 2026-10-25 · 状态：P0–P3 完成，四个账号（claude-1、claude-2、codex-1、kimi-1）全部在线（`engine-router/`，见其 README）；P4/P5 待开工
+> 2026-10-25 · 状态：P0–P5 完成并在生产上运行——写书/修书、paint 出图都已切到 engine-router（`engine-router/`，见其 README「接入方」）。
+
+## P4 / P5 落地（2026-10-25）
+
+- **P4 写书**：按计划走 router 执行。`book-engine.ts` 加 `BOOK_ENGINE_ROUTER` 开关（关掉即回三腿链，router 连不上也自动回退），book-runner 只多传幂等键。router 侧为此加了：按账号的 `env`（Kimi 1M 上下文）、幂等键遇失败/取消的旧任务允许重提、书库 ACL、skill 软链、发布凭据副本。上线前以 book-runner 身份经 router 在书库里跑了环境自检（skill、build.mjs status、写书库、paint 鉴权），claude / codex / kimi 三家全过；再用部署后的 `runBookEngine` 跑通一次真实提交。
+- **P5 paint——与计划不同，改成租约**：计划写的是把 gpt-image-2 和 Seedream 的执行搬进 router。实际改为 router 只做裁决、paint 照旧执行（原因见 README「为什么 paint 用租约」：执行层成熟、搬家等于重写；gpt-image-2-skill 与 codex CLI 的 auth.json 格式不兼容）。router 新增 `POST /v1/leases` / `complete`；paint worker 开画前租、画完回报，router 不可用时退回本地老逻辑。上线后真实出图两张，日志可见「lease → gpt-image/codex-1 → complete ok」。
 
 ## 进度（2026-10-25）
 

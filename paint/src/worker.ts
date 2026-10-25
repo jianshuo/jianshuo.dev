@@ -10,6 +10,7 @@ import { seedreamSize, refImageDataUri, seedreamGenerate, finalizeImage } from "
 import { deliver, type CallbackPayload } from "./callback.js";
 import { buildXmp, embedXmp } from "./xmp.js";
 import { GroupStore } from "./groups.js";
+import { httpRouter, type EngineRouter, type RouterDecision } from "./router.js";
 
 const EXT: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
 
@@ -54,8 +55,11 @@ export class Worker {
   codexBlockedReason = "";
   readonly groups: GroupStore;
 
-  constructor(private store: JobStore, private hub: EventHub, private cfg: Config) {
+  readonly router?: EngineRouter;
+
+  constructor(private store: JobStore, private hub: EventHub, private cfg: Config, router?: EngineRouter) {
     this.groups = new GroupStore(join(cfg.dataDir, "groups.json"), cfg.groupTtlMs);
+    this.router = router ?? (cfg.router ? httpRouter(cfg.router.url, cfg.router.token) : undefined);
   }
 
   enqueue(id: string): void {
@@ -152,11 +156,38 @@ export class Worker {
         // 风格一致性：这组已经有图是 seedream 出的，别再混进 codex 画风
         runCodex = false;
         fallbackReason = `group "${job.group}" sticky on seedream since ${sticky.since}`;
-      } else if (Date.now() < this.codexBlockedUntil) {
-        // 冷却中：刚被真额度/模型全拒打回来过，重置前别再白打一枪 codex
-        runCodex = false;
-        fallbackReason = `codex cooldown until ${new Date(this.codexBlockedUntil).toISOString()} (${this.codexBlockedReason})`;
       }
+    }
+
+    // engine-router 统一裁决（2026-10-25，配了 ROUTER_URL 才有）：它同时看着写书和出图对同一个
+    // ChatGPT 账号的消耗，按红线/周配速/冷却/Seedream 日上限决定这张图给谁。
+    //  - 已定死要 seedream（显式 / group 粘性）→ 只租 seedream；
+    //  - 只能 codex（显式 / 透明图 / 没有可降级的 seedream）→ 只租 gpt-image；
+    //  - 其余让 router 按策略挑（缺省 gpt-image 优先，不合格给 seedream）。
+    // 显式指定或无路可降级时 force：配速只用来把活挪给替代引擎，没有替代就别因配速拦图。
+    // router 出任何问题 decide 返回 undefined → 走下面的本地冷却老逻辑。
+    let lease: RouterDecision | undefined;
+    let codexError: EngineError | undefined;
+    if (this.router) {
+      const onlyCodex = job.params.transparent || pref === "codex" || !canFallback;
+      const require: ("gpt-image" | "seedream")[] = !runCodex ? ["seedream"] : onlyCodex ? ["gpt-image"] : [];
+      lease = await this.router.decide({ require, force: pref !== "auto" || (runCodex && onlyCodex), jobId: id });
+      if (lease) console.log(`[worker] job ${id}: ${lease.reason}`);
+    }
+    if (lease && !lease.engine) {
+      if (job.inputPath) await unlink(job.inputPath).catch(() => {});
+      await this.store.update(id, { engine: runCodex ? "codex" : "seedream", fallbackReason: lease.reason });
+      await this.fail(job, { code: "engine_unavailable", message: lease.reason }, 0);
+      return;
+    }
+    if (lease?.engine === "seedream" && runCodex) {
+      runCodex = false;
+      fallbackReason = lease.reason;
+    }
+    if (!lease && runCodex && canFallback && Date.now() < this.codexBlockedUntil) {
+      // 本地冷却（只在没有 router 时用）：刚被真额度/模型全拒打回来过，重置前别再白打一枪 codex
+      runCodex = false;
+      fallbackReason = `codex cooldown until ${new Date(this.codexBlockedUntil).toISOString()} (${this.codexBlockedReason})`;
     }
 
     if (runCodex) {
@@ -194,6 +225,7 @@ export class Worker {
       }
 
       if (!ok) {
+        codexError = error; // 回报给 router：额度类会让它冷却这个账号（对写书也生效）
         // 冷却是关于 codex 本身的事实，不论这单的 pref 都记下（影响的只是之后的 auto 单）
         if (isQuotaExhausted(error)) {
           const until = quotaResetAt(error) ?? Date.now() + this.cfg.quotaCooldownMs;
@@ -227,6 +259,18 @@ export class Worker {
 
     // 输入文件要等重试全部结束再清（edit 的第二次尝试 / seedream 降级还要用它）
     if (job.inputPath) await unlink(job.inputPath).catch(() => {});
+
+    // 回报 router：释放预留；codex 撞墙就冷却它；实际走了 seedream 就记一张。尽力而为。
+    if (lease?.leaseId && this.router) {
+      await this.router.complete(lease.leaseId, {
+        ok,
+        engineUsed: engine,
+        // detail 里才有 usage_limit_reached / resets_at 这些原话——router 靠它分辨 5h 还是周额度、冷却多久
+        codexError: codexError
+          ? `${codexError.code}: ${codexError.message}${codexError.detail ? " " + String(typeof codexError.detail === "string" ? codexError.detail : JSON.stringify(codexError.detail)).slice(0, 400) : ""}`
+          : undefined,
+      });
+    }
 
     if (!ok) {
       await this.store.update(id, { model, engine, fallbackReason });   // 失败也留痕：栽在哪个引擎/模型上

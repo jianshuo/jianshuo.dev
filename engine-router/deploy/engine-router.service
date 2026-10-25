@@ -30,8 +30,8 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes
-# 写书迁移（P4）时在这里加调用方的工作目录，例如 /opt/claude-agent/workspace
-ReadWritePaths=/opt/engine-router
+# 调用方的工作目录也要能写：写书的书库（ACL 给了 engine-router rwX，见 README「写书接入」）
+ReadWritePaths=/opt/engine-router /opt/claude-agent/workspace
 
 [Install]
 WantedBy=multi-user.target

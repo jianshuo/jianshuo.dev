@@ -17,6 +17,7 @@ import { HttpError, Runs, eventsFile, publicRun } from "./runs.js";
 import { renderStatus } from "./status-page.js";
 import { acctKey, ENGINE_NAMES } from "./config.js";
 import { quotaKey } from "./selector.js";
+import { Leases, publicLease } from "./leases.js";
 
 const MAX_BODY = 1024 * 1024;
 
@@ -138,7 +139,7 @@ async function streamEvents(req: IncomingMessage, res: ServerResponse, runs: Run
   res.end();
 }
 
-export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore) {
+export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore, leases: Leases = new Leases(pool)) {
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://router");
@@ -175,6 +176,20 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore)
         }
         if (req.method === "POST" && m[2] === "/cancel") return send(res, 200, publicRun((await runs.cancel(r.id))!));
       }
+      // 租约：router 只挑账号，调用方自己执行（paint 出图）。见 leases.ts。
+      if (req.method === "POST" && path === "/v1/leases") {
+        const { lease, selection } = leases.create(await readJson(req), caller);
+        if (lease) return send(res, 200, publicLease(lease));
+        return send(res, 200, {
+          lease_id: null,
+          engine: null,
+          eta: selection.waitUntil ? new Date(selection.waitUntil).toISOString() : null,
+          reasons: selection.candidates.map((c) => `${c.key}: ${c.reason}`),
+        });
+      }
+      m = /^\/v1\/leases\/([A-Za-z0-9_-]+)\/complete$/.exec(path);
+      if (m && req.method === "POST") return send(res, 200, { ok: true, released: publicLease(leases.complete(m[1], caller, await readJson(req))) });
+
       m = /^\/v1\/threads\/([A-Za-z0-9_-]+)$/.exec(path);
       if (m && req.method === "GET") {
         const t = await threads.get(m[1]);
@@ -215,7 +230,9 @@ async function main() {
   pool.onChange = () => runs.pump();
   pool.start();
   runs.start();
-  const server = createRouterServer(pool, runs, threads);
+  const leases = new Leases(pool);
+  leases.start();
+  const server = createRouterServer(pool, runs, threads, leases);
   if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
   server.listen(SOCKET_PATH, () => {
     chmodSync(SOCKET_PATH, 0o660); // 属组 engines：caddy 和本机调用方

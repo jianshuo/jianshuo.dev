@@ -59,6 +59,8 @@ group 画风粘性、整单期限——**全在服务端**（`src/worker.ts`）�
 
 冷却在进程内存里，服务重启即清；group 粘性落盘，重启不丢。
 
+**engine-router 裁决（2026-10-25 起生产）**：配了 `ROUTER_URL` / `ROUTER_TOKEN` 时，`auto` 单开画前先向 engine-router 租约（见 `engine-router/README.md`「接入方」）。router 同时看着写书和出图对同一个 ChatGPT 账号的消耗，按 5h 红线、**周配速**、冷却、Seedream 每日上限决定这张图给 Codex 还是 Seedream——所以即使 Codex 没打满，周用量超了配速线时 `auto` 单也会直接走 Seedream（`fallback_reason: router lease … → seedream/ark-1`）。上面第 1、2 条的本地冷却只在 router 不可用时生效。显式 `engine`、透明图、没有可降级的 Seedream 时租约带 force（只要 Codex 没真打满就照画）。router 说两个都不合格 → 失败，`error.code = engine_unavailable`，message 里有各引擎的原因。router 连不上（5 秒超时）→ 自动走本地老逻辑，出图不受影响。
+
 ### group：整本书一个画风
 
 Codex（gpt-image-2）和 Seedream 画风明显不同，一本书混着用会很难看。规则：
@@ -96,6 +98,7 @@ Codex（gpt-image-2）和 Seedream 画风明显不同，一本书混着用会很
 | `http_error` | Codex 侧错误（详见 message：401 登录失效 / 429 额度 / 400 …） | 401 要人工修 Codex 登录；额度类 `auto` 会自己降级，显式 `codex` 只能等或改 `auto` |
 | `seedream_error` | 方舟两个模型都失败（含内容审核 400） | 看 message；审核类改 prompt |
 | `seedream_unavailable` | 需要 Seedream 但不可用（透明图 / 没配 key） | 透明图只能等 Codex 额度 |
+| `engine_unavailable` | engine-router 判定 Codex 和 Seedream 现在都不合格（例：Codex 超配速 + Seedream 当日张数到顶） | 看 message 里的原因；等额度恢复，或显式 `engine` 强制 |
 | `postprocess_error` | Seedream 已出图，但本机 ImageMagick 裁缩/转格式失败（不会再换模型二次付费） | 服务端问题，报给维护者（`convert` 是否装了） |
 | `deadline_exceeded` | 超过整单期限（从提交算 8 分钟，含排队） | 一般是排队太长或 Codex 卡住；直接重提交 |
 | `no_output` / `parse_error` / `unknown` | 引擎异常 | 重试一次，仍失败报维护者 |

@@ -92,6 +92,19 @@ export class Pool {
     void this.save();
   }
 
+  /**
+   * 在飞预留：并发记在真实账号键上，额度预留记在额度键上（gpt-image/codex-1 → codex/codex-1）。
+   * run 和 lease 共用这一处。
+   */
+  reserve(conc: string, quota: string, est: Estimate, sign: 1 | -1): void {
+    const bump = (k: string, d5h: number, d7d: number, count: number) => {
+      const cur = this.inflight[k] ?? { count: 0, d5h: 0, d7d: 0 };
+      this.inflight[k] = { count: Math.max(0, cur.count + count), d5h: Math.max(0, cur.d5h + d5h), d7d: Math.max(0, cur.d7d + d7d) };
+    };
+    bump(conc, 0, 0, sign);
+    bump(quota, sign * est.d5h, sign * est.d7d, 0);
+  }
+
   learnedTable(): Record<string, Estimate> {
     return this.p.learned;
   }

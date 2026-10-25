@@ -52,6 +52,7 @@ export async function runClaude(spec: AttemptSpec, account: Account, secrets: Re
   } else {
     env.CLAUDE_CODE_OAUTH_TOKEN = secrets[account.token_env ?? ""] ?? "";
   }
+  Object.assign(env, account.env ?? {}); // 账号级配置最后盖（router 自己的配置，可信）
 
   const append =
     (spec.instructions ? spec.instructions + "\n\n" : "") +
@@ -161,7 +162,7 @@ export async function runCodex(spec: AttemptSpec, account: Account, emit: Emit):
   return new Promise((resolve) => {
     const child = spawn(CODEX_BIN, args, {
       cwd: spec.workdir,
-      env: { ...spec.env, ...process.env, CODEX_HOME: codexHome },
+      env: { ...spec.env, ...process.env, ...(account.env ?? {}), CODEX_HOME: codexHome },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let sessionId = spec.resumeSession ?? "";

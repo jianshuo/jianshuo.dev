@@ -277,9 +277,11 @@ export class Runs {
   async submit(raw: any, caller: string): Promise<{ run: RunRecord; existing: boolean }> {
     const req = normalizeRequest(raw);
     await mkdir(RUNS_DIR, { recursive: true });
+    // 幂等：同一个键还在排队/在跑/已写成 → 接回那一个（调用方进程重启后重提交，不会跑出两份）；
+    // 上次失败或取消了 → 允许重来（例如 VPS 重启把 runner 杀了，调用方续跑要的是新的一次）。
     if (req.idempotency_key) {
-      const prev = this.idem.get(`${caller}|${req.idempotency_key}`);
-      if (prev && this.runs.has(prev)) return { run: this.runs.get(prev)!, existing: true };
+      const prev = this.runs.get(this.idem.get(`${caller}|${req.idempotency_key}`) ?? "");
+      if (prev && prev.status !== "failed" && prev.status !== "cancelled") return { run: prev, existing: true };
     }
     let thread = req.thread_id ? await this.threads.get(req.thread_id) : undefined;
     if (req.thread_id && !thread) throw new HttpError(404, "thread not found");
@@ -395,15 +397,7 @@ export class Runs {
   }
 
   private reserve(r: RunRecord, a: Attempt | undefined, sign: 1 | -1): void {
-    if (!a) return;
-    const inf = this.pool.inflight;
-    const bump = (k: string, d5h: number, d7d: number, count: number) => {
-      const cur = inf[k] ?? { count: 0, d5h: 0, d7d: 0 };
-      inf[k] = { count: Math.max(0, cur.count + count), d5h: Math.max(0, cur.d5h + d5h), d7d: Math.max(0, cur.d7d + d7d) };
-    };
-    bump(a.key, 0, 0, sign);
-    if (a.quotaKey !== a.key) bump(a.quotaKey, sign * a.estimate.d5h, sign * a.estimate.d7d, 0);
-    else bump(a.key, sign * a.estimate.d5h, sign * a.estimate.d7d, 0);
+    if (a) this.pool.reserve(a.key, a.quotaKey, a.estimate, sign);
   }
 
   private async startAttempt(r: RunRecord, thread: NonNullable<Awaited<ReturnType<ThreadStore["get"]>>>, engine: EngineName, accountId: string, estimate: { d5h: number; d7d: number }): Promise<void> {

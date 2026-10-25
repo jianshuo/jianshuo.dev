@@ -41,6 +41,8 @@ POST /v1/runs/:id/cancel
 GET  /v1/threads/:id               会话里每一轮的问答
 GET  /v1/status                    账号池总览
 POST /v1/select                    干跑：现在会选谁、为什么（请求体同 /v1/runs）
+POST /v1/leases                    租约：只挑账号不执行 → { lease_id, engine, account } 或 { lease_id:null, reasons, eta }
+POST /v1/leases/:id/complete       回报 { ok, engine_used, error } → 释放预留；error 是额度类就冷却该账号
 POST /v1/admin/reload              重读 config.json + .env（admin）
 POST /v1/admin/probe               立刻探一轮额度（admin）
 ```
@@ -60,6 +62,19 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 | `shell:false` | 不派（codex 只靠 shell 干活） | 禁 Bash |
 
 **已知风险（代码审查 #7，暂未处理）**：引擎 CLI 和 router 是同一个系统用户，被注入的任务能读到 `/opt/engine-router/.env`（全部订阅 token 和 ROUTER_TOKENS）和 `accounts/*/auth.json`。别把不可信的内容（陌生网页、用户投稿）原样喂给 router 跑；根治方案是引擎改用单独的低权限用户、每次只拿被选中账号的凭据。
+
+## 接入方（2026-10-25 起生产）
+
+| 调用方 | 方式 | 开关 / 回退 |
+|---|---|---|
+| **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`） | lab `/opt/claude-agent/.env` 的 `BOOK_ENGINE_ROUTER=1`；改 0 下一单就回到三腿链（不用重启）。router 提交失败时自动退回三腿链 |
+| **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报 | `/opt/paint/.env` 的 `ROUTER_URL` / `ROUTER_TOKEN`；删掉 + restart paint 即回退。router 连不上（5 秒超时）自动走 paint 本地老逻辑 |
+
+两者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
+
+**写书环境**：engine CLI 以 engine-router 用户跑写书 skill，为此——书库 `/opt/claude-agent/workspace` 有 ACL（`u:engine-router:rwX` + 默认 ACL 让新文件两个用户都能读写）、unit 的 `ReadWritePaths` 含书库；`/opt/engine-router/.claude/skills` 软链到 lab 的 skill 目录（skill 里到处是 `~/.claude/skills/…`）；`/opt/engine-router/.config/voicedrop/credentials` 是发布账号凭据的副本（`build.mjs` 读它）。Kimi 账号在 config 里带 `env`（1M 上下文、effort high），模型 `k3[1m]`，与原写书 Kimi 腿一致。
+
+**为什么 paint 用租约而不是交给 router 执行**：paint 的执行层（8 分钟整单期限、模型候选、瞬时限流原地重试、安全拦截重试、ImageMagick 后处理、XMP 溯源）很成熟，整个搬进 router 等于重写；而且 gpt-image-2-skill 写 auth.json 的格式（epoch）和 codex CLI（RFC3339）不兼容，不能与 router 的链共用。租约让 router 仍是额度的唯一裁决者：Codex 出图和写书的消耗记在同一个账号上，互相看得见。出图策略 `image` = failover（gpt-image → seedream），Seedream 按张收费，每日上限 200（历史峰值 98/天）。显式 `engine:"codex"`/`"seedream"`、透明图、或没有可降级的 seedream 时用 force（配速只用来把活挪给替代引擎）。
 
 ## 账号
 

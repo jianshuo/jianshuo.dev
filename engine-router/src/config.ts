@@ -21,6 +21,9 @@ export type Account = {
   base_url?: string; // kimi：Anthropic 兼容端点
   weight?: number; // headroom 乘这个权重（缺省 1）
   daily_cap?: number; // seedream：每日张数上限
+  // 这个账号的引擎进程额外的环境变量（router 配置，不是调用方给的，最后覆盖）。
+  // 例：Kimi 的 1M 上下文 CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_CODE_MAX_CONTEXT_TOKENS、effort。
+  env?: Record<string, string>;
   disabled?: boolean;
 };
 
