@@ -401,7 +401,7 @@ const NAME={booting:'开机中',setup:'准备制作环境',making:'正在制作'
 function show(d){
   if(d.state==='done'){location.reload();return}
   const busy=d.state in NAME;
-  st.innerHTML=(busy?'<span class="dot"></span>':'')+({failed:'这次没做成',not_ready:'这本书还没写完',busy:'排队的书太多了',none:'还没开始'}[d.state]||NAME[d.state]||d.state);
+  st.innerHTML=(busy?'<span class="dot"></span>':'')+({failed:'这次没做成',not_ready:'暂时还做不了',busy:'排队的书太多了',none:'还没开始'}[d.state]||NAME[d.state]||d.state);
   step.textContent=d.state==='queued'?'前面还有 '+(d.position-1)+' 本'
     :d.state==='failed'?(d.step||'')+(d.retryAfter?' · '+new Date(d.retryAfter).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})+' 后可以再试':'')
     :d.error?d.error:[d.step,d.startedAt?'已做 '+ago(d.startedAt):''].filter(Boolean).join(' · ');
