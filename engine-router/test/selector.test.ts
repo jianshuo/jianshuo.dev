@@ -41,10 +41,10 @@ const state = (usage: Record<string, Usage>, extra: Partial<SelectState> = {}): 
 
 test("weeklyLine：一周过半 → 50% + 宽限 10；刚重置 → 只有宽限；封顶 cap_7d", () => {
   const c = cfg();
-  assert.equal(weeklyLine(c, NOW + WEEK / 2, NOW), 60);
-  assert.equal(weeklyLine(c, NOW + WEEK, NOW), 10);
-  assert.equal(weeklyLine(c, NOW + 1000, NOW), 92);
-  assert.equal(weeklyLine(c, null, NOW), 92);
+  assert.equal(weeklyLine(c.limits, NOW + WEEK / 2, NOW), 60);
+  assert.equal(weeklyLine(c.limits, NOW + WEEK, NOW), 10);
+  assert.equal(weeklyLine(c.limits, NOW + 1000, NOW), 92);
+  assert.equal(weeklyLine(c.limits, null, NOW), 92);
 });
 
 test("headroom：挑余量最大的引擎和账号", () => {
@@ -189,6 +189,43 @@ test("不健康的账号给出下次探测的恢复时刻，排队模式能等�
   const r = select(c, state({ "kimi/kimi-1": u(0, 0, { healthy: false, error: "401", probedAt: NOW - 1000 }) }), { kind: "text", require: ["kimi"] }, NOW);
   assert.equal(r.pick, null);
   assert.ok(r.waitUntil && r.waitUntil > NOW);
+});
+
+test("策略级 limits：出图不配速、Codex 用到 90% 才换 seedream；写书照旧按周配速", () => {
+  const c = parseConfig({
+    engines: {
+      codex: { accounts: [{ id: "codex-1", codex_home: "/x" }] },
+      "gpt-image": { quota_from: "codex", accounts: [{ id: "codex-1" }] },
+      seedream: { accounts: [{ id: "ark-1" }] },
+    },
+    policies: {
+      image: { engines: "failover", keys: "headroom", order: ["gpt-image", "seedream"], limits: { pacing: false, cap_5h: 90, cap_7d: 90 } },
+    },
+    estimates: { image: { "gpt-image": { d5h: 3, d7d: 1 } } },
+  });
+  // 周窗口刚过一天（配速线约 24%），已用 70%：写书早被配速拦了，出图照样给 codex
+  const reset7d = NOW + 6 * 86400_000;
+  const st = state({ "codex/codex-1": u(40, 70, { reset7d }) });
+  assert.equal(select(c, st, { kind: "text", require: ["codex"] }, NOW).pick, null, "文字（缺省策略）受配速约束");
+  const img = select(c, st, { kind: "image", taskClass: "image" }, NOW);
+  assert.equal(img.pick?.key, "gpt-image/codex-1");
+  assert.match(img.candidates[0].reason, /cap 90/);
+  // 周用量到 89%：89 + 1 = 90 还行；到 90% 就换 seedream
+  st.usage["codex/codex-1"] = u(40, 89, { reset7d });
+  assert.equal(select(c, st, { kind: "image", taskClass: "image" }, NOW).pick?.key, "gpt-image/codex-1");
+  st.usage["codex/codex-1"] = u(40, 90, { reset7d });
+  const r = select(c, st, { kind: "image", taskClass: "image" }, NOW);
+  assert.equal(r.pick?.key, "seedream/ark-1");
+  assert.match(r.candidates.find((x) => x.engine === "gpt-image")!.reason, /week cap 90/);
+  // 5h 也按策略的 90：88 + 3 > 90 → seedream
+  st.usage["codex/codex-1"] = u(88, 10, { reset7d });
+  assert.equal(select(c, st, { kind: "image", taskClass: "image" }, NOW).pick?.key, "seedream/ark-1");
+});
+
+test("策略 limits 写错会被拒（reload 时保留旧配置）", () => {
+  assert.throws(() => parseConfig({ policies: { image: { engines: "failover", keys: "headroom", limits: { pacing: "no" } } } }), /pacing must be/);
+  assert.throws(() => parseConfig({ policies: { image: { engines: "failover", keys: "headroom", limits: { cap_7d: 150 } } } }), /0–100/);
+  assert.throws(() => parseConfig({ policies: { image: { engines: "failover", keys: "headroom", limits: { cap: 90 } } } }), /unknown limits/);
 });
 
 test("出图：gpt-image 读 codex 的额度；failover 先 gpt-image 再 seedream；seedream 日上限", () => {

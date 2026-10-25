@@ -28,13 +28,17 @@ export type Account = {
 };
 
 export type Strategy = "headroom" | "failover" | "round_robin";
-export type Policy = { engines: Strategy; keys: Strategy; order?: EngineName[] };
+// 挑选用的红线与配速。全局在 config.limits，单条策略可以用 policy.limits 覆盖其中几项——
+// 例：出图要「Codex 用到快满再切 Seedream」，就给 image 策略 { pacing: false, cap_5h: 90, cap_7d: 90 }，
+// 写书照旧按周配速走。
+export type PickLimits = { cap_5h: number; cap_7d: number; weekly_slack: number; pacing: boolean };
+export type Policy = { engines: Strategy; keys: Strategy; order?: EngineName[]; limits?: Partial<PickLimits> };
 export type Estimate = { d5h: number; d7d: number }; // 一次任务吃掉的百分点
 
 export type Config = {
   engines: Partial<Record<EngineName, { accounts: Account[]; quota_from?: EngineName }>>;
   models: Partial<Record<EngineName, { best: string; fast: string }>>;
-  limits: { cap_5h: number; cap_7d: number; weekly_slack: number; probe_every_s: number; claude_probe_every_s: number };
+  limits: PickLimits & { probe_every_s: number; claude_probe_every_s: number };
   policies: Record<string, Policy>;
   estimates: Record<string, Partial<Record<EngineName, Estimate>>>;
   concurrency: { global_text: number; global_image: number; per_account: number };
@@ -52,7 +56,7 @@ const DEFAULTS: Config = {
     codex: { best: "gpt-6-astra", fast: "gpt-6-astra" },
     kimi: { best: "k3", fast: "k3" },
   },
-  limits: { cap_5h: 85, cap_7d: 92, weekly_slack: 10, probe_every_s: 300, claude_probe_every_s: 900 },
+  limits: { cap_5h: 85, cap_7d: 92, weekly_slack: 10, pacing: true, probe_every_s: 300, claude_probe_every_s: 900 },
   policies: { default: { engines: "headroom", keys: "headroom" } },
   estimates: {},
   concurrency: { global_text: 2, global_image: 3, per_account: 1 },
@@ -91,8 +95,21 @@ export function parseConfig(raw: unknown): Config {
   for (const [cls, p] of Object.entries(cfg.policies)) {
     if (!STRATEGIES.includes(p.engines) || !STRATEGIES.includes(p.keys)) throw new Error(`policy ${cls}: bad strategy`);
     for (const o of p.order ?? []) if (!ENGINE_NAMES.includes(o)) throw new Error(`policy ${cls}: bad engine ${o} in order`);
+    for (const [k, v] of Object.entries(p.limits ?? {})) {
+      if (k === "pacing") {
+        if (typeof v !== "boolean") throw new Error(`policy ${cls}: limits.pacing must be true/false`);
+      } else if (k === "cap_5h" || k === "cap_7d" || k === "weekly_slack") {
+        if (typeof v !== "number" || !(v >= 0 && v <= 100)) throw new Error(`policy ${cls}: limits.${k} must be 0–100`);
+      } else throw new Error(`policy ${cls}: unknown limits.${k}`);
+    }
   }
   return cfg;
+}
+
+/** 这条策略实际用的红线与配速：全局 limits，被 policy.limits 覆盖。 */
+export function limitsFor(cfg: Config, policy: Policy | undefined): PickLimits {
+  const g = cfg.limits;
+  return { cap_5h: g.cap_5h, cap_7d: g.cap_7d, weekly_slack: g.weekly_slack, pacing: g.pacing !== false, ...(policy?.limits ?? {}) };
 }
 
 export function loadConfig(path: string): Config {

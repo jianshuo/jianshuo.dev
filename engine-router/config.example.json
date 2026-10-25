@@ -11,18 +11,27 @@
     },
     "kimi": {
       "accounts": [{ "id": "kimi-1", "key_env": "KIMI_KEY_1", "base_url": "https://api.kimi.com/coding/" }]
-    }
+    },
+    "gpt-image": { "quota_from": "codex", "accounts": [{ "id": "codex-1" }] },
+    "seedream": { "accounts": [{ "id": "ark-1", "daily_cap": 200 }] }
   },
   "models": {
     "claude": { "best": "claude-opus-4-8", "fast": "claude-haiku-4-5" },
     "codex": { "best": "gpt-6-astra", "fast": "gpt-6-astra" },
     "kimi": { "best": "k3", "fast": "k3" }
   },
-  "limits": { "cap_5h": 85, "cap_7d": 92, "weekly_slack": 10, "probe_every_s": 300, "claude_probe_every_s": 900 },
+  "limits": { "cap_5h": 85, "cap_7d": 92, "weekly_slack": 10, "pacing": true, "probe_every_s": 300, "claude_probe_every_s": 900 },
   "policies": {
-    "default": { "engines": "headroom", "keys": "headroom" }
+    "default": { "engines": "headroom", "keys": "headroom" },
+    "image": {
+      "engines": "failover",
+      "order": ["gpt-image", "seedream"],
+      "keys": "headroom",
+      "limits": { "pacing": false, "cap_5h": 90, "cap_7d": 90 }
+    }
   },
   "estimates": {
+    "image": { "gpt-image": { "d5h": 3, "d7d": 1 } },
     "book": {
       "kimi": { "d5h": 20, "d7d": 4 },
       "codex": { "d5h": 30, "d7d": 5 },

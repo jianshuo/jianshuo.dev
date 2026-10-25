@@ -327,7 +327,9 @@ export class Runs {
 
   /** 干跑：这个请求现在会选谁、为什么。不推进 round_robin 游标，看不到别人的 thread。 */
   async dryRun(raw: any, caller: string): Promise<SelectResult> {
-    const req = normalizeRequest(raw);
+    // 出图不在 router 里执行（走租约），但干跑只是挑选，照样能看「现在会给谁」
+    const req = normalizeRequest({ ...raw, kind: "text" });
+    if (raw?.kind === "image") req.kind = "image";
     const thread = req.thread_id ? await this.threads.get(req.thread_id) : undefined;
     if (req.thread_id && (!thread || (thread.caller !== caller && caller !== "admin"))) throw new HttpError(404, "thread not found");
     const st = this.pool.selectState();

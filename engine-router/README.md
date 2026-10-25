@@ -74,7 +74,7 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 **写书环境**：engine CLI 以 engine-router 用户跑写书 skill，为此——书库 `/opt/claude-agent/workspace` 有 ACL（`u:engine-router:rwX` + 默认 ACL 让新文件两个用户都能读写）、unit 的 `ReadWritePaths` 含书库；`/opt/engine-router/.claude/skills` 软链到 lab 的 skill 目录（skill 里到处是 `~/.claude/skills/…`）；`/opt/engine-router/.config/voicedrop/credentials` 是发布账号凭据的副本（`build.mjs` 读它）。Kimi 账号在 config 里带 `env`（1M 上下文、effort high），模型 `k3[1m]`，与原写书 Kimi 腿一致。
 
-**为什么 paint 用租约而不是交给 router 执行**：paint 的执行层（8 分钟整单期限、模型候选、瞬时限流原地重试、安全拦截重试、ImageMagick 后处理、XMP 溯源）很成熟，整个搬进 router 等于重写；而且 gpt-image-2-skill 写 auth.json 的格式（epoch）和 codex CLI（RFC3339）不兼容，不能与 router 的链共用。租约让 router 仍是额度的唯一裁决者：Codex 出图和写书的消耗记在同一个账号上，互相看得见。出图策略 `image` = failover（gpt-image → seedream），Seedream 按张收费，每日上限 200（历史峰值 98/天）。显式 `engine:"codex"`/`"seedream"`、透明图、或没有可降级的 seedream 时用 force（配速只用来把活挪给替代引擎）。
+**为什么 paint 用租约而不是交给 router 执行**：paint 的执行层（8 分钟整单期限、模型候选、瞬时限流原地重试、安全拦截重试、ImageMagick 后处理、XMP 溯源）很成熟，整个搬进 router 等于重写；而且 gpt-image-2-skill 写 auth.json 的格式（epoch）和 codex CLI（RFC3339）不兼容，不能与 router 的链共用。租约让 router 仍是额度的唯一裁决者：Codex 出图和写书的消耗记在同一个账号上，互相看得见。出图策略 `image` = failover（gpt-image → seedream）+ 不配速、红线 90%：优先 Codex，快用完才给 Seedream（按张收费，每日上限 200，历史峰值 98/天）。显式 `engine:"codex"`/`"seedream"`、透明图、或没有可降级的 seedream 时用 force（配速只用来把活挪给替代引擎）。
 
 ## 账号
 
@@ -93,7 +93,7 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 ## 怎么挑账号
 
-合格 = 健康 + 不在冷却 + 并发未满 + `5h 已用 + 在飞预留 + 本次预估 ≤ cap_5h` + `周已用 ≤ 配速线`。配速线 = 本周已过时间比例 × 100 + `weekly_slack`，封顶 `cap_7d`——周初就把一周烧完的账号会被拦住。策略 `headroom`（缺省，挑余量最大的）/ `failover`（按 `order`）/ `round_robin`，引擎层和 Key 层各一个，可按 `task_class` 覆盖。「本次预估」先用 `estimates`，跑过几次后用学到的值（状态页最下面一张表）。
+合格 = 健康 + 不在冷却 + 并发未满 + `5h 已用 + 在飞预留 + 本次预估 ≤ cap_5h` + `周已用 ≤ 配速线`。配速线 = 本周已过时间比例 × 100 + `weekly_slack`，封顶 `cap_7d`——周初就把一周烧完的账号会被拦住。策略 `headroom`（缺省，挑余量最大的）/ `failover`（按 `order`）/ `round_robin`，引擎层和 Key 层各一个，可按 `task_class` 覆盖。每条策略还能用 `limits` 覆盖全局红线与配速（`cap_5h` / `cap_7d` / `weekly_slack` / `pacing`）：出图策略 `image` 配的是 `{ pacing: false, cap_5h: 90, cap_7d: 90 }`——Codex 一直用到 5h 或本周 90% 才换 Seedream；写书等文字任务仍走全局的周配速。「本次预估」先用 `estimates`，跑过几次后用学到的值（状态页最下面一张表）。
 
 跑到一半撞墙（配额 / 凭据 / 模型被拒 / 内容拒答，判别在 `src/legs.ts`），该账号进冷却，换下一个账号重跑，prompt 追加续跑提示。
 

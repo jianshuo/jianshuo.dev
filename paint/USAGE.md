@@ -59,7 +59,7 @@ group 画风粘性、整单期限——**全在服务端**（`src/worker.ts`）�
 
 冷却在进程内存里，服务重启即清；group 粘性落盘，重启不丢。
 
-**engine-router 裁决（2026-10-25 起生产）**：配了 `ROUTER_URL` / `ROUTER_TOKEN` 时，`auto` 单开画前先向 engine-router 租约（见 `engine-router/README.md`「接入方」）。router 同时看着写书和出图对同一个 ChatGPT 账号的消耗，按 5h 红线、**周配速**、冷却、Seedream 每日上限决定这张图给 Codex 还是 Seedream——所以即使 Codex 没打满，周用量超了配速线时 `auto` 单也会直接走 Seedream（`fallback_reason: router lease … → seedream/ark-1`）。上面第 1、2 条的本地冷却只在 router 不可用时生效。显式 `engine`、透明图、没有可降级的 Seedream 时租约带 force（只要 Codex 没真打满就照画）。router 说两个都不合格 → 失败，`error.code = engine_unavailable`，message 里有各引擎的原因。router 连不上（5 秒超时）→ 自动走本地老逻辑，出图不受影响。
+**engine-router 裁决（2026-10-25 起生产）**：配了 `ROUTER_URL` / `ROUTER_TOKEN` 时，`auto` 单开画前先向 engine-router 租约（见 `engine-router/README.md`「接入方」）。router 同时看着写书和出图对同一个 ChatGPT 账号的消耗，决定这张图给 Codex 还是 Seedream。出图策略（engine-router `config.json` 的 `policies.image`，可改）是**优先 Codex、不配速**：Codex 的 5h 或本周用量到 90% 才改派 Seedream（`fallback_reason: router lease … → seedream/ark-1`），Seedream 另有每日张数上限。写书走的是另一条策略（周配速），两边互不影响配置。上面第 1、2 条的本地冷却只在 router 不可用时生效。显式 `engine`、透明图、没有可降级的 Seedream 时租约带 force（只要 Codex 没真打满就照画）。router 说两个都不合格 → 失败，`error.code = engine_unavailable`，message 里有各引擎的原因。router 连不上（5 秒超时）→ 自动走本地老逻辑，出图不受影响。
 
 ### group：整本书一个画风
 

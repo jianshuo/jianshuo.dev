@@ -1,6 +1,6 @@
 // src/status-page.ts — 状态页（lab.jianshuo.dev/router/，Caddy basic_auth 后面）。
 // 服务端直接渲染，30 秒自动刷新，没有前端脚本。
-import { acctKey, ENGINE_NAMES, type EngineName } from "./config.js";
+import { acctKey, ENGINE_KIND, ENGINE_NAMES, limitsFor, policyFor, type EngineName } from "./config.js";
 import type { Pool } from "./pool.js";
 import { quotaKey, weeklyLine } from "./selector.js";
 import type { RunRecord } from "./runs.js";
@@ -54,9 +54,11 @@ export function renderStatus(pool: Pool, runs: RunRecord[], now = Date.now()): s
         const n = st.dailyCount[k] ?? 0;
         five = `${n} / ${a.daily_cap ?? 200} today`;
       } else {
-        five = `${bar(u?.used5h ?? null, cfg.limits.cap_5h)}<span class="sub">resets ${until(u?.reset5h, now)}</span>`;
-        const line = weeklyLine(cfg, u?.reset7d ?? null, now);
-        week = `${bar(u?.used7d ?? null, cfg.limits.cap_7d, line)}<span class="sub">resets ${until(u?.reset7d, now)}</span>`;
+        // 按这类引擎缺省策略的红线/配速画（出图策略可能不配速、红线不同）
+        const lim = limitsFor(cfg, policyFor(cfg, undefined, ENGINE_KIND[e]));
+        five = `${bar(u?.used5h ?? null, lim.cap_5h)}<span class="sub">resets ${until(u?.reset5h, now)}</span>`;
+        const line = weeklyLine(lim, u?.reset7d ?? null, now);
+        week = `${bar(u?.used7d ?? null, lim.cap_7d, lim.pacing ? line : undefined)}<span class="sub">resets ${until(u?.reset7d, now)}${lim.pacing ? "" : " · 不配速"}</span>`;
       }
       rows.push(
         `<tr><td><b>${esc(e)}</b><span class="sub">${esc(a.id)}${qk !== k ? ` · quota of ${esc(qk)}` : ""}</span></td><td>${health}</td><td>${five}</td><td>${week}</td><td class="c">${inf || ""}</td><td class="sub">${ago(u?.probedAt, now)}</td><td class="err">${esc(u?.error ?? "")}</td></tr>`,
@@ -73,7 +75,12 @@ export function renderStatus(pool: Pool, runs: RunRecord[], now = Date.now()): s
     .map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${v.d5h.toFixed(1)}</td><td>${v.d7d.toFixed(1)}</td></tr>`)
     .join("");
   const policies = Object.entries(cfg.policies)
-    .map(([k, p]) => `<code>${esc(k)}</code>: engines=${esc(p.engines)}${p.order ? ` (${esc(p.order.join(" → "))})` : ""}, keys=${esc(p.keys)}`)
+    .map(([k, p]) => {
+      const lim = p.limits
+        ? `, ${Object.entries(p.limits).map(([lk, lv]) => (lk === "pacing" ? (lv ? "配速" : "不配速") : `${lk}=${lv}`)).join(" ")}`
+        : "";
+      return `<code>${esc(k)}</code>: engines=${esc(p.engines)}${p.order ? ` (${esc(p.order.join(" → "))})` : ""}, keys=${esc(p.keys)}${esc(lim)}`;
+    })
     .join(" · ");
 
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

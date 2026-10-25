@@ -10,6 +10,8 @@ import {
   DEFAULT_ESTIMATE,
   acctKey,
   policyFor,
+  limitsFor,
+  type PickLimits,
   type Account,
   type Config,
   type EngineName,
@@ -95,11 +97,14 @@ export function estimateFor(cfg: Config, st: Pick<SelectState, "learned">, taskC
   return { d5h: base.d5h * mul, d7d: base.d7d * mul };
 }
 
-/** 周配速线（0–100）：本周已过时间比例 × 100 + slack，封顶 cap_7d。reset 未知时只看 cap。 */
-export function weeklyLine(cfg: Config, reset7d: number | null, now: number): number {
-  if (!reset7d) return cfg.limits.cap_7d;
+/**
+ * 周配速线（0–100）：本周已过时间比例 × 100 + slack，封顶 cap_7d。reset 未知时只看 cap。
+ * pacing:false（例如出图策略）= 不配速，线就是 cap_7d——用到快满才换下一个。
+ */
+export function weeklyLine(lim: Pick<PickLimits, "cap_7d" | "weekly_slack"> & { pacing?: boolean }, reset7d: number | null, now: number): number {
+  if (!reset7d || lim.pacing === false) return lim.cap_7d;
   const elapsed = Math.max(0, Math.min(1, 1 - (reset7d - now) / WEEK_MS));
-  return Math.min(cfg.limits.cap_7d, elapsed * 100 + cfg.limits.weekly_slack);
+  return Math.min(lim.cap_7d, elapsed * 100 + lim.weekly_slack);
 }
 
 function staleAfter(cfg: Config, engine: EngineName): number {
@@ -107,7 +112,7 @@ function staleAfter(cfg: Config, engine: EngineName): number {
   return 2.5 * s * 1000;
 }
 
-function evaluate(cfg: Config, st: SelectState, req: SelectRequest, engine: EngineName, a: Account, now: number): Candidate {
+function evaluate(cfg: Config, lim: PickLimits, st: SelectState, req: SelectRequest, engine: EngineName, a: Account, now: number): Candidate {
   const key = acctKey(engine, a.id);
   const qk = quotaKey(cfg, engine, a.id);
   const c: Candidate = { engine, id: a.id, key, eligible: false, reason: "", headroom: null };
@@ -144,27 +149,28 @@ function evaluate(cfg: Config, st: SelectState, req: SelectRequest, engine: Engi
   const res = st.inflight[qk] ?? { count: 0, d5h: 0, d7d: 0 };
   const used5h = (u.used5h ?? 0) + res.d5h;
   const used7d = (u.used7d ?? 0) + res.d7d;
-  const line = weeklyLine(cfg, u.reset7d, now);
+  const line = weeklyLine(lim, u.reset7d, now);
+  const lineName = lim.pacing === false ? "week cap" : "pace line";
   if (req.force) {
     if ((u.used5h ?? 0) >= 100) return { ...c, reason: "5h window exhausted", waitUntil: u.reset5h ?? now + 1800_000 };
     if ((u.used7d ?? 0) >= 100) return { ...c, reason: "weekly quota exhausted", waitUntil: u.reset7d ?? undefined };
   } else {
-    if (used5h + est.d5h > cfg.limits.cap_5h)
+    if (used5h + est.d5h > lim.cap_5h)
       return {
         ...c,
-        reason: `5h ${fmt(used5h)}% + est ${fmt(est.d5h)} > cap ${cfg.limits.cap_5h}`,
+        reason: `5h ${fmt(used5h)}% + est ${fmt(est.d5h)} > cap ${lim.cap_5h}`,
         waitUntil: u.reset5h ?? now + 1800_000,
       };
     if (used7d + est.d7d > line) {
-      // 配速线随时间上涨：算出线涨到够用的时刻；超过 cap_7d 就只能等周重置。
+      // 配速线随时间上涨：算出线涨到够用的时刻；超过 cap_7d（或不配速）就只能等周重置。
       const need = used7d + est.d7d;
       let wait = u.reset7d ?? now + 3600_000;
-      if (u.reset7d && need <= cfg.limits.cap_7d) wait = u.reset7d - WEEK_MS + ((need - cfg.limits.weekly_slack) / 100) * WEEK_MS;
-      return { ...c, reason: `week ${fmt(used7d)}% + est ${fmt(est.d7d)} > pace line ${fmt(line)}`, waitUntil: Math.max(now + 60_000, wait) };
+      if (lim.pacing !== false && u.reset7d && need <= lim.cap_7d) wait = u.reset7d - WEEK_MS + ((need - lim.weekly_slack) / 100) * WEEK_MS;
+      return { ...c, reason: `week ${fmt(used7d)}% + est ${fmt(est.d7d)} > ${lineName} ${fmt(line)}`, waitUntil: Math.max(now + 60_000, wait) };
     }
   }
-  const headroom = Math.min(cfg.limits.cap_5h - used5h, line - used7d) * weight;
-  return { ...c, eligible: true, reason: `5h ${fmt(used5h)}% · week ${fmt(used7d)}% / line ${fmt(line)}`, headroom };
+  const headroom = Math.min(lim.cap_5h - used5h, line - used7d) * weight;
+  return { ...c, eligible: true, reason: `5h ${fmt(used5h)}% · week ${fmt(used7d)}% / ${lim.pacing === false ? "cap" : "line"} ${fmt(line)}`, headroom };
 }
 
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();
@@ -186,11 +192,12 @@ function choose<T>(items: T[], strategy: Strategy, scoreOf: (t: T) => number, cu
 
 export function select(cfg: Config, st: SelectState, req: SelectRequest, now = Date.now()): SelectResult {
   const policy = policyFor(cfg, req.taskClass, req.kind);
+  const lim = limitsFor(cfg, policy); // 全局红线/配速，被这条策略的 limits 覆盖
   const engines = ENGINE_NAMES.filter(
     (e) => ENGINE_KIND[e] === req.kind && cfg.engines[e] && (!req.require?.length || req.require.includes(e)),
   );
   const candidates: Candidate[] = [];
-  for (const e of engines) for (const a of cfg.engines[e]!.accounts) candidates.push(evaluate(cfg, st, req, e, a, now));
+  for (const e of engines) for (const a of cfg.engines[e]!.accounts) candidates.push(evaluate(cfg, lim, st, req, e, a, now));
   const eligible = candidates.filter((c) => c.eligible);
   const accountOf = (c: Candidate) => cfg.engines[c.engine]!.accounts.find((a) => a.id === c.id)!;
   const done = (c: Candidate | undefined): SelectResult => {
