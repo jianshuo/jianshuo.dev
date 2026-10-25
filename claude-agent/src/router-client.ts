@@ -1,5 +1,5 @@
 // src/router-client.ts — engine-router 客户端的副本（真源：engine-router/src/client.ts，改那边再拷过来）。
-// 写书引擎在 BOOK_ENGINE_ROUTER=1 时用它把整本书交给 router（见 book-engine.ts runViaRouter）。
+// 写书引擎用它把整本书交给 router（见 book-engine.ts runBookEngine）。
 //
 // 原文件头：给调用方的薄客户端，零依赖，可以整个文件拷走用。
 //

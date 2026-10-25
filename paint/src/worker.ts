@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import type { Config } from "./config.js";
 import type { JobStore, Job } from "./store.js";
 import type { EventHub } from "./events.js";
-import { buildArgs, parseResult, parseEventLine, isModelRejected, isQuotaExhausted, isRateLimited, quotaResetAt } from "./engine.js";
+import { buildArgs, parseResult, parseEventLine, isModelRejected, isQuotaExhausted, isRateLimited } from "./engine.js";
 import { seedreamSize, refImageDataUri, seedreamGenerate, finalizeImage } from "./seedream.js";
 import { deliver, type CallbackPayload } from "./callback.js";
 import { buildXmp, embedXmp } from "./xmp.js";
@@ -50,9 +50,6 @@ export async function downloadInput(url: string, inputPath: string, maxBytes: nu
 export class Worker {
   private queue: string[] = [];
   private active = 0;
-  /** 到这个时刻（ms epoch）前，auto 单不打 codex 直接走 seedream（进程内存，重启即清） */
-  codexBlockedUntil = 0;
-  codexBlockedReason = "";
   readonly groups: GroupStore;
 
   readonly router?: EngineRouter;
@@ -83,11 +80,6 @@ export class Worker {
           this.pump();
         });
     }
-  }
-
-  private blockCodex(until: number, reason: string): void {
-    this.codexBlockedUntil = Math.max(this.codexBlockedUntil, Math.min(until, Date.now() + 7 * 24 * 3600 * 1000));
-    this.codexBlockedReason = reason;
   }
 
   private async run(id: string): Promise<void> {
@@ -165,7 +157,8 @@ export class Worker {
     //  - 只能 codex（显式 / 透明图 / 没有可降级的 seedream）→ 只租 gpt-image；
     //  - 其余让 router 按策略挑（缺省 gpt-image 优先，不合格给 seedream）。
     // 显式指定或无路可降级时 force：配速只用来把活挪给替代引擎，没有替代就别因配速拦图。
-    // router 出任何问题 decide 返回 undefined → 走下面的本地冷却老逻辑。
+    // router 出任何问题 decide 返回 undefined → 不裁决，按请求本身走（auto = 先 codex，撞墙这一单改 seedream）。
+    // 冷却只有 router 一处记（2026-10-25 删掉了 paint 进程内的冷却）。
     let lease: RouterDecision | undefined;
     let codexError: EngineError | undefined;
     if (this.router) {
@@ -183,11 +176,6 @@ export class Worker {
     if (lease?.engine === "seedream" && runCodex) {
       runCodex = false;
       fallbackReason = lease.reason;
-    }
-    if (!lease && runCodex && canFallback && Date.now() < this.codexBlockedUntil) {
-      // 本地冷却（只在没有 router 时用）：刚被真额度/模型全拒打回来过，重置前别再白打一枪 codex
-      runCodex = false;
-      fallbackReason = `codex cooldown until ${new Date(this.codexBlockedUntil).toISOString()} (${this.codexBlockedReason})`;
     }
 
     if (runCodex) {
@@ -225,18 +213,13 @@ export class Worker {
       }
 
       if (!ok) {
-        codexError = error; // 回报给 router：额度类会让它冷却这个账号（对写书也生效）
-        // 冷却是关于 codex 本身的事实，不论这单的 pref 都记下（影响的只是之后的 auto 单）
-        if (isQuotaExhausted(error)) {
-          const until = quotaResetAt(error) ?? Date.now() + this.cfg.quotaCooldownMs;
-          this.blockCodex(until, `quota: ${error?.message ?? ""}`);
-          if (canFallback) fallbackReason = `codex quota exhausted (cooldown until ${new Date(this.codexBlockedUntil).toISOString()})`;
-        } else if (isModelRejected(error)) {
-          this.blockCodex(Date.now() + this.cfg.modelRejectedCooldownMs, `all codex models rejected: ${error?.message ?? ""}`);
-          if (canFallback) fallbackReason = `codex models all rejected (cooldown until ${new Date(this.codexBlockedUntil).toISOString()})`;
-        } else if (isRateLimited(error) && canFallback) {
-          // 原地重试用完仍限流：只这一单降级，不设长冷却
-          fallbackReason = `codex rate-limited after ${this.cfg.rateLimitRetryMs.length} retries (this job only)`;
+        // 回报给 router（带报错原文）：额度 / 模型被拒这类由 router 统一冷却这个账号，之后的单它不会再派 codex
+        codexError = error;
+        // 这一单能降级就改走 seedream：
+        if (canFallback) {
+          if (isQuotaExhausted(error)) fallbackReason = "codex quota exhausted";
+          else if (isModelRejected(error)) fallbackReason = "codex models all rejected";
+          else if (isRateLimited(error)) fallbackReason = `codex rate-limited after ${this.cfg.rateLimitRetryMs.length} retries (this job only)`;
         }
         // 参数错、安全拦截（missing_image_result）、401、超时等一律原样失败，绝不降级
       }

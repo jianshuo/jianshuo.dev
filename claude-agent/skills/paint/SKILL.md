@@ -11,7 +11,7 @@ description: 出图说明书——凡是要生成图片、改图、画封面/插
 
 - 单张：`/opt/claude-agent/bin/paint "提示词" 输出.jpg [选项]`
 - 一批：`/opt/claude-agent/bin/paint-batch 清单.json [--group slug] [--engine e] [--force]`
-- 两者共用同一个客户端，只做「提交 → 等 → 下载」。**选引擎、自动降级、限流重试、额度冷却、尺寸规整全在 paint 服务端**——你不用、也不要自己重试或换引擎兜底。
+- 两者共用同一个客户端，只做「提交 → 等 → 下载」。**选引擎（由 engine-router 裁决）、自动降级、限流重试、尺寸规整全在服务端**——你不用、也不要自己重试或换引擎兜底。
 - **绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas…）替代 paint。
 
 ## 选项

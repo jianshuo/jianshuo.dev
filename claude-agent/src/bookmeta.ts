@@ -13,11 +13,14 @@
 //     由 lab 独占读写（与 codex 并发改 book.json 互不打架），走 files API 上传
 //     （发布账号 token），读走公开 URL 带时间戳穿透 5 分钟边缘缓存。
 //   - 本地 bookmeta/ 目录只剩两个用途：老条目的读回退（读到即懒迁移上 R2）和
-//     _unmatched 落档。sessionId：codex 线程号（CODEX_HOME/sessions/ 可续）。
+//     _unmatched 落档。sessionId：2026-10-25 起是 `router:<run_id>`（引擎输出在 engine-router
+//     的 state/runs/<run_id>.log）；更早的是 codex 线程号（CODEX_HOME/sessions/）或 Claude session。
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BOOKMETA_DIR, HOME, WORKSPACE } from "./env.js";
-import { BOOK_RUN_DIR } from "./book-engine.js";
+import { APP_ROOT, BOOKMETA_DIR, HOME, WORKSPACE } from "./env.js";
+
+// 旧 Claude/Kimi 腿的落脚目录（2026-10-25 三腿链删除前，偶有书文件落在这里）——只为找老书还扫一下。
+const LEGACY_BOOK_RUN_DIR = join(APP_ROOT, "bookrun");
 
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
 const BOOK_REFUND_URL = process.env.BOOK_REFUND_URL ?? "https://jianshuo.dev/agent/usage/book-refund";
@@ -151,9 +154,9 @@ export async function writeUnmatched(jobId: string, record: Record<string, unkno
 
 // 写书 job 起跑时还不知道 slug（slug 是建筑师中途起的），所以把任务号 jobId 塞进
 // prompt 让 agent 写进 book.json；收尾时拿 jobId 去工作目录里反查 slug。
-// 扫三处：WORKSPACE（修书/新版写书的耐久工作目录）、BOOK_RUN_DIR、/tmp（旧约定）。
+// 扫三处：WORKSPACE（写书/修书的耐久工作目录）、旧腿落脚目录、/tmp（更早的旧约定）。
 export async function findBookByJobId(jobId: string): Promise<{ dir: string; book: any } | null> {
-  for (const root of [WORKSPACE, BOOK_RUN_DIR, "/tmp"]) {
+  for (const root of [WORKSPACE, LEGACY_BOOK_RUN_DIR, "/tmp"]) {
     let dirs: string[];
     try {
       dirs = await readdir(root);

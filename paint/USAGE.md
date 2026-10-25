@@ -7,7 +7,7 @@
 出图只有一个接口：**`POST https://paint.jianshuo.dev/api/jobs`**（VPS 本机 `http://127.0.0.1:8788`），
 查结果 `GET /api/jobs/:id`（或 SSE `/api/jobs/:id/events`），完成后可选回调。
 
-引擎选择（Codex / Seedream）、Codex 模型候选、瞬时限流重试、额度冷却、自动降级、尺寸规整、
+引擎选择（Codex / Seedream）、Codex 模型候选、瞬时限流重试、自动降级、尺寸规整、
 group 画风粘性、整单期限——**全在服务端**（`src/worker.ts`）。调用方只需要知道两件事：成功（拿 `result_url`），
 或失败（`error.code` + `error.message`）。不要在客户端再写一层重试/降级/尺寸吸附。
 
@@ -48,18 +48,16 @@ group 画风粘性、整单期限——**全在服务端**（`src/worker.ts`）�
 | `codex` | 只用 Codex，失败就失败，绝不降级 |
 | `seedream` | 直接走 Seedream（`doubao-seedream-5-0-pro` → `4-0` 依次试）。服务端没配 `ARK_API_KEY` → 提交即 400；`transparent` → 400 |
 
-`auto` 单改走 Seedream 的条件（`fallback_reason` 会写明是哪条）：
+**谁来画由 engine-router 裁决（2026-10-25 起）**：`auto` 单开画前先向 engine-router 租约（`ROUTER_URL` / `ROUTER_TOKEN`，见 `engine-router/README.md`「接入方」）。router 同时看着写书和出图对同一个 ChatGPT 账号的消耗，决定这张图给 Codex 还是 Seedream。出图策略（engine-router 仓库里 `config.json` 的 `policies.image`，可改）是**优先 Codex、不配速**：Codex 的 5h 或本周用量到 90% 才改派 Seedream（`fallback_reason: router lease … → seedream/ark-1`），Seedream 另有每日张数上限；**额度冷却只在 router 一处记**（paint 画完回报 Codex 报错原文，router 据此冷却，之后的单不再派 Codex）。显式 `engine`、透明图、没有可降级的 Seedream 时租约带 force（只要 Codex 没真打满就照画）。router 说两个都不合格 → 失败，`error.code = engine_unavailable`，message 里有各引擎的原因。router 连不上（5 秒超时）→ 不裁决，按请求本身画（`auto` = 先 Codex）。
 
-1. **Codex 真额度打满**：429 `usage_limit_reached` 或响应带 `resets_at`/`resets_in_seconds`。同时设冷却到额度重置时刻（没给就 30 分钟），冷却期内所有 `auto` 单不再打 Codex，直走 Seedream。
-2. **Codex 候选模型全被账号拒**（400 not supported / 404 does not exist）。冷却 30 分钟。
-3. **瞬时限流**（泛泛的 HTTP 429 / too many requests）：先原地等 15s、30s 各重试一次；仍不行**只这一单**降级，**不设冷却**，下一单照常先试 Codex。
-4. **group 粘性**：这组已有图是 Seedream 出的（见下）。
+拿到 Codex 之后，这一单画到一半出事时改走 Seedream 的条件（`fallback_reason` 会写明是哪条）：
 
-**不会**降级的：参数错（`invalid_argument`）、安全拦截（`missing_image_result`，自动重试 1 次）、401 登录失效、超时、透明图（Seedream 没有透明底）、`SEEDREAM_FALLBACK=off`。
+1. **Codex 真额度打满**：429 `usage_limit_reached` 或响应带 `resets_at`/`resets_in_seconds`。
+2. **Codex 候选模型全被账号拒**（400 not supported / 404 does not exist）。
+3. **瞬时限流**（泛泛的 HTTP 429 / too many requests）：先原地等 15s、30s 各重试一次；仍不行这一单降级。
+4. **group 粘性**：这组已有图是 Seedream 出的（见下）——这种情况开画前就直接租 Seedream。
 
-冷却在进程内存里，服务重启即清；group 粘性落盘，重启不丢。
-
-**engine-router 裁决（2026-10-25 起生产）**：配了 `ROUTER_URL` / `ROUTER_TOKEN` 时，`auto` 单开画前先向 engine-router 租约（见 `engine-router/README.md`「接入方」）。router 同时看着写书和出图对同一个 ChatGPT 账号的消耗，决定这张图给 Codex 还是 Seedream。出图策略（engine-router `config.json` 的 `policies.image`，可改）是**优先 Codex、不配速**：Codex 的 5h 或本周用量到 90% 才改派 Seedream（`fallback_reason: router lease … → seedream/ark-1`），Seedream 另有每日张数上限。写书走的是另一条策略（周配速），两边互不影响配置。上面第 1、2 条的本地冷却只在 router 不可用时生效。显式 `engine`、透明图、没有可降级的 Seedream 时租约带 force（只要 Codex 没真打满就照画）。router 说两个都不合格 → 失败，`error.code = engine_unavailable`，message 里有各引擎的原因。router 连不上（5 秒超时）→ 自动走本地老逻辑，出图不受影响。
+**不会**降级的：参数错（`invalid_argument`）、安全拦截（`missing_image_result`，自动重试 1 次）、401 登录失效、超时、透明图（Seedream 没有透明底）、`SEEDREAM_FALLBACK=off`。group 粘性落盘，重启不丢。
 
 ### group：整本书一个画风
 
@@ -107,7 +105,7 @@ Codex（gpt-image-2）和 Seedream 画风明显不同，一本书混着用会很
 ## 时间
 
 - **整单期限 8 分钟**（`JOB_DEADLINE_MS`），**从提交时刻算**，含排队、Codex 各次尝试、Seedream 降级与下载。每条腿的超时都取「自身上限」与「剩余时间」的较小者；降级时剩余不足 45s 就不再花钱调方舟，直接 `deadline_exceeded`。
-- 典型耗时：Codex 1–3 分钟；Seedream 约 30–60 秒；降级 = Codex 失败那一下 + Seedream，大约多 1 分钟；冷却/粘性期间直走 Seedream 反而更快。
+- 典型耗时：Codex 1–3 分钟；Seedream 约 30–60 秒；降级 = Codex 失败那一下 + Seedream，大约多 1 分钟；router 派 Seedream 或组已粘在 Seedream 时直走 Seedream 反而更快。
 - 服务端同时画 3 张（`MAX_CONCURRENCY`），多的排队，排队也计入 8 分钟。
 - `bin/paint` 等到 `deadline_at + 60s`（约 9 分钟）必返回；agent 的 Bash timeout 给 600000ms（10 分钟）够用。
 
@@ -142,5 +140,5 @@ Codex（gpt-image-2）和 Seedream 画风明显不同，一本书混着用会很
 ## 运维
 
 - 部署：`paint/deploy.sh`（先确认 `data/jobs` 里没有 queued/running）。依赖 ImageMagick `convert`（`deploy/provision.sh` 会装）。
-- 关键 env 见 `.env.example`：`ARK_API_KEY`、`SEEDREAM_MODELS`、`SEEDREAM_FALLBACK`、`CONVERT_BIN`、`JOB_DEADLINE_MS`、`RATE_LIMIT_RETRY_MS`、`QUOTA_COOLDOWN_MS`、`MODEL_REJECTED_COOLDOWN_MS`、`GROUP_TTL_MS`。
+- 关键 env 见 `.env.example`：`ARK_API_KEY`、`SEEDREAM_MODELS`、`SEEDREAM_FALLBACK`、`CONVERT_BIN`、`JOB_DEADLINE_MS`、`RATE_LIMIT_RETRY_MS`、`GROUP_TTL_MS`、`ROUTER_URL`、`ROUTER_TOKEN`。
 - 看日志：`https://paint.jianshuo.dev/log`（seedream 单标橙色，悬停看降级原因；带 group 的显示组名），`journalctl -u paint`。

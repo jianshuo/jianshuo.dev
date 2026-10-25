@@ -65,10 +65,10 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 ## 接入方（2026-10-25 起生产）
 
-| 调用方 | 方式 | 开关 / 回退 |
+| 调用方 | 方式 | router 不可用时 |
 |---|---|---|
-| **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`） | lab `/opt/claude-agent/.env` 的 `BOOK_ENGINE_ROUTER=1`；改 0 下一单就回到三腿链（不用重启）。router 提交失败时自动退回三腿链 |
-| **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报 | `/opt/paint/.env` 的 `ROUTER_URL` / `ROUTER_TOKEN`；删掉 + restart paint 即回退。router 连不上（5 秒超时）自动走 paint 本地老逻辑 |
+| **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`）。lab `.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 这一单失败（退款 + 管理员告警）。原来的三腿链 2026-10-25 已删，router 是唯一写书引擎 |
+| **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报（额度冷却只在 router 记）。`/opt/paint/.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 5 秒连不上就不裁决，按请求本身画（auto = 先 Codex，撞墙这一单改 Seedream），出图不中断 |
 
 两者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
 

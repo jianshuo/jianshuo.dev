@@ -8,7 +8,7 @@ import { JobStore, type Job } from "../src/store.ts";
 import { EventHub } from "../src/events.ts";
 import { Worker } from "../src/worker.ts";
 import { loadConfig } from "../src/config.ts";
-import { isQuotaExhausted, isRateLimited, quotaResetAt, isModelRejected } from "../src/engine.ts";
+import { isQuotaExhausted, isRateLimited, isModelRejected } from "../src/engine.ts";
 import { seedreamSize } from "../src/seedream.ts";
 import type { EngineRouter, DecideRequest, RouterDecision, CompleteRequest } from "../src/router.ts";
 
@@ -42,12 +42,6 @@ test("isQuotaExhausted：参数错 / 模型被拒 / 安全拦截 / 401 一律不
   assert.equal(isQuotaExhausted(undefined), false);
   // 反过来：额度错也别被当成模型被拒（那会白白换模型再打一枪）
   assert.equal(isModelRejected(QUOTA_ERR), false);
-});
-
-test("quotaResetAt：优先 resets_in_seconds，其次 resets_at", () => {
-  assert.equal(quotaResetAt(QUOTA_ERR, 1000), 1000 + 8295 * 1000);
-  assert.equal(quotaResetAt({ message: "HTTP 429", detail: '{"error":{"resets_at":1790915206}}' }), 1790915206 * 1000);
-  assert.equal(quotaResetAt({ message: "HTTP 429" }), undefined);
 });
 
 test("seedreamSize：够下限原样、不够等比放大、关键字给 2K/4K 不裁", () => {
@@ -164,21 +158,6 @@ test("codex 429 额度满 → 降级 seedream 出图，记 engine/model/原因�
   assert.ok(buf.includes(Buffer.from('paint:Model="doubao-seedream-5-0-pro-260628"')));
 });
 
-test("额度冷却：下一单不再打 codex，直接 seedream", async (t) => {
-  const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
-  await store.create(job("c1"));
-  worker.enqueue("c1");
-  await settle(store, "c1");
-  assert.ok(worker.codexBlockedUntil > Date.now());
-  await store.create(job("c2", { prompt: "a dog" })); // 不含 QUOTA：若真打了 codex 会直接成功、engine=codex
-  worker.enqueue("c2");
-  const j = await settle(store, "c2");
-  assert.equal(j?.engine, "seedream");
-  assert.equal(j?.attempts, 1);
-  assert.match(j?.fallbackReason ?? "", /cooldown/);
-});
-
 test("没配 ARK key / SEEDREAM_FALLBACK=off → 额度满照旧失败", async (t) => {
   for (const env of [{}, { ARK_API_KEY: "k", SEEDREAM_FALLBACK: "off" }]) {
     const ark = await fakeArk(t);
@@ -212,14 +191,7 @@ test("codex 候选模型全被账号拒 → 也降级 seedream", async (t) => {
   assert.equal(j?.status, "done");
   assert.equal(j?.engine, "seedream");
   assert.match(j?.fallbackReason ?? "", /rejected/);
-  // 模型全拒也要冷却（2026-10-02 评审）：否则每单都先白打两枪被拒再降级
-  assert.ok(worker.codexBlockedUntil > Date.now() + 20 * 60 * 1000);
-  await store.create(job("r2", { prompt: "a dog" }));
-  worker.enqueue("r2");
-  const j2 = await settle(store, "r2");
-  assert.equal(j2?.engine, "seedream");
-  assert.equal(j2?.attempts, 1); // 冷却中不再打 codex
-  assert.match(j2?.fallbackReason ?? "", /cooldown.*rejected/);
+  // 之后的单不再白打 codex：由 engine-router 冷却（回报里带了报错原文），见下面 router 那组测试
 });
 
 test("瞬时 429（非额度）：原地短等重试成功，不冷却、不降级", async (t) => {
@@ -231,7 +203,6 @@ test("瞬时 429（非额度）：原地短等重试成功，不冷却、不降�
   assert.equal(j?.status, "done");
   assert.equal(j?.engine, "codex");
   assert.equal(j?.attempts, 2);
-  assert.equal(worker.codexBlockedUntil, 0);
   assert.equal(ark.calls.length, 0);
 });
 
@@ -245,7 +216,6 @@ test("瞬时 429 重试用完：只这一单降级 seedream，不设长冷却", 
   assert.equal(j?.engine, "seedream");
   assert.equal(j?.attempts, 4); // codex 1 + 2 次原地重试 + seedream 1
   assert.match(j?.fallbackReason ?? "", /rate-limited.*this job only/);
-  assert.equal(worker.codexBlockedUntil, 0);
   // 下一单照常先打 codex
   await store.create(job("rl3", { prompt: "a dog" }));
   worker.enqueue("rl3");

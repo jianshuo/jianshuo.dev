@@ -13,8 +13,8 @@ export const HOME = process.env.HOME ?? homedir();
 export const WORKSPACE = process.env.WORKSPACE ?? join(APP_ROOT, "workspace");
 export const MODEL = process.env.MODEL ?? "claude-opus-4-8";
 
-// 写书引擎（codex）的独立凭据链与会话目录——server 的会话侧栏也要读它。
-export const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
+// 旧 codex 写书腿的会话目录（2026-08-20 ~ 10-25 的书过程在 CODEX_HOME/sessions/）——只剩 server 的会话侧栏
+// 回看历史用。写书已全走 engine-router，这条 Codex 登录链本身不再使用。
 export const CODEX_HOME = process.env.CODEX_HOME ?? join(HOME, ".codex");
 
 // 在飞登记目录：web 收单时落档，runner 跑完销档。见 src/inflight.ts。

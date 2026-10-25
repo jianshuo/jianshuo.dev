@@ -41,10 +41,7 @@ export interface Config {
   jobDeadlineMs: number;
   /** 瞬时 429（非额度）原地重试前的等待序列（ms），用完还不行才（auto 单）降级这一单 */
   rateLimitRetryMs: number[];
-  /** 真额度错误没带重置时刻时的冷却时长 */
-  quotaCooldownMs: number;
-  /** Codex 候选模型全被账号拒时的冷却时长（期间 auto 单直走 Seedream，不再白打一枪） */
-  modelRejectedCooldownMs: number;
+  // （额度 / 模型被拒的冷却 2026-10-25 起只在 engine-router 一处记，QUOTA_COOLDOWN_MS 等已删）
   /** group 粘性（某组一旦走了 Seedream，后续 auto 单同走 Seedream）的保留期 */
   groupTtlMs: number;
   /**
@@ -123,8 +120,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     convertBin: env.CONVERT_BIN ?? "convert",
     jobDeadlineMs: Number(env.JOB_DEADLINE_MS ?? 8 * 60 * 1000),
     rateLimitRetryMs: (env.RATE_LIMIT_RETRY_MS ?? "15000,30000").split(",").map((s) => Number(s.trim())).filter((n) => n >= 0),
-    quotaCooldownMs: Number(env.QUOTA_COOLDOWN_MS ?? 30 * 60 * 1000),
-    modelRejectedCooldownMs: Number(env.MODEL_REJECTED_COOLDOWN_MS ?? 30 * 60 * 1000),
     groupTtlMs: Number(env.GROUP_TTL_MS ?? 7 * 24 * 3600 * 1000),
     router: env.ROUTER_URL && env.ROUTER_TOKEN ? { url: env.ROUTER_URL, token: env.ROUTER_TOKEN } : undefined,
   };

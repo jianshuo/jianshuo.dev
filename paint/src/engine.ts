@@ -63,17 +63,6 @@ export function isRateLimited(error?: { code?: string; message?: string; detail?
   return RATE_LIMITED.some((re) => re.test(errorBlob(error)));
 }
 
-/** 额度错误里带的重置时刻（ms epoch）；拿不到返回 undefined */
-export function quotaResetAt(error: { message?: string; detail?: unknown } | undefined, now = Date.now()): number | undefined {
-  if (!error) return undefined;
-  const blob = errorBlob(error).replace(/\\"/g, '"');
-  const secs = blob.match(/"resets_in_seconds"\s*:\s*(\d+)/);
-  if (secs) return now + Number(secs[1]) * 1000;
-  const at = blob.match(/"resets_at"\s*:\s*(\d+)/);
-  if (at) return Number(at[1]) * 1000;
-  return undefined;
-}
-
 export function buildArgs(job: Job, outPath: string, model?: string): string[] {
   const { prompt, mode, params } = job;
   // `--provider` is a GLOBAL option and must precede the subcommand (verified against

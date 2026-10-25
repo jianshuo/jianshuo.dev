@@ -3,7 +3,7 @@
 //   node dist/book-runner.js /opt/claude-agent/inflight/<id>.json
 //
 // 由 web 进程通过 systemd-run 拉起（见 src/book-launch.ts），一单一进程一单元。
-// 从 inflight JSON 读全部参数 → 跑三腿引擎 → 自己做完全部收尾（登记簿、退款、
+// 从 inflight JSON 读全部参数 → 交给 engine-router 写 → 自己做完全部收尾（登记簿、退款、
 // 推送、社区帖）→ 销档 → 退出。web 进程从起单那一刻起就不再参与。
 //
 // 退出码：0 = 这一单已有定论（写成 / 失败均算）；1 = runner 自己崩了（参数读不到、
@@ -12,7 +12,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { INFLIGHT_DIR } from "./env.js";
 import { removeInflight, writeInflight, type Inflight, type InflightCreate, type InflightRevise } from "./inflight.js";
-import { BOOK_ENGINE_LABEL, CODEX_BOOK_PREAMBLE, resumeAfterRestartHint, runBookEngine } from "./book-engine.js";
+import { BOOK_PREAMBLE, resumeAfterRestartHint, runBookEngine } from "./book-engine.js";
 import { bookGap, continueHint, isHardGap } from "./book-complete.js";
 import {
   findBookByJobId, notifyAdmin, notifyBookDone, patchThreadEntry, readBookMetaRetry, refundBook,
@@ -30,7 +30,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
     ? `作者署名「${author}」——book.json 的 author 字段用这个名字，封面/页脚照此署名。`
     : `提交者没有留名字——book.json 不写 author 字段，全书不署名（不要默认署任何人名）。`;
   const prompt =
-    `${CODEX_BOOK_PREAMBLE}\n\n` +
+    `${BOOK_PREAMBLE}\n\n` +
     `任务：写一本书。${byline}\n` +
     `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
     (hidden ? `提交者选了「隐藏」——建 book.json 时顶层写 "hidden": true（不上公开书架，只有主人看得到）。\n` : "") +
@@ -94,7 +94,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
   let ok = false;
   let reply = "";
   try {
-    // 幂等键（走 engine-router 时生效）：runner 被重启后重提交会接回同一个 router 任务
+    // 幂等键：runner 被重启后重提交会接回同一个 router 任务
     let out = await runBookEngine(prompt, (id) => { sessionId = id; }, { key: `${jobId}:main`, taskClass: "book" });
     // 完成度闸门（2026-09-23）：引擎说「写完了」不算数，book.json 里章节全 done 才算。
     // 没齐就把「还差什么」喂回引擎续写（最多 BOOK_CONTINUE_MAX 轮，文件是真源、不 resume）；
@@ -131,7 +131,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
     reply = out.reply;
     console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
     if (!ok) {
-      await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=${BOOK_ENGINE_LABEL} · ${String(out.error || "").slice(0, 100)}`);
+      await notifyAdmin("写书任务失败", `${seed.slice(0, 40)} · 引擎=router · ${String(out.error || "").slice(0, 100)}`);
       await refundBook(auth, { ref: jobId });   // 预扣一口价没写成——原数退回
     }
   } catch (e) {
@@ -184,7 +184,7 @@ async function runRevise(rec: InflightRevise): Promise<void> {
   console.log(`[revise] ${resumed ? `resume(第 ${rec.attempts} 次)` : "start"} slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author ? `这本书署名「${author}」，改动不要动署名。` : "这本书不署名，保持不署名。";
   const prompt =
-    `${CODEX_BOOK_PREAMBLE}\n\n` +
+    `${BOOK_PREAMBLE}\n\n` +
     `任务：按 skill 的「修书模式」修改一本已出版的书。\n` +
     `slug：${slug}\n${byline}\n` +
     `书的主人提出的修改指令：\n${instruction}\n\n` +
@@ -208,7 +208,7 @@ async function runRevise(rec: InflightRevise): Promise<void> {
     console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
     if (out.ok) await registerBookPost(auth, slug);   // 标题/hidden/章节数可能变了——刷新书帖
     if (!out.ok) {
-      await notifyAdmin("修书任务失败", `${slug} · 引擎=${BOOK_ENGINE_LABEL} · ${String(out.error || "").slice(0, 100)}`);
+      await notifyAdmin("修书任务失败", `${slug} · 引擎=router · ${String(out.error || "").slice(0, 100)}`);
       await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40
     }
   } catch (e: any) {
