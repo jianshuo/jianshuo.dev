@@ -85,7 +85,16 @@ export async function codexAccessToken(
   }
 }
 
-async function lock(path: string, waitMs = 30_000): Promise<() => Promise<void>> {
+// 三个时长必须满足：持锁上限（刷新请求超时）< 过期判定 < 等锁上限。
+//  - 持锁最久 ≈ REFRESH_TIMEOUT_MS：刷新请求有超时，持锁的进程不会无限期占着；
+//  - 锁文件超过 LOCK_STALE_MS 才算死锁（远大于持锁上限，活着的持锁者不会被误清——误清就是
+//    两个进程拿同一个 refresh token 各刷一次，整条链作废）；
+//  - 等锁的人最多等 LOCK_WAIT_MS（大于过期判定）：持锁进程崩了，等待者自己就能清掉死锁接着刷。
+export const REFRESH_TIMEOUT_MS = 20_000;
+export const LOCK_STALE_MS = 60_000;
+export const LOCK_WAIT_MS = 75_000;
+
+export async function lock(path: string, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS): Promise<() => Promise<void>> {
   const t0 = Date.now();
   for (;;) {
     try {
@@ -95,10 +104,10 @@ async function lock(path: string, waitMs = 30_000): Promise<() => Promise<void>>
       return () => unlink(path).catch(() => {});
     } catch (e: any) {
       if (e?.code !== "EEXIST") throw e;
-      // 持锁进程崩了留下的死锁：超过 2 分钟的锁文件视为过期
       const st = await stat(path).catch(() => null);
-      if (st && Date.now() - st.mtimeMs > 120_000) await unlink(path).catch(() => {});
-      if (Date.now() - t0 > waitMs) throw new Error("codex auth lock timeout");
+      if (st && Date.now() - st.mtimeMs > staleMs) await unlink(path).catch(() => {});
+      // 文案带 failed to authenticate：万一真等超时，换腿判据会换账号重跑，而不是整单失败
+      if (Date.now() - t0 > waitMs) throw new Error("failed to authenticate: codex auth lock timeout");
       await new Promise((r) => setTimeout(r, 200));
     }
   }
@@ -120,6 +129,7 @@ async function refreshAndWrite(
       refresh_token: tokens.refresh_token,
       scope: "openid profile email",
     }),
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`codex refresh ${r.status}: ${text.slice(0, 300)}`);

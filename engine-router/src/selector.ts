@@ -18,6 +18,7 @@ import {
   type Strategy,
 } from "./config.js";
 import type { Usage } from "./probes.js";
+import type { Capabilities } from "./spec.js";
 
 const WEEK_MS = 7 * 86400_000;
 const DEFAULT_ORDER: EngineName[] = ["kimi", "codex", "claude", "gpt-image", "seedream"];
@@ -42,6 +43,7 @@ export type SelectRequest = {
   allow?: string[]; // 硬：只在这些账号键里挑（会话 strict 档用）
   exclude?: string[]; // 硬：本 run 里已经倒下过的账号键
   prefer?: string; // 粘性：合格就直接用它（会话续接用原账号）
+  capabilities?: Capabilities; // 硬：做不到这些限制的引擎不选
   force?: boolean; // 无视配速和红线，只要没撞墙
 };
 
@@ -60,6 +62,21 @@ export type SelectResult = {
   candidates: Candidate[];
   waitUntil: number | null; // 全部不合格时，最早可能有账号恢复的时刻
 };
+
+/**
+ * 这个引擎能不能真正落实调用方要求的限制？做不到就返回理由（不选它），而不是假装做到：
+ * - codex：唯一的工具就是 shell，关不掉；network:false 靠 workspace-write 沙箱（默认断网），
+ *   write:false 靠 read-only 沙箱。
+ * - claude / kimi（Claude Code CLI）：只要 Bash 在，curl 就能出网——network:false 必须同时 shell:false
+ *   （届时连 WebFetch/WebSearch 一起禁）。
+ */
+export function capabilityGap(engine: EngineName, caps: Capabilities | undefined): string {
+  if (!caps) return "";
+  if (engine === "codex" && caps.shell === false) return "cannot enforce shell:false (codex only acts through shell)";
+  if ((engine === "claude" || engine === "kimi") && caps.network === false && caps.shell !== false)
+    return "cannot enforce network:false while shell is allowed";
+  return "";
+}
 
 export function quotaKey(cfg: Config, engine: EngineName, id: string): string {
   const from = cfg.engines[engine]?.quota_from;
@@ -96,7 +113,9 @@ function evaluate(cfg: Config, st: SelectState, req: SelectRequest, engine: Engi
   const c: Candidate = { engine, id: a.id, key, eligible: false, reason: "", headroom: null };
   if (a.disabled) return { ...c, reason: "disabled" };
   if (req.allow && !req.allow.includes(key)) return { ...c, reason: "not allowed for this thread" };
-  if (req.exclude?.includes(key)) return { ...c, reason: "already failed in this run" };
+  if (req.exclude?.includes(key)) return { ...c, reason: "refused this task in this run" };
+  const gap = capabilityGap(engine, req.capabilities);
+  if (gap) return { ...c, reason: gap };
   const busy = st.inflight[key]?.count ?? 0;
   if (busy >= cfg.concurrency.per_account) return { ...c, reason: `busy (${busy} running)`, waitUntil: now + 30_000 };
   const cool = st.cooldown[qk] ?? 0;
@@ -115,7 +134,9 @@ function evaluate(cfg: Config, st: SelectState, req: SelectRequest, engine: Engi
   }
 
   const u = st.usage[qk];
-  if (u && !u.healthy) return { ...c, reason: `unhealthy: ${u.error ?? "?"}` };
+  // 不健康也给个「下次探测」的恢复时刻：排队模式会等它重探，而不是当它永远回不来直接判失败。
+  if (u && !u.healthy)
+    return { ...c, reason: `unhealthy: ${u.error ?? "?"}`, waitUntil: Math.max(now + 60_000, u.probedAt + staleAfter(cfg, engine) / 2.5) };
   if (!u || now - u.probedAt > staleAfter(cfg, engine) || (u.used5h == null && u.used7d == null))
     return { ...c, eligible: true, reason: "usage unknown" };
 

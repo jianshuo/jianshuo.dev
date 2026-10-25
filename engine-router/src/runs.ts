@@ -6,8 +6,8 @@
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
-import { existsSync, openSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { existsSync, openSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { ENGINE_NAMES, modelFor, type EngineName, type Kind } from "./config.js";
 import { APP_ROOT, RUNS_DIR, WORK_ROOT } from "./env.js";
 import { shouldTryNextLeg } from "./legs.js";
@@ -58,6 +58,7 @@ export type Attempt = {
   ok?: boolean;
   error?: string;
   sessionId?: string;
+  deadSince?: number; // watch 第一次发现 runner 没了还没结果的时刻
   estimate: { d5h: number; d7d: number };
   before?: { u5: number | null; r5: number | null; u7: number | null; r7: number | null; shared: boolean };
 };
@@ -71,7 +72,7 @@ export type RunRecord = {
   req: RunRequest;
   threadId: string;
   attempts: Attempt[];
-  tried: string[];
+  tried: string[]; // 本 run 里拒答过的账号（永久排除）；额度/凭据问题不进这里，靠冷却
   queuedReason?: string;
   eta?: number | null;
   reply?: string;
@@ -82,11 +83,56 @@ export type RunRecord = {
 
 const MAX_ATTEMPTS = 6;
 const PRIORITY = { user: 0, normal: 1, background: 2 } as const;
-const WORKDIR_ROOTS = (process.env.WORKDIR_ROOTS ?? `${WORK_ROOT},/opt/claude-agent/workspace`)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .map((s) => resolve(s));
+/**
+ * 绝对路径并解析符号链接。还不存在的路径：解析最近一个存在的上级，再把剩下的拼回去——
+ * 否则新书目录（还没建）和它已存在的上级一个解析了一个没解析，比较对不上。
+ * 根和调用方路径都要过这一道。
+ */
+function real(p: string): string {
+  let head = resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const parent = dirname(head);
+      if (parent === head) return resolve(p);
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+}
+const roots = (spec: string) =>
+  spec
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(real);
+// 每次校验时现算：模块加载时目录可能还不存在，符号链接解析不了，之后就对不上了。
+const workdirRoots = () => roots(process.env.WORKDIR_ROOTS ?? `${WORK_ROOT},/opt/claude-agent/workspace`);
+// 参考资料目录（只读的 skill 等）：工作目录的根 + 额外的只读根。
+const contextRoots = () => [...workdirRoots(), ...roots(process.env.CONTEXT_ROOTS ?? "/opt/claude-agent/.claude/skills")];
+
+/**
+ * 调用方给的路径必须落在白名单根下（先解析符号链接）。router 自己的目录（.env、
+ * accounts/ 里的 Codex 凭据、state/）一律不行——work/ 下面的 thread 目录除外；
+ * work/ 根本身也不行（否则能看到别的调用方的 thread 目录）。
+ */
+function checkPath(p: unknown, allowed: string[], what: string): string {
+  const abs = real(String(p));
+  const under = (r: string) => abs === r || abs.startsWith(r + sep);
+  const appRoot = real(APP_ROOT);
+  const workRoot = real(WORK_ROOT);
+  if (abs === workRoot || (under(appRoot) && !abs.startsWith(workRoot + sep)))
+    throw new HttpError(400, `${what} not allowed: ${abs}`);
+  if (!allowed.some(under)) throw new HttpError(400, `${what} must be under one of: ${allowed.join(", ")}`);
+  return abs;
+}
+
+// 调用方的 env 只用来给工具传业务密钥（如 PAINT_API_TOKEN）。会改变进程行为或隔离边界的
+// 一律拒：HOME/CLAUDE_CONFIG_DIR 会绕过 auto-memory 隔离和会话目录，NODE_OPTIONS/LD_* 能注入代码。
+const ENV_DENY =
+  /^(HOME|PATH|USER|LOGNAME|SHELL|PWD|TMPDIR|TMP|TEMP|BASH_ENV|ENV|IFS|NODE_.*|LD_.*|DYLD_.*|PYTHON.*|PERL.*|RUBY.*|NPM_.*|CLAUDE_.*|ANTHROPIC_.*|CODEX_.*|OPENAI_.*|XDG_.*|GIT_.*|SSH_.*|SUDO_.*|SYSTEMD_.*|DBUS_.*)$/i;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
 const newId = (p: string) => p + "_" + randomBytes(9).toString("base64url");
@@ -109,16 +155,11 @@ export function normalizeRequest(b: any): RunRequest {
   if (kind === "image") throw new HttpError(501, "kind:image not implemented yet (P5)");
   if (b.thread_id != null && !ID_RE.test(String(b.thread_id))) throw new HttpError(400, "bad thread_id");
   const continuity: Continuity = ["strict", "loose", "none"].includes(b.continuity) ? b.continuity : "loose";
-  let workdir: string | undefined;
-  if (b.workdir != null) {
-    workdir = resolve(String(b.workdir));
-    if (!WORKDIR_ROOTS.some((r) => workdir === r || workdir!.startsWith(r + sep)))
-      throw new HttpError(400, `workdir must be under one of: ${WORKDIR_ROOTS.join(", ")}`);
-  }
+  const workdir = b.workdir != null ? checkPath(b.workdir, workdirRoots(), "workdir") : undefined;
+  const context_dirs = Array.isArray(b.context_dirs) ? b.context_dirs.slice(0, 10).map((d: unknown) => checkPath(d, contextRoots(), "context_dir")) : [];
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(b.env ?? {})) {
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CODEX_HOME|OPENAI_)/.test(k))
-      throw new HttpError(400, `env ${k} not allowed`);
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || ENV_DENY.test(k)) throw new HttpError(400, `env ${k} not allowed`);
     env[k] = String(v);
   }
   const budget = b.budget ?? {};
@@ -131,7 +172,7 @@ export function normalizeRequest(b: any): RunRequest {
     continuity,
     instructions: typeof b.instructions === "string" ? b.instructions : undefined,
     workdir,
-    context_dirs: Array.isArray(b.context_dirs) ? b.context_dirs.map(String).slice(0, 10) : [],
+    context_dirs,
     capabilities: { shell: b.capabilities?.shell, network: b.capabilities?.network, write: b.capabilities?.write },
     env,
     quality: b.quality === "fast" ? "fast" : b.quality === "best" ? "best" : undefined,
@@ -152,8 +193,11 @@ export function normalizeRequest(b: any): RunRequest {
 }
 
 /** 撞墙之后这个账号冷却到什么时候（按错误类型）。内容拒答不冷却——换别家写，这家照样能接别的活。 */
+const REFUSAL_RE = /violate.{0,20}usage policy|unable to respond to this request|\brefusal\b|high risk/i;
+export const isRefusal = (error: string) => REFUSAL_RE.test(error);
+
 export function cooldownFor(error: string, u: { reset5h: number | null; reset7d: number | null } | undefined, now: number): number {
-  if (/violate.{0,20}usage policy|unable to respond to this request|\brefusal\b|high risk/i.test(error)) return 0;
+  if (isRefusal(error)) return 0;
   if (/weekly|7-day|7d/i.test(error) && u?.reset7d && u.reset7d > now) return u.reset7d;
   if (/usage limit|quota|rate[ _-]?limit|too many requests|\b429\b|api error: 403/i.test(error))
     return u?.reset5h && u.reset5h > now ? u.reset5h : now + 30 * 60_000;
@@ -262,24 +306,30 @@ export class Runs {
     const r = this.runs.get(id);
     if (!r || (r.status !== "queued" && r.status !== "running")) return r;
     const a = r.attempts[r.attempts.length - 1];
-    if (r.status === "running" && a?.pid) {
-      try {
-        process.kill(-a.pid, "SIGTERM"); // detached = 自成进程组，连同引擎 CLI 一起
-      } catch {}
-      this.reserve(r, a, -1);
+    // endedAt 是「这次 attempt 已收尾」的唯一标记：cancel 和 finishAttempt 谁先同步地设上它，
+    // 谁负责释放预留——另一个看到已设就跳过，预留只释放一次。
+    if (r.status === "running" && a && a.endedAt == null) {
+      if (a.pid) {
+        try {
+          process.kill(-a.pid, "SIGTERM"); // detached = 自成进程组，连同引擎 CLI 一起
+        } catch {}
+      }
       a.endedAt = Date.now();
       a.ok = false;
       a.error = "cancelled";
+      this.reserve(r, a, -1);
     }
     await this.finish(r, "cancelled", { error: "cancelled" });
     return r;
   }
 
-  /** 干跑：这个请求现在会选谁、为什么。 */
+  /** 干跑：这个请求现在会选谁、为什么。不推进 round_robin 游标，看不到别人的 thread。 */
   async dryRun(raw: any, caller: string): Promise<SelectResult> {
     const req = normalizeRequest(raw);
     const thread = req.thread_id ? await this.threads.get(req.thread_id) : undefined;
-    return select(this.pool.cfg, this.pool.selectState(), this.selectRequest(req, thread, []));
+    if (req.thread_id && (!thread || (thread.caller !== caller && caller !== "admin"))) throw new HttpError(404, "thread not found");
+    const st = this.pool.selectState();
+    return select(this.pool.cfg, { ...st, cursors: { ...st.cursors } }, this.selectRequest(req, thread, []));
   }
 
   // ── 调度 ────────────────────────────────────────────────────────────────
@@ -296,6 +346,7 @@ export class Runs {
       require: req.engine_hints.require,
       exclude: tried,
       force: req.force,
+      capabilities: req.capabilities,
     };
     if (thread?.lastKey && req.continuity !== "none") {
       sr.prefer = thread.lastKey; // 粘性：原账号合格就继续用它，历史完整
@@ -309,6 +360,8 @@ export class Runs {
       .filter((r) => r.status === "queued")
       .sort((a, b) => PRIORITY[a.req.priority] - PRIORITY[b.req.priority] || a.createdAt - b.createdAt);
     for (const r of queued) {
+      // 快照是循环开始时拍的；每次 await 之后都要重看——期间可能被 cancel 了。
+      if (r.status !== "queued") continue;
       const running = [...this.runs.values()].filter((x) => x.status === "running" && x.req.kind === r.req.kind).length;
       const cap = r.req.kind === "image" ? this.pool.cfg.concurrency.global_image : this.pool.cfg.concurrency.global_text;
       if (running >= cap) {
@@ -316,6 +369,7 @@ export class Runs {
         continue;
       }
       const thread = await this.threads.get(r.threadId);
+      if (r.status !== "queued") continue;
       const res = select(this.pool.cfg, this.pool.selectState(), this.selectRequest(r.req, thread, r.tried));
       if (!res.pick) {
         const why = res.candidates.length ? res.candidates.map((c) => `${c.key}: ${c.reason}`).join("; ") : "no account configured for this kind";
@@ -399,6 +453,7 @@ export class Runs {
     };
     const specPath = join(RUNS_DIR, `${r.id}.attempt-${n}.json`);
     await writeFile(specPath, JSON.stringify(spec));
+    if (r.status !== "queued") return; // 写 spec 的工夫里被 cancel 了：不起跑
     r.attempts.push(a);
     r.status = "running";
     r.queuedReason = undefined;
@@ -415,29 +470,45 @@ export class Runs {
   }
 
   // ── 监视与收尾 ──────────────────────────────────────────────────────────
+  private watching = false;
+
+  /**
+   * 每 2 秒一轮。防重入：上一轮还没走完（读文件、收尾里有 await）就跳过——两轮重叠会把同一
+   * 次 attempt 收尾两次，第二次甚至落到新起的 attempt 上（代码审查 #1）。「进程没了还没结果」
+   * 不再原地睡等：这一轮记下时刻，3 秒后的轮次再确认。
+   */
   async watch(): Promise<void> {
-    for (const r of this.runs.values()) {
-      if (r.status !== "running") continue;
-      const a = r.attempts[r.attempts.length - 1];
-      if (!a) continue;
-      const rf = resultFile(r.id, a.n);
-      let res: AttemptResult | null = null;
-      if (existsSync(rf)) {
-        try {
-          res = JSON.parse(await readFile(rf, "utf8"));
-        } catch {}
-      } else if (a.error?.startsWith("spawn failed") || (a.pid && !(this.opts.pidAlive ?? pidAlive)(a.pid) && Date.now() - a.startedAt > 5000)) {
-        // 进程没了还没结果：再给 3 秒（结果文件可能正在 rename）
-        await new Promise((x) => setTimeout(x, 3000));
-        if (existsSync(rf)) continue;
-        res = { ok: false, reply: "", error: a.error ?? "runner died without a result", sessionId: "" };
+    if (this.watching) return;
+    this.watching = true;
+    try {
+      for (const r of this.runs.values()) {
+        if (r.status !== "running") continue;
+        const a = r.attempts[r.attempts.length - 1];
+        if (!a || a.endedAt != null) continue;
+        const rf = resultFile(r.id, a.n);
+        let res: AttemptResult | null = null;
+        if (existsSync(rf)) {
+          try {
+            res = JSON.parse(await readFile(rf, "utf8"));
+          } catch {} // 半截文件：下一轮再读
+        } else if (a.error?.startsWith("spawn failed")) {
+          res = { ok: false, reply: "", error: a.error, sessionId: "" };
+        } else if (a.pid && !(this.opts.pidAlive ?? pidAlive)(a.pid) && Date.now() - a.startedAt > 5000) {
+          // 结果文件可能正在 rename：先记下，过 3 秒还没有才判死
+          if (!a.deadSince) a.deadSince = Date.now();
+          else if (Date.now() - a.deadSince >= 3000) res = { ok: false, reply: "", error: "runner died without a result", sessionId: "" };
+        }
+        if (res) await this.finishAttempt(r, a, res);
       }
-      if (res) await this.finishAttempt(r, a, res);
+    } finally {
+      this.watching = false;
     }
   }
 
   private async finishAttempt(r: RunRecord, a: Attempt, res: AttemptResult): Promise<void> {
-    if (r.status !== "running") return;
+    // 只收尾「当前在跑的最后一次 attempt」，且只收一次。标记和释放预留都在第一个 await 之前
+    // 同步完成——cancel() 用同一个 endedAt 判断，谁先到谁释放（审查 #3）。
+    if (r.status !== "running" || a.endedAt != null || r.attempts[r.attempts.length - 1] !== a) return;
     a.endedAt = Date.now();
     a.ok = res.ok;
     a.error = res.ok ? undefined : res.error;
@@ -449,6 +520,11 @@ export class Runs {
     if (thread && a.sessionId) {
       thread.sessions[a.key] = a.sessionId;
       thread.lastKey = a.key;
+    }
+    if (r.status !== "running") {
+      // await 期间被 cancel 了：会话号照记（下次续聊还能接上），状态不动
+      if (thread) await this.threads.save(thread);
+      return;
     }
 
     if (res.ok) {
@@ -464,7 +540,9 @@ export class Runs {
     if (shouldTryNextLeg(res.error) && r.attempts.length < MAX_ATTEMPTS) {
       const until = cooldownFor(res.error, this.pool.usage(a.quotaKey), Date.now());
       if (until) this.pool.setCooldown(a.quotaKey, until);
-      r.tried.push(a.key);
+      // 只有内容拒答才在本 run 里永久排除这个账号（换别家写）；额度/凭据问题靠冷却——冷却会
+      // 结束，排队模式就能等到最早恢复的账号，而不是三家都撞过一次就判失败（审查 #5）。
+      if (isRefusal(res.error)) r.tried.push(a.key);
       r.status = "queued";
       await this.save(r);
       await this.event(r, { type: "switched", from: a.key, reason: res.error.slice(0, 300) });

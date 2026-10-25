@@ -31,7 +31,9 @@ export async function runClaude(spec: AttemptSpec, account: Account, secrets: Re
   const memDir = join(HOME, ".claude", "projects", spec.cwd.replace(/\//g, "-"), "memory");
   await rm(memDir, { recursive: true, force: true }).catch(() => {});
 
-  const env: Record<string, string | undefined> = { ...process.env, ...spec.env };
+  // 调用方的 env 先铺、router 自己的进程环境后盖：HOME/PATH 这类关键变量调用方改不了
+  // （runs.ts 的 ENV_DENY 已经拦过一道，这里是第二道）。
+  const env: Record<string, string | undefined> = { ...spec.env, ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("ANTHROPIC_")) delete env[k];
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   if (spec.engine === "kimi") {
@@ -135,7 +137,10 @@ export async function runCodex(spec: AttemptSpec, account: Account, emit: Emit):
   } catch (e: any) {
     return { ok: false, reply: "", error: String(e?.message ?? e), sessionId: "" };
   }
-  const sandbox = spec.capabilities.write === false ? "read-only" : "danger-full-access";
+  // read-only：不能写也不能联网；workspace-write：只能写 workdir、默认断网；其余全开。
+  // shell:false 的任务挑选器根本不会派给 codex（selector.ts capabilityGap）。
+  const sandbox =
+    spec.capabilities.write === false ? "read-only" : spec.capabilities.network === false ? "workspace-write" : "danger-full-access";
   // exec 级参数紧跟 exec、在 resume 子命令之前；--skip-git-repo-check 必带（workdir 多半不是 git 仓库）；
   // stdin 必须 ignore（否则等 EOF 挂住）。
   const args = ["exec", "--json", "-s", sandbox, "-C", spec.workdir, "--skip-git-repo-check"];
@@ -156,7 +161,7 @@ export async function runCodex(spec: AttemptSpec, account: Account, emit: Emit):
   return new Promise((resolve) => {
     const child = spawn(CODEX_BIN, args, {
       cwd: spec.workdir,
-      env: { ...process.env, ...spec.env, CODEX_HOME: codexHome },
+      env: { ...spec.env, ...process.env, CODEX_HOME: codexHome },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let sessionId = spec.resumeSession ?? "";

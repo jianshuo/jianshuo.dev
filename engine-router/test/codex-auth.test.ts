@@ -1,10 +1,10 @@
 // Codex 链：过期判断、刷新写回（RFC3339 last_refresh）、锁内重读、忙时不刷新。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, readdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexAccessToken, jwtExpMs, needsRefresh } from "../src/codex-auth.ts";
+import { codexAccessToken, jwtExpMs, needsRefresh, lock, REFRESH_TIMEOUT_MS, LOCK_STALE_MS, LOCK_WAIT_MS } from "../src/codex-auth.ts";
 
 const jwt = (payload: object) => `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`;
 const NOW = Date.parse("2026-10-25T05:00:00Z");
@@ -70,6 +70,19 @@ test("两个调用同时刷新：只刷一次（锁内重读），绝不用旧 r
   assert.equal(calls, 1);
   assert.equal(a.refresh_token, "rt-2");
   assert.equal(b.refresh_token, "rt-2");
+});
+
+test("锁：持锁进程崩了留下的过期锁会被等待者清掉；没过期的锁等超时报 failed to authenticate（审查 #9）", async () => {
+  const d = await mkdtemp(join(tmpdir(), "lock-"));
+  const p = join(d, "auth.json.lock");
+  await writeFile(p, "999");
+  const old = new Date(Date.now() - 120_000);
+  await utimes(p, old, old);
+  const release = await lock(p, 2000, 60_000); // 过期锁：立刻拿到
+  await release();
+  await writeFile(p, "999"); // 新鲜的锁：等不到
+  await assert.rejects(lock(p, 300, 60_000), /failed to authenticate: codex auth lock timeout/);
+  assert.ok(REFRESH_TIMEOUT_MS < LOCK_STALE_MS && LOCK_STALE_MS < LOCK_WAIT_MS, "持锁上限 < 过期判定 < 等锁上限");
 });
 
 test("有 run 在用这条链（noRefresh）：过期也不刷，抛错交给 monitor 保留旧数据", async () => {

@@ -49,6 +49,18 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 事件：`queued` / `started` / `session` / `text` / `tool` / `switched` / `done`。
 
+**路径与 env**：`workdir` 必须在 `WORKDIR_ROOTS` 下，`context_dirs` 必须在 `WORKDIR_ROOTS` 或 `CONTEXT_ROOTS`（缺省 `/opt/claude-agent/.claude/skills`）下，都先解析符号链接再比较；router 自己的目录（`work/<thread>` 除外）和 `work/` 根一律拒。`env` 只用来传业务密钥（如 `PAINT_API_TOKEN`），HOME / PATH / NODE_* / LD_* / CLAUDE_* / CODEX_* / XDG_* 等会改变进程行为或隔离边界的变量一律拒。
+
+**capabilities 的真实语义**（做不到的引擎挑选器不选，候选理由里写明）：
+
+| 要求 | codex | claude / kimi |
+|---|---|---|
+| `write:false` | `read-only` 沙箱（也断网） | 禁 Write / Edit / NotebookEdit |
+| `network:false` | `workspace-write` 沙箱（只能写 workdir，断网；10/25 线上实测 curl 解析不了域名） | 只有同时 `shell:false` 才派（否则 Bash 能 curl） |
+| `shell:false` | 不派（codex 只靠 shell 干活） | 禁 Bash |
+
+**已知风险（代码审查 #7，暂未处理）**：引擎 CLI 和 router 是同一个系统用户，被注入的任务能读到 `/opt/engine-router/.env`（全部订阅 token 和 ROUTER_TOKENS）和 `accounts/*/auth.json`。别把不可信的内容（陌生网页、用户投稿）原样喂给 router 跑；根治方案是引擎改用单独的低权限用户、每次只拿被选中账号的凭据。
+
 ## 账号
 
 `/opt/engine-router/config.json`（不含密钥，样板见 `config.example.json`）+ `/opt/engine-router/.env`（密钥，600）。改完 `systemctl reload engine-router`，不用重启。

@@ -166,6 +166,31 @@ test("学到的单次消耗优先于配置预估；size=large 翻倍", () => {
   assert.equal(select(c, st, { kind: "text", require: ["kimi"], taskClass: "book", size: "large" }, NOW).pick, null);
 });
 
+test("capabilities：做不到的引擎不选（审查 #6）", () => {
+  const c = cfg();
+  const st = state({ "claude/claude-1": u(0, 0), "claude/claude-2": u(0, 0), "codex/codex-1": u(50, 30), "kimi/kimi-1": u(0, 0) });
+  // network:false 但允许 shell → Claude 系能 curl 出网，只有 codex（workspace-write 断网）做得到
+  const r1 = select(c, st, { kind: "text", capabilities: { network: false } }, NOW);
+  assert.equal(r1.pick?.key, "codex/codex-1");
+  assert.match(r1.candidates.find((x) => x.key === "kimi/kimi-1")!.reason, /network:false while shell/);
+  // shell:false → codex 做不到；Claude 系可以
+  const r2 = select(c, st, { kind: "text", capabilities: { shell: false } }, NOW);
+  assert.notEqual(r2.pick?.engine, "codex");
+  assert.match(r2.candidates.find((x) => x.key === "codex/codex-1")!.reason, /shell:false/);
+  // network:false + shell:false → 只有 Claude 系（禁 Bash + WebFetch/WebSearch）
+  const r3 = select(c, st, { kind: "text", capabilities: { network: false, shell: false } }, NOW);
+  assert.ok(r3.pick && r3.pick.engine !== "codex");
+  // 没要求 → 不影响
+  assert.ok(select(c, st, { kind: "text", capabilities: {} }, NOW).pick);
+});
+
+test("不健康的账号给出下次探测的恢复时刻，排队模式能等它（审查 #5）", () => {
+  const c = cfg();
+  const r = select(c, state({ "kimi/kimi-1": u(0, 0, { healthy: false, error: "401", probedAt: NOW - 1000 }) }), { kind: "text", require: ["kimi"] }, NOW);
+  assert.equal(r.pick, null);
+  assert.ok(r.waitUntil && r.waitUntil > NOW);
+});
+
 test("出图：gpt-image 读 codex 的额度；failover 先 gpt-image 再 seedream；seedream 日上限", () => {
   const c = parseConfig({
     engines: {
