@@ -63,6 +63,20 @@ describe("书架类目", () => {
   });
 });
 
+describe("书架作者", () => {
+  it("author 缺省回落主人 profile 名；显式 author: \"\" = 不署名，不回落", async () => {
+    const owner = await anonScopeFromToken(OWNER_TOK);
+    const env = fakeEnv({
+      [srcKey("blank")]: newBook("blank", { author: "", owner }),
+      [srcKey("nometa")]: JSON.stringify({ ...JSON.parse(newBook("nometa", { owner })), author: undefined }),
+    });
+    const { books } = await (await call(env, { format: "json" })).json();
+    const au = Object.fromEntries(books.map((b) => [b.slug, b.author]));
+    expect(au.blank).toBe("");
+    expect(au.nometa).toBeTruthy();
+  });
+});
+
 describe("书架缓存", () => {
   it("第一次请求同步现算并落 R2；book.json 偷偷改了但没失效 → 仍旧读缓存；删缓存 → 再同步现算", async () => {
     const env = await shelfEnv();

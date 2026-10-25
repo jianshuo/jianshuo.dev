@@ -434,8 +434,9 @@ async function buildShelf(env) {
     if (!b || !b.createdAt) return null;
     // 作者：book.json 自报优先；没有的按书主人 owner 显示 profile.name（没设置则
     // id 前 6 位大写），owner 缺失的老书回落发布者账号（ae209ac5 → 建硕）。
+    // 显式写了 author: "" = 主人要求不署名，不回落。
     let author = String(b.author || '').trim().slice(0, 20);
-    if (!author) {
+    if (!author && b.author !== '') {
       try { author = await readProfileName(env, b.owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
       catch {}
     }
