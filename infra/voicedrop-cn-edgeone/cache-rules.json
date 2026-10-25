@@ -41,6 +41,18 @@
                   ]
                 },
                 {
+                  "Condition": "${http.request.file_extension} in ['mp3']",
+                  "Actions": [
+                    {
+                      "Name": "Cache",
+                      "CacheParameters": {
+                        "CustomTime": { "Switch": "on", "IgnoreCacheControl": "on", "CacheTime": 2592000 }
+                      }
+                    },
+                    { "Name": "RangeOriginPull", "RangeOriginPullParameters": { "Switch": "on" } }
+                  ]
+                },
+                {
                   "Condition": "${http.request.file_extension} in ['js', 'css', 'png', 'jpg', 'jpeg', 'ico', 'gif', 'svg', 'woff', 'woff2', 'apk']",
                   "Actions": [
                     {

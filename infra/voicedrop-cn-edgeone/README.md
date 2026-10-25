@@ -92,6 +92,13 @@ voicedrop-agent worker 的 */5 cron 探活 `https://voicedrop.cn/`,与接入层�
 | 边缘函数 | `ef-twt1wxxe`(内容=本目录 edge-function.js),触发规则 rule-t54qd0ec(两 host 全路径) |
 | 缓存规则 | `rule-3sqtstkogxd7`(创建 payload=本目录 cache-rules.json,四分支 if/elif) |
 
+**2026-10-26 追加(动画版口播):** 缓存链在静态后缀分支前插 `file_extension in ['mp3']`:缓存 30 天
+(IgnoreCacheControl on,压过源站 max-age=300)+ `RangeOriginPull` 分片回源——不开分片时,第一个 Range
+请求会让 EO 先把整个 37MB 拉到边缘(实测一次 77 秒)。安全靠地址:动画版入口页(不缓存)里的
+`narration.mp3?v=<内容哈希>` 由 build_html.mjs 生成,换音频即换地址(CacheKey FullURLCache=on)。
+书架函数 functions/voicedrop/books/[[path]].js 同日起自己认 Range(之前 206 是 CF 缓存层切的,EO 回源拿不到)。
+改规则的线上快照:本目录 rule-backup-2026-10-26.json(改之前)。
+
 **2026-07-24 追加(App API 入口收敛):** `/agent/*`、`/reco/*` 也从 voicedrop.cn 进——
 边缘函数同源透传(与 /files 同款),`rule-3sqtstkogxd7` 前插 origin-rewrite SubRule
 (`ModifyOrigin` → `jianshuo.dev` HTTPS + `HostHeader` custom jianshuo.dev,打到 zone 级

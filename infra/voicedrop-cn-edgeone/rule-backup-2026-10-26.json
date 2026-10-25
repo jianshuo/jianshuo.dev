@@ -1,0 +1,120 @@
+{
+  "RequestId": "8022850d-4df4-4499-97a3-cf8851760426",
+  "Rules": [
+    {
+      "Branches": [
+        {
+          "Condition": "${http.request.host} in ['voicedrop.cn', 'www.voicedrop.cn']",
+          "SubRules": [
+            {
+              "Branches": [
+                {
+                  "Actions": [
+                    {
+                      "ModifyOriginParameters": {
+                        "HTTPSOriginPort": 443,
+                        "Origin": "jianshuo.dev",
+                        "OriginProtocol": "https",
+                        "OriginType": "IPDomain"
+                      },
+                      "Name": "ModifyOrigin"
+                    },
+                    {
+                      "HostHeaderParameters": {
+                        "Action": "custom",
+                        "ServerName": "jianshuo.dev"
+                      },
+                      "Name": "HostHeader"
+                    },
+                    {
+                      "HTTPUpstreamTimeoutParameters": {
+                        "ResponseTimeout": 300
+                      },
+                      "Name": "HTTPUpstreamTimeout"
+                    }
+                  ],
+                  "Condition": "${http.request.uri.path} in ['/agent/*', '/reco/*']"
+                }
+              ],
+              "Description": [
+                "origin-rewrite: /agent,/reco 改源站为 jianshuo.dev(zone worker 路由)"
+              ]
+            },
+            {
+              "Branches": [
+                {
+                  "Actions": [
+                    {
+                      "CacheParameters": {
+                        "FollowOrigin": {
+                          "DefaultCache": "on",
+                          "DefaultCacheStrategy": "off",
+                          "DefaultCacheTime": 86400,
+                          "Switch": "on"
+                        }
+                      },
+                      "Name": "Cache"
+                    }
+                  ],
+                  "Condition": "${http.request.uri.path} in ['/files/api/photo/*', '/files/api/asset/*']"
+                },
+                {
+                  "Actions": [
+                    {
+                      "CacheParameters": {
+                        "NoCache": {
+                          "Switch": "on"
+                        }
+                      },
+                      "Name": "Cache"
+                    }
+                  ],
+                  "Condition": "${http.request.uri.path} in ['/files/*', '/agent/*', '/reco/*']"
+                },
+                {
+                  "Actions": [
+                    {
+                      "CacheParameters": {
+                        "CustomTime": {
+                          "CacheTime": 86400,
+                          "IgnoreCacheControl": "off",
+                          "Switch": "on"
+                        }
+                      },
+                      "Name": "Cache"
+                    }
+                  ],
+                  "Condition": "${http.request.file_extension} in ['js', 'css', 'png', 'jpg', 'jpeg', 'ico', 'gif', 'svg', 'woff', 'woff2', 'apk']"
+                },
+                {
+                  "Actions": [
+                    {
+                      "CacheParameters": {
+                        "NoCache": {
+                          "Switch": "on"
+                        }
+                      },
+                      "Name": "Cache"
+                    }
+                  ],
+                  "Condition": "*"
+                }
+              ],
+              "Description": [
+                "cache-chain"
+              ]
+            }
+          ]
+        }
+      ],
+      "Description": [
+        "分支按序: 1照片/封面缓存遵循源站; 2其余/files/*不缓存(鉴权接口); 3静态后缀缓存1天; 4默认不缓存"
+      ],
+      "RuleId": "rule-3sqtstkogxd7",
+      "RuleName": "voicedrop-cn-cache",
+      "RulePriority": 1,
+      "Status": "enable"
+    }
+  ],
+  "TotalCount": 1
+}
