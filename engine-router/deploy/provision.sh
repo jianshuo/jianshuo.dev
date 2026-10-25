@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 首次开服 —— 在 VPS 上以 root 跑，幂等。Node/Caddy/codex CLI 这台机器已有。
-# 只建用户/组、目录、unit；密钥和 config.json 见 README「首次配置」。
+# 只建用户/组、目录、unit。config.json 由 ./deploy.sh 从仓库同步（真源在仓库）；
+# 密钥 .env 要手工放（见 README「账号」）。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT=/opt/engine-router

@@ -1,16 +1,28 @@
 {
+  "_note": "真源在 jianshuo.dev 仓库 engine-router/config.json：改仓库 → ./deploy.sh config（本地校验 + 同步 + reload）。别直接改 VPS，下次部署会被覆盖。密钥不在这里：token_env / key_env 只是 /opt/engine-router/.env 里的变量名。",
   "engines": {
     "claude": {
       "accounts": [
         { "id": "claude-1", "token_env": "CLAUDE_TOKEN_1" },
-        { "id": "claude-2", "token_env": "CLAUDE_TOKEN_2", "disabled": true }
+        { "id": "claude-2", "token_env": "CLAUDE_TOKEN_2" }
       ]
     },
     "codex": {
-      "accounts": [{ "id": "codex-1", "codex_home": "/opt/engine-router/accounts/codex-1", "disabled": true }]
+      "accounts": [{ "id": "codex-1", "codex_home": "/opt/engine-router/accounts/codex-1" }]
     },
     "kimi": {
-      "accounts": [{ "id": "kimi-1", "key_env": "KIMI_KEY_1", "base_url": "https://api.kimi.com/coding/" }]
+      "accounts": [
+        {
+          "id": "kimi-1",
+          "key_env": "KIMI_KEY_1",
+          "base_url": "https://api.kimi.com/coding/",
+          "env": {
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576",
+            "CLAUDE_CODE_EFFORT_LEVEL": "high"
+          }
+        }
+      ]
     },
     "gpt-image": { "quota_from": "codex", "accounts": [{ "id": "codex-1" }] },
     "seedream": { "accounts": [{ "id": "ark-1", "daily_cap": 200 }] }
@@ -18,7 +30,7 @@
   "models": {
     "claude": { "best": "claude-opus-4-8", "fast": "claude-haiku-4-5" },
     "codex": { "best": "gpt-6-astra", "fast": "gpt-6-astra" },
-    "kimi": { "best": "k3", "fast": "k3" }
+    "kimi": { "best": "k3[1m]", "fast": "k3[1m]" }
   },
   "limits": { "cap_5h": 85, "cap_7d": 92, "weekly_slack": 10, "pacing": true, "probe_every_s": 300, "claude_probe_every_s": 900 },
   "policies": {
@@ -31,12 +43,17 @@
     }
   },
   "estimates": {
-    "image": { "gpt-image": { "d5h": 3, "d7d": 1 } },
     "book": {
       "kimi": { "d5h": 20, "d7d": 4 },
       "codex": { "d5h": 30, "d7d": 5 },
       "claude": { "d5h": 25, "d7d": 4 }
-    }
+    },
+    "revise": {
+      "kimi": { "d5h": 5, "d7d": 1 },
+      "codex": { "d5h": 8, "d7d": 2 },
+      "claude": { "d5h": 6, "d7d": 1 }
+    },
+    "image": { "gpt-image": { "d5h": 3, "d7d": 1 } }
   },
   "concurrency": { "global_text": 2, "global_image": 3, "per_account": 1 },
   "portable": { "claude_family": true, "codex": false }

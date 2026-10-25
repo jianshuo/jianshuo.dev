@@ -78,9 +78,18 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 ## 账号
 
-`/opt/engine-router/config.json`（不含密钥，样板见 `config.example.json`）+ `/opt/engine-router/.env`（密钥，600）。改完 `systemctl reload engine-router`，不用重启。
+配置分两份：
+
+| 文件 | 真源 | 内容 | 怎么改 |
+|---|---|---|---|
+| `config.json` | **本仓库 `engine-router/config.json`**（部署时原样同步到 `/opt/engine-router/config.json`，router 从部署目录读） | 账号、模型、红线、策略、估算，不含密钥 | 改仓库 → 提交 → `./deploy.sh config`（本地校验 + 同步 + reload，不重启）。**别直接改 VPS**，下次部署会被覆盖 |
+| `.env` | 只在 VPS `/opt/engine-router/.env`（600） | token / key / ROUTER_TOKENS | 在 VPS 上改 → `systemctl reload engine-router` |
+
+`test/config-file.test.ts` 会校验仓库里的 `config.json`（字段、引用、不许出现密钥），写错了 `./deploy.sh config` 会在同步前拦住。
 
 现有账号：claude-1、claude-2、codex-1、kimi-1。各账号的登录身份与订阅档位记在私有记忆库，不放在这个公开仓库里。
+
+加账号都是两步：VPS 的 `.env` 放密钥，仓库的 `config.json` 加一行再 `./deploy.sh config`。
 
 - **加 Claude 账号**：在登录了那个订阅的电脑上跑 `claude setup-token`，把 token 写进 `.env` 的 `CLAUDE_TOKEN_N`，`config.json` 加 `{ "id": "claude-N", "token_env": "CLAUDE_TOKEN_N" }`。
 - **加 Codex 账号**：每个账号一条**新的** device-auth 链，绝不拷 auth.json（轮换式 refresh token，拷贝即互踢）：
@@ -109,7 +118,7 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 
 ## 运维
 
-- 部署：`./deploy.sh`（本地 test+build → rsync → lockfile 变了才 npm ci → 重启）。重启不杀正在跑的任务（`KillMode=process`，runner 是 detached 子进程，新 server 从 `state/runs/` 接手）。
+- 部署：`./deploy.sh`（本地 test+build → rsync 代码和 config.json → lockfile 变了才 npm ci → 重启）；只改配置用 `./deploy.sh config`。重启不杀正在跑的任务（`KillMode=process`，runner 是 detached 子进程，新 server 从 `state/runs/` 接手）。
 - 首次开服：`deploy/provision.sh` + `deploy/Caddyfile.snippet`。
 - 日志：`journalctl -u engine-router -f`；单个 run 的引擎输出在 `/opt/engine-router/state/runs/<run_id>.log`，事件流在 `<run_id>.jsonl`。
 - 状态：`state/pool.json`（用量 / 冷却 / 学到的消耗 / 游标）、`state/runs/`（14 天后自动清）、`state/threads/`、`state/cwd/<thread>`（Claude 系的会话落脚目录）。

@@ -96,7 +96,7 @@ VPS 约束：1 核、951MB 内存。全局并发闸门收在 router 手里。
 
 ## 账号注册表
 
-`/opt/engine-router/config.json`（不含密钥，进 vps-tokyo 灾备仓库），密钥在 `/opt/engine-router/.env`（600）：
+`config.json`（不含密钥；**2026-10-25 起真源在仓库 `engine-router/config.json`，`./deploy.sh config` 同步到 `/opt/engine-router/config.json`**），密钥在 `/opt/engine-router/.env`（600）。下面是计划阶段的示意，现行内容以仓库文件为准：
 
 ```json
 {
