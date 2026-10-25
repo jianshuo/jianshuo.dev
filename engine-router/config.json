@@ -53,6 +53,7 @@
       "codex": { "d5h": 8, "d7d": 2 },
       "claude": { "d5h": 6, "d7d": 1 }
     },
+    "video": { "claude": { "d5h": 40, "d7d": 8 } },
     "image": { "gpt-image": { "d5h": 3, "d7d": 1 } }
   },
   "concurrency": { "global_text": 2, "global_image": 3, "per_account": 1 },

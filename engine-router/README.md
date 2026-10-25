@@ -69,8 +69,9 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 |---|---|---|
 | **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`）。lab `.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 这一单失败（退款 + 管理员告警）。原来的三腿链 2026-10-25 已删，router 是唯一写书引擎 |
 | **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报（额度冷却只在 router 记）。`/opt/paint/.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 5 秒连不上就不裁决，按请求本身画（auto = 先 Codex，撞墙这一单改 Seedream），出图不中断 |
+| **视频书**（motion-book `run_book.sh`） | 租约：开机前 `POST /v1/leases`（kind text，task_class `video`，`engine_hints.require=["claude"]`，ttl 6h）挑 claude-1 / claude-2；挑不出再带 `force` 问一次（无视配速和红线，只躲撞墙）。router 只回账号名，令牌由 run_book.sh 从 `motion-book/secrets.env` 的 `CLAUDE_TOKEN_<账号 id，- 换 _>` 取，发给一次性做书机；机器销毁时 `complete`（附 claude.err 尾巴，撞墙就冷却）。读 lab `.env` 的 `ROUTER_URL` / `ROUTER_TOKEN` | 连不上 / 挑不出 / 没有该账号的令牌 → 用 lab `.env` 的 `CLAUDE_CODE_OAUTH_TOKEN`（= claude-1）照做 |
 
-两者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
+三者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
 
 **写书环境**：engine CLI 以 engine-router 用户跑写书 skill，为此——书库 `/opt/claude-agent/workspace` 有 ACL（`u:engine-router:rwX` + 默认 ACL 让新文件两个用户都能读写）、unit 的 `ReadWritePaths` 含书库；`/opt/engine-router/.claude/skills` 软链到 lab 的 skill 目录（skill 里到处是 `~/.claude/skills/…`）；`/opt/engine-router/.config/voicedrop/credentials` 是发布账号凭据的副本（`build.mjs` 读它）。Kimi 账号在 config 里带 `env`（1M 上下文、effort high），模型 `k3[1m]`，与原写书 Kimi 腿一致。
 
