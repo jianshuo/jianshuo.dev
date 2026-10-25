@@ -134,7 +134,30 @@ export async function onRequest({ request, env, params, waitUntil }) {
     return new Response(html, { headers });
   }
 
+  // Range（2026-10-26）：动画版 narration.mp3 有 30–40MB，<audio> 边下边播、拖进度条都靠 206。
+  // 之前这里不认 Range，jianshuo.dev 能 206 是 Cloudflare 缓存层替我们切的；voicedrop.cn 经 EdgeOne 回源直达函数，每次拿整个文件。
+  headers['Accept-Ranges'] = 'bytes';
+  const range = request.method === 'GET' ? parseRange(request.headers.get('Range'), obj.size) : null;
+  if (range) {
+    obj.body?.cancel();
+    const part = await env.FILES.get(PUBLISHER + rel, { range });
+    if (!part) return notFound();
+    headers['Content-Range'] = `bytes ${range.offset}-${range.offset + range.length - 1}/${obj.size}`;
+    headers['Content-Length'] = String(range.length);
+    return new Response(part.body, { status: 206, headers });
+  }
   return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
+}
+
+// 同 audiobook/[[path]].js 的 parseRange：只认单段 bytes=a-b / a- / -n，其余（含越界）当没带 Range 回整个文件。
+function parseRange(h, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(h || '');
+  if (!m || (!m[1] && !m[2])) return null;
+  if (!m[1]) { const n = Math.min(+m[2], size); return n ? { offset: size - n, length: n } : null; }
+  const start = +m[1];
+  if (start >= size) return null;
+  const end = m[2] ? Math.min(+m[2], size - 1) : size - 1;
+  return { offset: start, length: end - start + 1 };
 }
 
 // 「听本章」浮动播放器。相对路径 ../audiobook/<slug>/<stem> 在两个域名下都成立
