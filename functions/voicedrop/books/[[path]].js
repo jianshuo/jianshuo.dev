@@ -407,42 +407,26 @@ ${sections.join('\n')}
   });
 }
 
-// 目录页首屏的动画版（2026-10-26）：先放封面＋大播放键，点了才原地嵌 video/?autoplay=1（只看文字的人不用下 40MB）；
-// 往下滑是原来的目录。首屏滑出一半就给播放器发 {mb:'pause'}（播放器 template.html 收），滑走即停。
-// 地址全在浏览器里按 location 拼：目录页在 voicedrop.cn/books/<slug>/ 和 jianshuo.dev/voicedrop/books/<slug>/ 两处都要成立。
+// 目录页首屏的动画版（2026-10-26）：首屏直接嵌动画版播放器（video/，暂停态自带大播放键），往下滑是原来的目录。
+// 首屏滑出一半就给播放器发 {mb:'pause'}（播放器 template.html 收），滑走即停。音频 preload=metadata，不点播放不下口播。
+// 地址在浏览器里按 location 拼：目录页在 voicedrop.cn/books/<slug>/ 和 jianshuo.dev/voicedrop/books/<slug>/ 两处都要成立。
 function videoHero(bj) {
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const done = Array.isArray(bj.chapters) ? bj.chapters.filter((x) => x && x.status === 'done').length : 0;
-  const v = bj.video, min = Math.round((Number(v.duration) || 0) / 60);
-  const meta = ['动画版', min ? `${min} 分钟` : '', v.chapters && done && v.chapters < done ? `试看前 ${v.chapters} 章` : ''].filter(Boolean).join(' · ');
-  const cover = bj.cover === true ? `cover.jpg?v=${Number(bj.coverAt) || 0}` : '';
+  const v = bj.video, preview = v.chapters && done && v.chapters < done ? ` · 动画版试看前 ${v.chapters} 章` : '';
   return `<style>
 #vhero{position:relative;overflow:hidden;background:#0d1117;height:calc(100vh - 44px);height:calc(100svh - 44px);min-height:420px;margin:0 calc(50% - 50vw)}
-#vhero .bg{position:absolute;inset:-40px;background:#1b232b center/cover no-repeat;filter:blur(28px) brightness(.5)}
-#vhero .poster{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.2svh;cursor:pointer;border:0;padding:0;background:none;width:100%;color:#fff;font:inherit}
-#vhero .card{position:relative;height:62%;aspect-ratio:.7;border-radius:3px 6px 6px 3px;background:#2a3138 center/cover no-repeat;box-shadow:0 18px 50px rgba(0,0,0,.5)}
-#vhero .big{position:absolute;left:50%;top:50%;width:46%;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;
-  background:rgba(40,40,40,.55);border:1px solid rgba(255,255,255,.25);-webkit-backdrop-filter:blur(16px) saturate(1.4);backdrop-filter:blur(16px) saturate(1.4);
-  box-shadow:0 10px 30px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}
-#vhero .big svg{width:36%;margin-left:7%}
-#vhero .poster:active .big{transform:translate(-50%,-50%) scale(.95)}
-#vhero .meta{font-size:14px;letter-spacing:.04em;color:rgba(255,255,255,.88)}
 #vhero iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#0d1117}
 #vhint{display:flex;align-items:center;justify-content:center;gap:6px;height:44px;margin:0 calc(50% - 50vw);color:#A89E8E;font-size:13px;text-decoration:none;letter-spacing:.04em}
 #vhint i{display:inline-block;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);animation:vhb 1.6s ease-in-out infinite}
 @keyframes vhb{50%{transform:rotate(45deg) translate(2px,0)}}
 </style>
-<section id="vhero"><div class="bg"></div><button class="poster" type="button" aria-label="播放动画版"><span class="card"><span class="big"><svg viewBox="0 0 30 34" aria-hidden="true"><path d="M3 2.5v29a2 2 0 0 0 3 1.7l22.6-14.5a2 2 0 0 0 0-3.4L6 .8A2 2 0 0 0 3 2.5z" fill="#fff"/></svg></span></span><span class="meta">${esc(meta)}</span></button></section>
-<a id="vhint" href="#vhend"><i></i>下滑看正文${done ? ` · ${done} 章` : ''}</a><div id="vhend"></div>
+<section id="vhero"></section>
+<a id="vhint" href="#vhend"><i></i>下滑看正文${done ? ` · ${done} 章` : ''}${preview}</a><div id="vhend"></div>
 <script>(function(){
-  var h=document.getElementById('vhero'),base=location.pathname.replace(/\\/?$/,'/'),f=null,cover=${JSON.stringify(cover)};
-  if(cover){var u='url("'+base+cover+'")';h.querySelector('.bg').style.backgroundImage=u;h.querySelector('.card').style.backgroundImage=u;}
-  h.querySelector('.poster').addEventListener('click',function(){
-    f=document.createElement('iframe');f.src=base+'video/?autoplay=1';f.allow='autoplay; fullscreen; screen-wake-lock';f.title='动画版';
-    h.innerHTML='';h.appendChild(f);
-  });
+  var h=document.getElementById('vhero'),f=document.createElement('iframe');
+  f.src=location.pathname.replace(/\\/?$/,'/')+'video/';f.allow='autoplay; fullscreen; screen-wake-lock';f.title='动画版';h.appendChild(f);
   if('IntersectionObserver' in window)new IntersectionObserver(function(es){es.forEach(function(e){
-    if(f&&e.intersectionRatio<0.5)try{f.contentWindow.postMessage({mb:'pause'},location.origin);}catch(_){}
+    if(e.intersectionRatio<0.5)try{f.contentWindow.postMessage({mb:'pause'},location.origin);}catch(_){}
   });},{threshold:[0,0.5,1]}).observe(h);
 })();</script>`;
 }
