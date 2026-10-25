@@ -18,6 +18,7 @@ import {
   type Inflight, type InflightCreate, type InflightRevise,
 } from "./inflight.js";
 import { launchBookUnit, listActiveUnits, planLaunches, unitName } from "./book-launch.js";
+import { handleVideoBook, startVideoBook } from "./video-book.js";
 import { jsonlLines, jsonlLinesFrom, type LineCursor } from "./jsonl.js";
 import { readJsonBody, BodyError } from "./http-body.js";
 import {
@@ -1032,6 +1033,14 @@ const server = createServer((req, res) => {
       .catch((err) => failJson(res, err));
     return;
   }
+  // 视频书（书架「动画版」）：匿名可达（Caddy 豁免），不收请求体，只看 ?slug=。/status 只查不触发。见 src/video-book.ts。
+  const vm = req.url?.match(/^\/api\/video-book(\/status)?\?(.*)$/);
+  if (vm && (req.method === "GET" || req.method === "POST")) {
+    handleVideoBook(req, res, new URLSearchParams(vm[2]).get("slug") ?? "", !vm[1]).catch((err) => {
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: String(err?.message ?? err) }));
+    });
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/chat") {
     readJsonBody(req, CHAT_BODY_LIMIT)
       .then((payload) => handleChat(req, res, payload))
@@ -1060,4 +1069,5 @@ server.listen(PORT, HOST, () => {
     pumpInflight().catch(() => {});
     setInterval(() => pumpInflight().catch(() => {}), 30000).unref?.();
   }, 5000);
+  startVideoBook();   // 视频书排队泵（每分钟）＋兜底清理一次性做书机（每 10 分钟）
 });

@@ -90,6 +90,10 @@ export async function onRequest({ request, env, params, waitUntil }) {
     rel = rel.replace(/\/$/, '') + '/index.html';
     obj = await fetchKey(PUBLISHER + rel);
   }
+  // 动画版（<slug>/video/）还没做：回一张等待页。像听书——第一次有人打开就开做，做完永久缓存在 R2 books/<slug>/video/。
+  // 下单在浏览器里发（页面 JS 调 lab 的 /api/video-book），爬虫抓 HTML 不跑 JS，不会把书架挨个点一遍；闸在 claude-agent/src/video-book.ts。
+  const vw = /^([^/]+)\/video\/index\.html$/.exec(rel);
+  if (!obj && vw && request.method === 'GET') return videoWaitingPage(vw[1]);
   if (!obj) return notFound();
 
   const ext = (rel.split('.').pop() || '').toLowerCase();
@@ -111,7 +115,9 @@ export async function onRequest({ request, env, params, waitUntil }) {
   const bi = /^([^/]+)\/index\.html$/.exec(rel);
   if (bi && request.method === 'GET') {
     let html = await obj.text();
-    const pdfLink = `<div style="text-align:center;margin:26px 0 40px"><a href="https://jianshuo.dev/agent/books/pdf/${encodeURIComponent(bi[1])}" style="font-size:13px;color:#A89E8E;text-decoration:none;border:1px solid rgba(51,48,42,.18);border-radius:20px;padding:8px 18px">⬇ 下载 PDF 版（首次点击需生成约一分钟）</a></div>`;
+    const pill = 'font-size:13px;color:#A89E8E;text-decoration:none;border:1px solid rgba(51,48,42,.18);border-radius:20px;padding:8px 18px;display:inline-block;margin:6px';
+    const pdfLink = `<div style="text-align:center;margin:26px 0 40px"><a href="https://jianshuo.dev/agent/books/pdf/${encodeURIComponent(bi[1])}" style="${pill}">⬇ 下载 PDF 版（首次点击需生成约一分钟）</a>`
+      + `<a href="video/" style="${pill}">▶ 看动画版（首次打开开始制作）</a></div>`;
     html = html.includes('</body>') ? html.replace('</body>', pdfLink + '</body>') : html + pdfLink;
     delete headers['Content-Length'];
     return new Response(html, { headers });
@@ -372,6 +378,39 @@ ${sections.join('\n')}
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
+}
+
+// 动画版等待页：打开即下单（只下一次，lab 那边去重），之后每 20 秒查一次进度；做好了自动刷新成动画版。
+// 下单/查询都在浏览器里发，lab.jianshuo.dev/api/video-book 带 CORS *。
+function videoWaitingPage(slug) {
+  const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>动画版制作中</title><meta name="robots" content="noindex">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F6F1E7;color:#33302A;font:16px/1.7 "PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,sans-serif}
+.card{max-width:420px;margin:24px 16px;padding:32px 28px;background:#fff;border:1px solid rgba(51,48,42,.12);border-radius:18px;text-align:center}
+h1{font-size:20px;margin:0 0 6px}.sub{color:#A89E8E;font-size:13px}.st{margin:22px 0 8px;font-size:17px}.step{color:#6B6357;font-size:14px;min-height:1.7em}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#E0A33A;margin-right:8px;animation:p 1.4s infinite}@keyframes p{50%{opacity:.25}}
+a{color:#A89E8E;font-size:13px}</style></head><body><div class="card">
+<h1>这本书的动画版还没有做</h1><div class="sub">第一次有人打开就开始制作，做好后所有人都能直接看</div>
+<div class="st" id="st"><span class="dot"></span>正在下单…</div><div class="step" id="step"></div>
+<p class="sub">整本书要做几个小时，可以先关掉页面，晚点再来</p><a id="back" href="../">← 回到书的目录</a></div>
+<script>
+const slug=${JSON.stringify(slug)},API='https://lab.jianshuo.dev/api/video-book';
+const st=document.getElementById('st'),step=document.getElementById('step');
+const ago=t=>{const m=Math.round((Date.now()-t)/60000);return m<60?m+' 分钟':(m/60).toFixed(1)+' 小时'};
+const NAME={booting:'开机中',setup:'准备制作环境',making:'正在制作',publishing:'正在发布',queued:'排队中'};
+function show(d){
+  if(d.state==='done'){location.reload();return}
+  const busy=d.state in NAME;
+  st.innerHTML=(busy?'<span class="dot"></span>':'')+({failed:'这次没做成',not_ready:'这本书还没写完',busy:'排队的书太多了',none:'还没开始'}[d.state]||NAME[d.state]||d.state);
+  step.textContent=d.state==='queued'?'前面还有 '+(d.position-1)+' 本'
+    :d.state==='failed'?(d.step||'')+(d.retryAfter?' · '+new Date(d.retryAfter).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})+' 后可以再试':'')
+    :d.error?d.error:[d.step,d.startedAt?'已做 '+ago(d.startedAt):''].filter(Boolean).join(' · ');
+}
+const get=u=>fetch(u,{cache:'no-store'}).then(r=>r.json()).then(show).catch(()=>{st.textContent='连不上制作服务器，稍后刷新试试'});
+get(API+'?slug='+slug);   // 下单（已在做/排队/做完的不会重复下单）
+setInterval(()=>get(API+'/status?slug='+slug),20000);
+</script></body></html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
 function notFound() {

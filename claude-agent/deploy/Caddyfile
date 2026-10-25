@@ -11,7 +11,8 @@ lab.jianshuo.dev {
 	}
 
 	# /api/book* 走 App 自己的 VoiceDrop bearer（服务端扣费即准入），豁免密码门。
-	@needsauth not path /api/book /api/book/*
+	# /api/video-book* 是书架「动画版」：任何人可触发（像听书），闸在 src/video-book.ts（只做写完的书、一次一本、每天限量）。
+	@needsauth not path /api/book /api/book/* /api/video-book /api/video-book/*
 	basic_auth @needsauth {
 		wjs REPLACE_WITH_BCRYPT_HASH
 	}

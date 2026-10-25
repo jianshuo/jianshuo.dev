@@ -59,8 +59,8 @@ export function buildSystemdRunArgs(
 }
 
 // web 服务里没有登录会话，systemd-run 靠这两个变量找到用户 bus；服务单元里设了，
-// 这里再按 uid 兜底一遍，免得哪天单元文件漏了就静默退回 detached 直起。
-function busEnv(): Record<string, string> {
+// 这里再按 uid 兜底一遍，免得哪天单元文件漏了就静默退回 detached 直起。视频书（video-book.ts）也用它。
+export function busEnv(): Record<string, string> {
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   const rt = process.env.XDG_RUNTIME_DIR ?? (uid >= 0 ? `/run/user/${uid}` : "");
   return {
