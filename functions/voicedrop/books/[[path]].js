@@ -389,10 +389,15 @@ function videoWaitingPage(slug) {
 .card{max-width:420px;margin:24px 16px;padding:32px 28px;background:#fff;border:1px solid rgba(51,48,42,.12);border-radius:18px;text-align:center}
 h1{font-size:20px;margin:0 0 6px}.sub{color:#A89E8E;font-size:13px}.st{margin:22px 0 8px;font-size:17px}.step{color:#6B6357;font-size:14px;min-height:1.7em}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#E0A33A;margin-right:8px;animation:p 1.4s infinite}@keyframes p{50%{opacity:.25}}
-a{color:#A89E8E;font-size:13px}</style></head><body><div class="card">
+a{color:#A89E8E;font-size:13px}
+details{margin:18px 0 4px;text-align:left}summary{cursor:pointer;color:#A89E8E;font-size:13px;text-align:center;list-style:none}summary::-webkit-details-marker{display:none}
+details[open] summary{margin-bottom:10px}ol{margin:0;padding:12px 14px;list-style:none;background:#FAF7F0;border-radius:12px;max-height:46vh;overflow:auto;font-size:13px;color:#6B6357}
+li{display:flex;gap:10px;padding:3px 0}li time{flex:none;color:#A89E8E;font-variant-numeric:tabular-nums}li:last-child{color:#33302A;font-weight:600}</style></head><body><div class="card">
 <h1>这本书的动画版还没有做</h1><div class="sub">第一次有人打开就开始制作，做好后所有人都能直接看</div>
 <div class="st" id="st"><span class="dot"></span>正在下单…</div><div class="step" id="step"></div>
-<p class="sub">整本书要做几个小时，可以先关掉页面，晚点再来</p><a id="back" href="../">← 回到书的目录</a></div>
+<p class="sub">整本书要做几个小时，可以先关掉页面，晚点再来</p>
+<details id="logbox" hidden><summary id="logsum">查看制作日志</summary><ol id="log"></ol></details>
+<a id="back" href="../">← 回到书的目录</a></div>
 <script>
 const slug=${JSON.stringify(slug)},API='https://lab.jianshuo.dev/api/video-book';
 const st=document.getElementById('st'),step=document.getElementById('step');
@@ -405,7 +410,14 @@ function show(d){
   step.textContent=d.state==='queued'?'前面还有 '+(d.position-1)+' 本'
     :d.state==='failed'?(d.step||'')+(d.retryAfter?' · '+new Date(d.retryAfter).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})+' 后可以再试':'')
     :d.error?d.error:[d.step,d.startedAt?'已做 '+ago(d.startedAt):''].filter(Boolean).join(' · ');
+  // 制作日志：默认收起，展开看每一步（只有时间和一句话，接口已滤掉路径等内部信息）
+  const ev=Array.isArray(d.events)?d.events:[],box=document.getElementById('logbox'),ol=document.getElementById('log');
+  if(ev.length){box.hidden=false;document.getElementById('logsum').textContent=(box.open?'收起':'查看')+'制作日志（'+ev.length+' 步）';
+    const hm=t=>new Date(t).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+    ol.replaceChildren(...ev.map(e=>{const li=document.createElement('li'),tm=document.createElement('time'),sp=document.createElement('span');tm.textContent=hm(e.t);sp.textContent=e.text;li.append(tm,sp);return li}));
+    if(box.open)ol.scrollTop=ol.scrollHeight}
 }
+document.getElementById('logbox').addEventListener('toggle',e=>{const b=e.target,s=document.getElementById('logsum');s.textContent=s.textContent.replace(/^(查看|收起)/,b.open?'收起':'查看');if(b.open){const o=document.getElementById('log');o.scrollTop=o.scrollHeight}});
 const get=u=>fetch(u,{cache:'no-store'}).then(r=>r.json()).then(show).catch(()=>{st.textContent='连不上制作服务器，稍后刷新试试'});
 get(API+'?slug='+slug);   // 下单（已在做/排队/做完的不会重复下单）
 setInterval(()=>get(API+'/status?slug='+slug),20000);

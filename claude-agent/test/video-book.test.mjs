@@ -2,7 +2,25 @@
 // 钉的是「什么情况下会真的开一台机器」：已发布、在做、排队、失败冷却中都不能再下单；只查（/status）永不下单。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideVideo, videoUnit, videoUrl, SLUG_RE } from "../dist/video-book.js";
+import { decideVideo, videoUnit, videoUrl, SLUG_RE, publicEvents } from "../dist/video-book.js";
+
+test("对外日志：只留时间和文字，路径、IP 被滤掉，非法条目丢弃", () => {
+  const ev = publicEvents([
+    { t: 1, text: "读到书：《炮声里的股市》共 13 章" },
+    { t: 2, text: "失败：/opt/claude-agent/motion-book/books/x/cloud.log 第 3 行" },
+    { t: 3, text: "连接 45.77.178.210 超时" },
+    { t: 4, text: "~/art-films/x/音频/ch01.mp3" },
+    { t: "x", text: "坏" }, null, { t: 5 },
+  ]);
+  assert.deepEqual(ev, [{ t: 1, text: "读到书：《炮声里的股市》共 13 章" }, { t: 2, text: "失败： 第 3 行" }, { t: 3, text: "连接 超时" }]);
+  assert.deepEqual(publicEvents([{ t: 1, text: "取口播（书架听书）：13/13 章" }]), [{ t: 1, text: "取口播（书架听书）：13/13 章" }]);
+  assert.deepEqual(publicEvents("not array"), []);
+});
+
+test("logTail（内部日志尾巴，可能带路径）不会出现在失败答复里", () => {
+  const d = decideVideo("x", { published: false, running: false, queued: null, trigger: true, now: 10, state: { state: "failed", step: "开机超时", updatedAt: 9, logTail: "/opt/claude-agent/secrets.env" } });
+  assert.equal(JSON.stringify(d).includes("logTail"), false); assert.equal(JSON.stringify(d).includes("/opt"), false);
+});
 
 const now = 1792924000000;
 const base = { published: false, running: false, queued: null, state: null, trigger: true, now };

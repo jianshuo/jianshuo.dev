@@ -75,6 +75,17 @@ async function bookReady(slug: string): Promise<{ ok: boolean; title?: string; w
     return left ? { ok: false, why: `还有 ${left} 章没写完` } : { ok: true, title: String(b.title ?? slug) };
   } catch (e: any) { return { ok: false, why: `读书架失败：${e?.message ?? e}` }; }
 }
+/** 对外日志（run_book.sh 写的 events.json）：只给时间＋一句步骤；再过滤一道路径/IP，防哪天脚本漏写进去。
+ *  路径至少两段才删（「13/13 章」这种分数不动），段里可以有中文。 */
+export function publicEvents(raw: unknown): { t: number; text: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-300).filter((e: any) => e && typeof e.text === "string" && Number.isFinite(e.t))
+    .map((e: any) => ({ t: Number(e.t), text: e.text.replace(/(?:~|\.{0,2})?(?:\/[^\s/，。：；、（）《》"'“”]+){2,}\/?/g, "").replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "").replace(/\s{2,}/g, " ").trim().slice(0, 200) }))
+    .filter((e) => e.text);
+}
+async function readEvents(slug: string) {
+  try { return publicEvents(JSON.parse(await readFile(join(BOOKS_DIR, slug, "events.json"), "utf8"))); } catch { return []; }
+}
 async function readState(slug: string): Promise<VideoState | null> {
   try { return JSON.parse(await readFile(join(BOOKS_DIR, slug, "state.json"), "utf8")); } catch { return null; }
 }
@@ -152,7 +163,11 @@ export async function handleVideoBook(req: IncomingMessage, res: ServerResponse,
   const [pub, active, queue, state] = await Promise.all([published(slug), activeVideoUnits(), queueList(), readState(slug)]);
   const pos = queue.findIndex((q) => q.slug === slug);
   const d = decideVideo(slug, { published: pub, running: active.has(videoUnit(slug)), queued: pos >= 0 ? pos + 1 : null, state, trigger, now: Date.now() });
-  if (d.kind === "answer") return send(d.status, d.body);
+  if (d.kind === "answer") {
+    // 在做、失败的单带上制作日志（等待页「查看制作日志」展开看）；已完成/没开始的不带
+    if (!["done", "none"].includes(String(d.body.state))) d.body.events = await readEvents(slug);
+    return send(d.status, d.body);
+  }
   if (queue.length >= MAX_QUEUE) return send(429, { state: "busy", error: `排队已满（${MAX_QUEUE} 本），晚点再来` });
   const ready = await bookReady(slug);
   if (!ready.ok) return send(409, { state: "not_ready", error: ready.why });
