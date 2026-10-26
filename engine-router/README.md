@@ -43,6 +43,8 @@ GET  /v1/status                    账号池总览
 POST /v1/select                    干跑：现在会选谁、为什么（请求体同 /v1/runs）
 POST /v1/leases                    租约：只挑账号不执行 → { lease_id, engine, account } 或 { lease_id:null, reasons, eta }
 POST /v1/leases/:id/complete       回报 { ok, engine_used, error } → 释放预留；error 是额度类就冷却该账号
+POST /v1/leases/:id/progress       长租约报进度 { step, label? } → 状态页「租约」栏显示这一步，并按原 ttl 续期
+PUT  /v1/queues/:name              调用方整份替换自己的排队快照 { title, note, items:[{label, at, note}] } → 状态页「排队」栏（router 不参与排队）
 POST /v1/admin/reload              重读 config.json + .env（admin）
 POST /v1/admin/probe               立刻探一轮额度（admin）
 ```
@@ -69,7 +71,7 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 |---|---|---|
 | **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`）。lab `.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 这一单失败（退款 + 管理员告警）。原来的三腿链 2026-10-25 已删，router 是唯一写书引擎 |
 | **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报（额度冷却只在 router 记）。`/opt/paint/.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 5 秒连不上就不裁决，按请求本身画（auto = 先 Codex，撞墙这一单改 Seedream），出图不中断 |
-| **视频书**（motion-book `run_book.sh`） | 租约：开机前 `POST /v1/leases`（kind text，task_class `video`，`engine_hints.require=["claude"]`，ttl 6h）挑 claude-1 / claude-2；挑不出再带 `force` 问一次（无视配速和红线，只躲撞墙）。router 只回账号名，令牌由 run_book.sh 从 `motion-book/secrets.env` 的 `CLAUDE_TOKEN_<账号 id，- 换 _>` 取，发给一次性做书机；机器销毁时 `complete`（附 claude.err 尾巴，撞墙就冷却）。读 lab `.env` 的 `ROUTER_URL` / `ROUTER_TOKEN` | 连不上 / 挑不出 / 没有该账号的令牌 → 用 lab `.env` 的 `CLAUDE_CODE_OAUTH_TOKEN`（= claude-1）照做 |
+| **视频书**（motion-book `run_book.sh`） | 租约：开机前 `POST /v1/leases`（kind text，task_class `video`，`engine_hints.require=["claude"]`，ttl 6h）挑 claude-1 / claude-2；挑不出再带 `force` 问一次（无视配速和红线，只躲撞墙）。router 只回账号名，令牌由 run_book.sh 从 `motion-book/secrets.env` 的 `CLAUDE_TOKEN_<账号 id，- 换 _>` 取，发给一次性做书机；机器销毁时 `complete`（附 claude.err 尾巴，撞墙就冷却）。租约带 `label`（《书名》视频书），每换一步 `progress` 报一次（顺带续期，12h 整本不过期）；lab 每分钟泵完把排队快照 `PUT /v1/queues/video-book`（书目、24 小时配额、下个名额时间）。读 lab `.env` 的 `ROUTER_URL` / `ROUTER_TOKEN` | 连不上 / 挑不出 / 没有该账号的令牌 → 用 lab `.env` 的 `CLAUDE_CODE_OAUTH_TOKEN`（= claude-1）照做 |
 
 三者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
 

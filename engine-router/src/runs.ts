@@ -40,6 +40,7 @@ export type RunRequest = {
   priority: "user" | "normal" | "background";
   resume_hint?: string;
   idempotency_key?: string;
+  label?: string; // 给人看的一句（书名等），只用于状态页
   callback_url?: string;
   on_exhausted: "queue" | "fail";
   force: boolean;
@@ -186,6 +187,7 @@ export function normalizeRequest(b: any): RunRequest {
     priority: b.priority === "background" ? "background" : b.priority === "user" ? "user" : "normal",
     resume_hint: typeof b.resume_hint === "string" ? b.resume_hint : undefined,
     idempotency_key: typeof b.idempotency_key === "string" ? b.idempotency_key.slice(0, 120) : undefined,
+    label: typeof b.label === "string" && b.label.trim() ? b.label.trim().slice(0, 120) : undefined,
     callback_url: typeof b.callback_url === "string" && /^https?:\/\//.test(b.callback_url) ? b.callback_url : undefined,
     on_exhausted: b.on_exhausted === "fail" ? "fail" : "queue",
     force: b.force === true,

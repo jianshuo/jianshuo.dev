@@ -93,9 +93,10 @@ async function runCreate(rec: InflightCreate): Promise<void> {
 
   let ok = false;
   let reply = "";
+  const label = `写书 · ${seed.replace(/\s+/g, " ").trim().slice(0, 40)}`;
   try {
     // 幂等键：runner 被重启后重提交会接回同一个 router 任务
-    let out = await runBookEngine(prompt, (id) => { sessionId = id; }, { key: `${jobId}:main`, taskClass: "book" });
+    let out = await runBookEngine(prompt, (id) => { sessionId = id; }, { key: `${jobId}:main`, taskClass: "book", label });
     // 完成度闸门（2026-09-23）：引擎说「写完了」不算数，book.json 里章节全 done 才算。
     // 没齐就把「还差什么」喂回引擎续写（最多 BOOK_CONTINUE_MAX 轮，文件是真源、不 resume）；
     // 续写后仍有章节没发 → 按失败走（退款 + 告警、不推「书写好了」）。只缺封面不判失败。
@@ -105,7 +106,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
       if (!gap) break;
       console.log(`[book] incomplete after engine round ${round}: ${gap.summary} → 续写 ${round}/${BOOK_CONTINUE_MAX}`);
       const prev = out;
-      out = await runBookEngine(prompt + continueHint(gap, round), (id) => { sessionId = id; }, { key: `${jobId}:cont${round}`, taskClass: "book" });
+      out = await runBookEngine(prompt + continueHint(gap, round), (id) => { sessionId = id; }, { key: `${jobId}:cont${round}`, taskClass: "book", label: `${label}（续写 ${round}）` });
       if (!out.ok && !isHardGap(gap)) {
         // 只是为补封面开的续写轮倒在配额上——书本身已经齐了，不能因此退款。
         console.warn(`[book] 补封面续写失败（${out.error.slice(0, 100)}），成书不受影响`);
@@ -197,7 +198,7 @@ async function runRevise(rec: InflightRevise): Promise<void> {
       (id) => {
         patchThreadEntry(slug, entryTs, { sessionId: id }).catch(() => {});
       },
-      { key: `revise:${slug}#${entryTs}`, taskClass: "revise" },
+      { key: `revise:${slug}#${entryTs}`, taskClass: "revise", label: `修书 · ${slug} · ${instruction.replace(/\s+/g, " ").slice(0, 40)}` },
     );
     await removeInflight(INFLIGHT_DIR, rec);   // 引擎返回即销档（理由同写书）
     await patchThreadEntry(slug, entryTs, {

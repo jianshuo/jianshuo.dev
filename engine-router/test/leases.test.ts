@@ -75,3 +75,40 @@ test("过期自动释放；别人的租约回报不了", async () => {
   assert.equal(leases.active().length, 0);
   assert.throws(() => leases.complete(l.id, "paint", { ok: true }), /lease not found/);
 });
+
+test("长租约：label + progress 续期；完成后进最近记录；落盘后重启能接回预留和显示", async () => {
+  const { pool } = await setup();
+  const d = await mkdtemp(join(tmpdir(), "leases-file-"));
+  const file = join(d, "leases.json");
+  const leases = new Leases(pool, file);
+  const t0 = Date.now();
+  const { lease } = leases.create({ kind: "image", label: "《随机》视频书", ttl_ms: 600_000 }, "book-runner", t0);
+  assert.equal(lease?.label, "《随机》视频书");
+  leases.progress(lease!.id, "book-runner", { step: "安装制作环境" }, t0 + 500_000);
+  assert.equal(lease!.progress?.step, "安装制作环境");
+  assert.equal(lease!.expiresAt, t0 + 500_000 + 600_000, "报进度按原 ttl 续期");
+  assert.throws(() => leases.progress(lease!.id, "paint", { step: "x" }), /not found/, "别人的租约不能报");
+  leases.putQueue("video-book", "book-runner", { title: "视频书", note: "24h 4/4", items: [{ label: "《恒生科技》", at: t0 }] }, t0);
+  await new Promise((r) => setTimeout(r, 50));
+
+  // 「重启」：新的 Pool 读同一个租约文件
+  const { pool: fresh } = await setup();
+  const again = new Leases(fresh, file);
+  assert.equal(again.active().length, 1);
+  assert.equal(again.active()[0].progress?.step, "安装制作环境");
+  assert.equal(fresh.inflight["gpt-image/codex-1"].count, 1, "预留接回来了");
+  assert.equal(again.queueSnapshots()[0].items[0].label, "《恒生科技》");
+  assert.throws(() => again.putQueue("video-book", "paint", { items: [] }), /another caller/);
+
+  again.complete(again.active()[0].id, "book-runner", { ok: true });
+  assert.equal(again.active().length, 0);
+  assert.equal(again.recent()[0].ok, true);
+  assert.equal(fresh.inflight["gpt-image/codex-1"].count, 0);
+});
+
+test("没 label 的租约（出图）完成后不进最近记录", async () => {
+  const { leases } = await setup();
+  const { lease } = leases.create({ kind: "image" }, "paint");
+  leases.complete(lease!.id, "paint", { ok: true });
+  assert.equal(leases.recent().length, 0);
+});

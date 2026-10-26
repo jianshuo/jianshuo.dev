@@ -31,6 +31,7 @@ export type RunOptions = {
   priority?: "user" | "normal" | "background";
   resume_hint?: string;
   idempotency_key?: string;
+  label?: string; // 状态页上显示的一句（书名等）
   callback_url?: string;
   on_exhausted?: "queue" | "fail";
   force?: boolean;
@@ -96,6 +97,16 @@ export async function getRun(runId: string, conn: { url?: string; token?: string
   const r = await call("GET", `v1/runs/${runId}`, undefined, conn);
   if (r.status !== 200) throw new Error(`router ${r.status}: ${r.json?.error ?? "get failed"}`);
   return r.json;
+}
+
+/** 整份替换本调用方的一份排队快照（状态页「排队」栏显示；router 不参与排队）。 */
+export async function putQueue(
+  name: string,
+  snap: { title?: string; note?: string; items: { label: string; at?: number; note?: string }[] },
+  conn: { url?: string; token?: string } = {},
+): Promise<void> {
+  const r = await call("PUT", `v1/queues/${name}`, snap, conn);
+  if (r.status !== 200) throw new Error(`router ${r.status}: ${r.json?.error ?? "put queue failed"}`);
 }
 
 /** 跟随事件流直到 run 结束；断线自动从上次的偏移续上。 */

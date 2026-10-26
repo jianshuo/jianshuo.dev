@@ -65,6 +65,7 @@ export function resumeAfterRestartHint(jobId?: string): string {
 export type BookEngineOpts = {
   key?: string; // 幂等键：book-runner 重启后重提交会接回同一个 router 任务，不会两个引擎写同一本书
   taskClass?: "book" | "revise";
+  label?: string; // router 状态页上显示的一句（书还没有 book.json 时靠它认）
 };
 
 export async function runBookEngine(prompt: string, onThread?: (id: string) => void, opts: BookEngineOpts = {}): Promise<BookOutcome> {
@@ -83,6 +84,7 @@ export async function runBookEngine(prompt: string, onThread?: (id: string) => v
       continuity: "none", // 每轮都是新会话，文件是真源
       resume_hint: RESUME_HINT.trim(),
       idempotency_key: opts.key,
+      label: opts.label,
     });
   } catch (e: any) {
     // router 连不上（服务没起 / token 错）：这一单失败，book-runner 照常退款 + 告警

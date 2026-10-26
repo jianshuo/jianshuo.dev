@@ -2,7 +2,7 @@
 // 钉的是「什么情况下会真的开一台机器」：已发布、在做、排队、失败冷却中都不能再下单；只查（/status）永不下单。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideVideo, videoUnit, videoUrl, SLUG_RE, publicEvents } from "../dist/video-book.js";
+import { decideVideo, videoUnit, videoUrl, SLUG_RE, publicEvents, queueSnapshot } from "../dist/video-book.js";
 
 test("对外日志：只留时间和文字，路径、IP 被滤掉，非法条目丢弃", () => {
   const ev = publicEvents([
@@ -65,4 +65,17 @@ test("单元名和 slug 校验：只收书架 slug 的字符，单元名 video-<
   assert.equal(videoUrl("a-b"), "https://voicedrop.cn/books/a-b/video/");
   for (const ok of ["home-inventory", "read-the-fed", "a1"]) assert.match(ok, SLUG_RE);
   for (const bad of ["", "../etc", "a b", "A-B", "-x", "x;rm"]) assert.doesNotMatch(bad, SLUG_RE);
+});
+
+test("排队快照（给 router 状态页）：额度满时每本写出哪个名额什么时候空出", () => {
+  // 缺省每天 2 本：窗口里两次开工（北京 10-25 23:00、10-26 01:00），队里三本
+  const now = Date.parse("2026-10-26T10:00:00Z"), l1 = Date.parse("2026-10-25T15:00:00Z"), l2 = Date.parse("2026-10-25T17:00:00Z");
+  const q = [{ slug: "a", title: "甲", requestedAt: now - 1000 }, { slug: "b", requestedAt: now }, { slug: "c", title: "丙", requestedAt: now }];
+  const s = queueSnapshot(q, 0, [l1 - 2 * 86400000, l1, l2], now);
+  assert.equal(s.note, "24 小时内已开工 2/2 本 · 在做 0/1 本 · 下个名额 10-26 23:00");
+  assert.deepEqual(s.items.map((x) => x.label), ["《甲》", "《b》", "《丙》"]);
+  assert.deepEqual(s.items.map((x) => x.note), ["a · 额度 10-26 23:00 空出", "b · 额度 10-27 01:00 空出", "c · 额度要等再往后的名额"]);
+  // 额度还有：头一本只等前一本做完
+  assert.equal(queueSnapshot(q.slice(0, 1), 1, [l2], now).items[0].note, "a · 额度有，等前一本做完");
+  assert.deepEqual(queueSnapshot([], 0, [], now).items, []);
 });

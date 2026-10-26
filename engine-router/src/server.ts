@@ -147,7 +147,7 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore,
       const path = url.pathname.replace(/^\/router(?=\/|$)/, "") || "/";
       if (req.method === "GET" && (path === "/" || path === "/status")) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(renderStatus(pool, [...runs.runs.values()]));
+        res.end(renderStatus(pool, [...runs.runs.values()], leases));
         return;
       }
       if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
@@ -189,6 +189,12 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore,
       }
       m = /^\/v1\/leases\/([A-Za-z0-9_-]+)\/complete$/.exec(path);
       if (m && req.method === "POST") return send(res, 200, { ok: true, released: publicLease(leases.complete(m[1], caller, await readJson(req))) });
+      // 长租约报进度（并续期）：视频书 run_book.sh 每换一步报一次，状态页「租约」栏显示
+      m = /^\/v1\/leases\/([A-Za-z0-9_-]+)\/progress$/.exec(path);
+      if (m && req.method === "POST") return send(res, 200, { ok: true, lease: publicLease(leases.progress(m[1], caller, await readJson(req))) });
+      // 调用方自己的排队快照（整份替换），状态页「排队」栏显示；router 不参与排队
+      m = /^\/v1\/queues\/([A-Za-z0-9_-]{1,40})$/.exec(path);
+      if (m && req.method === "PUT") return send(res, 200, { ok: true, items: leases.putQueue(m[1], caller, await readJson(req)).items.length });
 
       m = /^\/v1\/threads\/([A-Za-z0-9_-]+)$/.exec(path);
       if (m && req.method === "GET") {
@@ -230,7 +236,7 @@ async function main() {
   pool.onChange = () => runs.pump();
   pool.start();
   runs.start();
-  const leases = new Leases(pool);
+  const leases = new Leases(pool, join(STATE_DIR, "leases.json"));
   leases.start();
   const server = createRouterServer(pool, runs, threads, leases);
   if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);

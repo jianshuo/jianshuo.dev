@@ -4,6 +4,8 @@ import { acctKey, ENGINE_KIND, ENGINE_NAMES, limitsFor, policyFor, type EngineNa
 import type { Pool } from "./pool.js";
 import { quotaKey, weeklyLine } from "./selector.js";
 import type { RunRecord } from "./runs.js";
+import type { Lease, Leases } from "./leases.js";
+import { bookForKey } from "./book-index.js";
 
 const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -25,6 +27,25 @@ function until(ms: number | null | undefined, now: number): string {
   return `${Math.round(m / 1440)}d`;
 }
 
+/** 北京时间「10-26 18:50」 */
+function bj(ms: number | null | undefined): string {
+  if (!ms) return "—";
+  const d = new Date(ms + 8 * 3600_000).toISOString();
+  return `${d.slice(5, 10)} ${d.slice(11, 16)}`;
+}
+function mins(from: number, to: number): string {
+  const m = Math.max(0, Math.round((to - from) / 60000));
+  return m < 90 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+function leaseRow(l: Lease, now: number): string {
+  const live = l.finishedAt == null;
+  const pill = live ? `<span class="pill run">在跑</span>` : l.ok ? `<span class="pill ok">完成</span>` : `<span class="pill bad">失败</span>`;
+  const step = l.progress ? `${esc(l.progress.step)}<span class="sub">${ago(l.progress.at, now)}</span>` : `<span class="muted">—</span>`;
+  const tail = live ? `<span class="sub">到期 ${until(l.expiresAt, now)}</span>` : l.error ? `<span class="err">${esc(l.error)}</span>` : "";
+  return `<tr><td class="nw">${bj(l.createdAt)}</td><td><b>${esc(l.label ?? l.taskClass)}</b><span class="sub">${esc(l.caller)} · ${esc(l.taskClass)}</span></td><td>${pill}</td><td class="mono sub">${esc(l.key)}</td><td>${step}</td><td class="nw">${live ? mins(l.createdAt, now) + "…" : mins(l.createdAt, l.finishedAt!)}</td><td>${tail}</td></tr>`;
+}
+
 function bar(used: number | null, cap: number, line?: number): string {
   if (used == null) return `<span class="muted">unknown</span>`;
   const cls = used >= cap ? "bad" : line != null && used > line ? "warn" : "ok";
@@ -32,7 +53,7 @@ function bar(used: number | null, cap: number, line?: number): string {
   return `<div class="bar ${cls}"><b style="width:${Math.min(100, used)}%"></b>${mark}</div><span class="num">${used.toFixed(0)}%</span>`;
 }
 
-export function renderStatus(pool: Pool, runs: RunRecord[], now = Date.now()): string {
+export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, now = Date.now()): string {
   const cfg = pool.cfg;
   const st = pool.selectState();
   const rows: string[] = [];
@@ -68,8 +89,22 @@ export function renderStatus(pool: Pool, runs: RunRecord[], now = Date.now()): s
   const recent = runs.sort((a, b) => b.createdAt - a.createdAt).slice(0, 40);
   const runRows = recent.map((r) => {
     const accts = r.attempts.map((a) => `${a.key}${a.ok === false ? " ✗" : a.ok ? " ✓" : ""}`).join(" → ");
-    const dur = r.finishedAt ? `${Math.round((r.finishedAt - r.createdAt) / 60000)}m` : `${Math.round((now - r.createdAt) / 60000)}m…`;
-    return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.caller)}</td><td>${esc(r.req.task_class)}</td><td><span class="pill ${r.status === "done" ? "ok" : r.status === "failed" ? "bad" : r.status === "running" ? "run" : "muted"}">${r.status}</span></td><td class="mono sub">${esc(accts)}</td><td>${dur}</td><td class="err">${esc(r.queuedReason ?? r.error ?? "")}</td></tr>`;
+    const dur = r.finishedAt ? mins(r.createdAt, r.finishedAt) : `${mins(r.createdAt, now)}…`;
+    const { book, what } = bookForKey(r.req.idempotency_key);
+    const name = book ? `《${esc(book.title)}》` : esc(r.req.label ?? "—");
+    const sub = [what ?? r.req.task_class, book?.slug].filter(Boolean).map(esc).join(" · ");
+    return `<tr><td class="nw">${bj(r.createdAt)}</td><td><b>${name}</b><span class="sub">${sub}</span></td><td class="mono sub">${esc(r.id)}<br>${esc(r.caller)}</td><td><span class="pill ${r.status === "done" ? "ok" : r.status === "failed" ? "bad" : r.status === "running" ? "run" : "muted"}">${r.status}</span></td><td class="mono sub">${esc(accts)}</td><td>${dur}</td><td class="err">${esc(r.queuedReason ?? r.error ?? "")}</td></tr>`;
+  });
+  const live = (leases?.active() ?? []).sort((a, b) => b.createdAt - a.createdAt);
+  const leaseRows = [...live, ...(leases?.recent() ?? []).slice(0, 15)].map((l) => leaseRow(l, now));
+  const queueCards = (leases?.queueSnapshots() ?? []).map((q) => {
+    const stale = now - q.updatedAt > 5 * 60_000;
+    const items = q.items
+      .map((x, i) => `<tr><td class="c">${i + 1}</td><td><b>${esc(x.label)}</b></td><td class="nw">${bj(x.at)}</td><td class="sub">${esc(x.note ?? "")}</td></tr>`)
+      .join("");
+    return `<h3>${esc(q.title)} <span class="pill ${q.items.length ? "warn" : "ok"}">${q.items.length} 本排队</span></h3>
+<div class="meta">${esc(q.note)}${q.note ? " · " : ""}<span class="${stale ? "err" : ""}">更新于 ${ago(q.updatedAt, now)}${stale ? "（调用方好久没报了）" : ""}</span></div>
+<div class="card"><table><tr><th>#</th><th>内容</th><th>下单</th><th>说明</th></tr>${items || `<tr><td colspan="4" class="muted">队里没有东西</td></tr>`}</table></div>`;
   });
   const learned = Object.entries(pool.learnedTable())
     .map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${v.d5h.toFixed(1)}</td><td>${v.d7d.toFixed(1)}</td></tr>`)
@@ -98,12 +133,15 @@ th{font-size:12px;color:var(--mute);font-weight:500}tr:last-child td{border-bott
 .bar{position:relative;display:inline-block;width:110px;height:8px;background:#efeee9;border-radius:4px;vertical-align:middle;overflow:visible}
 .bar b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}.bar.warn b{background:var(--warn)}.bar.bad b{background:var(--bad)}
 .bar i{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.45}
+.nw{white-space:nowrap;font-variant-numeric:tabular-nums}h3{font-size:14px;margin:14px 0 4px}
 .num{margin-left:8px;font-variant-numeric:tabular-nums}.muted{color:var(--mute)}code{font-size:12px;background:#f1f0eb;padding:1px 5px;border-radius:4px}
 </style></head><body><main>
 <h1>Engine Router</h1>
-<div class="meta">红线：5h ${cfg.limits.cap_5h}% · 周 ${cfg.limits.cap_7d}%（配速宽限 ${cfg.limits.weekly_slack} 点，竖线 = 当前配速线） · 并发 文字 ${cfg.concurrency.global_text} / 出图 ${cfg.concurrency.global_image} · 策略 ${policies} · ${new Date(now).toISOString().slice(0, 19).replace("T", " ")} UTC</div>
+<div class="meta">红线：5h ${cfg.limits.cap_5h}% · 周 ${cfg.limits.cap_7d}%（配速宽限 ${cfg.limits.weekly_slack} 点，竖线 = 当前配速线） · 并发 文字 ${cfg.concurrency.global_text} / 出图 ${cfg.concurrency.global_image} · 策略 ${policies} · 北京时间 ${bj(now)}</div>
 <h2>账号</h2><div class="card"><table><tr><th>账号</th><th>状态</th><th>5 小时</th><th>本周</th><th>在跑</th><th>探测</th><th>最近错误</th></tr>${rows.join("") || `<tr><td colspan="7" class="muted">config.json 里还没有账号</td></tr>`}</table></div>
-<h2>最近任务</h2><div class="card"><table><tr><th>run</th><th>调用方</th><th>类型</th><th>状态</th><th>账号</th><th>用时</th><th>说明</th></tr>${runRows.join("") || `<tr><td colspan="7" class="muted">还没有任务</td></tr>`}</table></div>
+${queueCards.length ? `<h2>排队</h2>${queueCards.join("")}` : ""}
+<h2>租约（调用方自己执行：视频书、出图）</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>状态</th><th>账号</th><th>当前步骤</th><th>用时</th><th></th></tr>${leaseRows.join("") || `<tr><td colspan="7" class="muted">现在没有租约</td></tr>`}</table></div>
+<h2>最近任务</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>run · 调用方</th><th>状态</th><th>账号</th><th>用时</th><th>说明</th></tr>${runRows.join("") || `<tr><td colspan="7" class="muted">还没有任务</td></tr>`}</table></div>
 <h2>学到的单次消耗（百分点）</h2><div class="card"><table><tr><th>任务类|引擎</th><th>5h</th><th>周</th></tr>${learned || `<tr><td colspan="3" class="muted">还没有样本（用配置里的预估）</td></tr>`}</table></div>
 </main></body></html>`;
 }

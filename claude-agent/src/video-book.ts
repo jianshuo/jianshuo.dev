@@ -19,6 +19,7 @@ import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { busEnv } from "./book-launch.js";
+import { putQueue } from "./router-client.js";
 
 export const MB_ROOT = process.env.MB_ROOT ?? "/opt/claude-agent/motion-book";
 const QUEUE_DIR = join(MB_ROOT, "queue");
@@ -118,8 +119,40 @@ function activeVideoUnits(): Promise<Set<string>> {
     });
   });
 }
-async function launchesSince(ts: number): Promise<number> {
-  try { return (await readFile(LAUNCH_LOG, "utf8")).split("\n").filter((l) => Number(l.split(" ")[0]) >= ts).length; } catch { return 0; }
+async function launchTimes(since: number): Promise<number[]> {
+  try { return (await readFile(LAUNCH_LOG, "utf8")).split("\n").map((l) => Number(l.split(" ")[0])).filter((t) => t >= since).sort((a, b) => a - b); } catch { return []; }
+}
+const launchesSince = async (ts: number) => (await launchTimes(ts)).length;
+
+/** 北京时间「10-26 18:50」 */
+const bj = (ms: number) => { const d = new Date(ms + 8 * 3600_000).toISOString(); return `${d.slice(5, 10)} ${d.slice(11, 16)}`; };
+
+/** 给 engine-router 状态页（lab.jianshuo.dev/router/）的排队快照：书目、24 小时配额、下个名额什么时候空出来。
+ *  纯函数，单测在 test/video-book.test.mjs。在做的那本由 run_book.sh 的租约自己显示，这里只管排队的。 */
+export function queueSnapshot(queue: { slug: string; title?: string; requestedAt: number }[], running: number, launches: number[], now: number) {
+  const day = 24 * 3600 * 1000;
+  const inWindow = launches.filter((t) => t > now - day).sort((a, b) => a - b);
+  const left = MAX_PER_DAY - inWindow.length;
+  // 第 i 本（从 0 起）要等第 i - left + 1 个名额：额度用满时就是窗口里第 i - left 次开工过 24 小时
+  const slotNote = (i: number) => (i < left ? "额度有，等前一本做完" : inWindow[i - left] != null ? `额度 ${bj(inWindow[i - left] + day)} 空出` : "额度要等再往后的名额");
+  const parts = [`24 小时内已开工 ${inWindow.length}/${MAX_PER_DAY} 本`, `在做 ${running}/${MAX_CONCURRENT} 本`];
+  if (queue.length && left <= 0 && inWindow.length) parts.push(`下个名额 ${bj(inWindow[0] + day)}`);
+  return {
+    title: "视频书（书架动画版）",
+    note: parts.join(" · "),
+    items: queue.map((q, i) => ({ label: `《${q.title ?? q.slug}》`, at: q.requestedAt, note: `${q.slug} · ${slotNote(i)}` })),
+  };
+}
+let reportFailed = false;
+async function reportQueue(queue: { slug: string; title?: string; requestedAt: number }[], running: number) {
+  if (!process.env.ROUTER_TOKEN) return;
+  try {
+    await putQueue("video-book", queueSnapshot(queue, running, await launchTimes(Date.now() - 24 * 3600 * 1000), Date.now()));
+    reportFailed = false;
+  } catch (e: any) {
+    if (!reportFailed) console.error(`[video] 排队快照报给 router 失败：${e?.message ?? e}`);   // 只记第一次，别每分钟刷屏
+    reportFailed = true;
+  }
 }
 
 // ── 起单（泵）：一次只有一个泵在跑，免得两次请求各数一遍空位一起超额 ───────────────────
@@ -128,7 +161,7 @@ export function pumpVideo(): Promise<string[]> {
   const p = pumpChain.then(async () => {
     const launched: string[] = [];
     const queue = await queueList();
-    if (!queue.length) return launched;
+    if (!queue.length) { await reportQueue([], (await activeVideoUnits()).size); return launched; }
     const active = await activeVideoUnits();
     let room = MAX_CONCURRENT - active.size;
     let budget = MAX_PER_DAY - (await launchesSince(Date.now() - 24 * 3600 * 1000));
@@ -144,6 +177,7 @@ export function pumpVideo(): Promise<string[]> {
         launched.push(q.slug); room--; budget--;
       } else console.error(`[video] 起单失败 ${q.slug}：${r.error}`);   // 留在队里，下一轮再试
     }
+    await reportQueue(queue.filter((q) => !launched.includes(q.slug)), active.size + launched.length);
     return launched;
   });
   pumpChain = p.catch((e) => console.error("[video] pump failed", e));
