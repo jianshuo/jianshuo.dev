@@ -7,6 +7,9 @@ import { mkdir, writeFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { acctKey, loadConfig, loadSecrets, type Config, type EngineName, type Estimate } from "./config.js";
 import { probeAccount, type Usage } from "./probes.js";
+
+/** 开工前的用量快照，见 Pool.snapshot / learnDelta。 */
+export type Before = { u5: number | null; r5: number | null; u7: number | null; r7: number | null; shared: boolean };
 import type { Inflight, SelectState } from "./selector.js";
 import { alertAdmin } from "./alert.js";
 
@@ -90,6 +93,31 @@ export class Pool {
       ? { d5h: prev.d5h * (1 - a) + sample.d5h * a, d7d: prev.d7d * (1 - a) + sample.d7d * a }
       : sample;
     void this.save();
+  }
+
+  /** 开工前的用量快照（run 的 attempt 和 lease 共用）。shared＝开工时这个账号上已有别的活，前后相减会混进别人的消耗。 */
+  snapshot(quotaKey: string, conc: string): Before | undefined {
+    const u = this.usage(quotaKey);
+    const shared = (this.inflight[quotaKey]?.count ?? 0) > 0 || (this.inflight[conc]?.count ?? 0) > 0;
+    return u ? { u5: u.used5h, r5: u.reset5h, u7: u.used7d, r7: u.reset7d, shared } : undefined;
+  }
+
+  /**
+   * 单次消耗学习：结束后探一次，同一窗口内、没有并发干扰时，前后相减（run 和 lease 共用，调用前要先释放自己的预留）。
+   * 返回学到的样本，没学（有并发、跨窗口、探不到）返回 undefined。
+   */
+  async learnDelta(taskClass: string, engine: EngineName, quotaKey: string, accountId: string, b: Before | undefined): Promise<Estimate | undefined> {
+    if (!b || b.shared) return;
+    const probeEngine = quotaKey.split("/")[0] as EngineName;
+    if (probeEngine !== "kimi" && probeEngine !== "codex" && probeEngine !== "claude") return;
+    const after = await this.probe(probeEngine, accountId);
+    if (!after?.healthy || (this.inflight[quotaKey]?.count ?? 0) > 0) return;
+    const same = (x: number | null, y: number | null) => x != null && y != null && Math.abs(x - y) < 120_000;
+    if (!same(b.r5, after.reset5h) || b.u5 == null || after.used5h == null) return;
+    const d5h = Math.max(0, after.used5h - b.u5);
+    const d7d = same(b.r7, after.reset7d) && b.u7 != null && after.used7d != null ? Math.max(0, after.used7d - b.u7) : d5h / 5;
+    this.learn(taskClass, engine, { d5h, d7d });
+    return { d5h, d7d };
   }
 
   /**

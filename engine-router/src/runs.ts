@@ -417,8 +417,6 @@ export class Runs {
         (r.req.resume_hint ??
           `补充：本任务上一次尝试因引擎额度或凭据问题中断，可能已经做了一部分——动手前先检查工作目录 ${thread.workdir} 的现状，接着做完，不要从头另起。`);
     }
-    const u = this.pool.usage(quotaKey);
-    const shared = (this.pool.inflight[quotaKey]?.count ?? 0) > 0 || (this.pool.inflight[key]?.count ?? 0) > 0;
     const a: Attempt = {
       n,
       engine,
@@ -428,7 +426,7 @@ export class Runs {
       tier: cont.tier,
       startedAt: Date.now(),
       estimate,
-      before: u ? { u5: u.used5h, r5: u.reset5h, u7: u.used7d, r7: u.reset7d, shared } : undefined,
+      before: this.pool.snapshot(quotaKey, key),
     };
     const spec: AttemptSpec = {
       runId: r.id,
@@ -552,20 +550,11 @@ export class Runs {
     await this.finish(r, "failed", { error: res.error });
   }
 
-  /** 单次消耗学习：结束后探一次，同一窗口内、没有并发干扰时，前后相减。 */
+  /** 单次消耗学习：结束后探一次，同一窗口内、没有并发干扰时，前后相减（规则在 Pool.learnDelta，lease 共用）。 */
   private async learnAfter(r: RunRecord, a: Attempt): Promise<void> {
-    const b = a.before;
-    if (!b || b.shared || !a.ok) return;
-    const engine = a.quotaKey.split("/")[0] as EngineName;
-    if (engine !== "kimi" && engine !== "codex" && engine !== "claude") return;
-    const after = await this.pool.probe(engine, a.accountId);
-    if (!after?.healthy || (this.pool.inflight[a.quotaKey]?.count ?? 0) > 0) return;
-    const same = (x: number | null, y: number | null) => x != null && y != null && Math.abs(x - y) < 120_000;
-    if (!same(b.r5, after.reset5h) || b.u5 == null || after.used5h == null) return;
-    const d5h = Math.max(0, after.used5h - b.u5);
-    const d7d = same(b.r7, after.reset7d) && b.u7 != null && after.used7d != null ? Math.max(0, after.used7d - b.u7) : d5h / 5;
-    this.pool.learn(r.req.task_class, a.engine, { d5h, d7d });
-    console.log(`[runs] learned ${r.req.task_class}|${a.engine}: +${d5h.toFixed(1)} (5h) +${d7d.toFixed(1)} (week)`);
+    if (!a.ok) return;
+    const s = await this.pool.learnDelta(r.req.task_class, a.engine, a.quotaKey, a.accountId, a.before);
+    if (s) console.log(`[runs] learned ${r.req.task_class}|${a.engine}: +${s.d5h.toFixed(1)} (5h) +${s.d7d.toFixed(1)} (week)`);
   }
 
   private async finish(r: RunRecord, status: RunStatus, out: { reply?: string; result?: unknown; error?: string }): Promise<void> {

@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { ENGINE_NAMES, acctKey, type EngineName, type Kind } from "./config.js";
 import { shouldTryNextLeg } from "./legs.js";
-import type { Pool } from "./pool.js";
+import type { Before, Pool } from "./pool.js";
 import { reserveKeys, select, type SelectResult } from "./selector.js";
 import { cooldownFor, HttpError } from "./runs.js";
 
@@ -36,6 +36,9 @@ export type Lease = {
   finishedAt?: number;
   ok?: boolean;
   error?: string;
+  /** 开租时的用量快照：complete 时前后相减学单次消耗（视频书这类长租约就靠它进「学到的单次消耗」表） */
+  before?: Before;
+  learned?: { d5h: number; d7d: number };
 };
 
 export type QueueItem = { label: string; at?: number; note?: string };
@@ -123,6 +126,7 @@ export class Leases {
     const { conc, quota } = reserveKeys(this.pool.cfg, engine, account.id);
     const ttl = Math.min(MAX_TTL_MS, Math.max(60_000, Number(b?.ttl_ms) || DEFAULT_TTL_MS));
     const label = str(b?.label, 120);
+    const before = this.pool.snapshot(quota, conc);   // 占预留之前拍，shared 才不会把自己算进去
     const lease: Lease = {
       id: "l_" + randomBytes(9).toString("base64url"),
       caller,
@@ -136,6 +140,7 @@ export class Leases {
       expiresAt: now + ttl,
       ttl,
       ...(label ? { label } : {}),
+      ...(before ? { before } : {}),
     };
     this.leases.set(lease.id, lease);
     this.pool.reserve(conc, quota, estimate, +1);
@@ -177,10 +182,20 @@ export class Leases {
       const id2 = lease.engine === "seedream" ? lease.accountId : this.pool.cfg.engines.seedream?.accounts.find((a) => !a.disabled)?.id;
       if (id2) this.pool.countDaily(acctKey("seedream", id2));
     }
-    // 用过订阅额度：探一次让配速尽快看到这次消耗（gpt-image 读的是 codex 账号）
+    // 用过订阅额度：探一次让配速尽快看到这次消耗（gpt-image 读的是 codex 账号）；成功且租的引擎就是干活的引擎时，
+    // 顺带学单次消耗（同 run：没并发、同窗口才算，规则在 Pool.learnDelta）
     const probeEngine = lease.quotaKey.split("/")[0] as EngineName;
-    if (used && used !== "seedream" && (probeEngine === "codex" || probeEngine === "claude" || probeEngine === "kimi"))
-      void this.pool.probe(probeEngine, lease.accountId);
+    if (used && used !== "seedream" && (probeEngine === "codex" || probeEngine === "claude" || probeEngine === "kimi")) {
+      // 只学文字引擎的租约（视频书）；出图（gpt-image 读 codex 额度）照旧只探不学，不动 paint 的预估
+      if (b?.ok === true && used === lease.engine && lease.engine === probeEngine)
+        void this.pool.learnDelta(lease.taskClass, lease.engine, lease.quotaKey, lease.accountId, lease.before).then((s) => {
+          if (!s) return;
+          lease.learned = s;
+          this.save();
+          console.log(`[leases] ${lease.id} learned ${lease.taskClass}|${lease.engine}: +${s.d5h.toFixed(1)} (5h) +${s.d7d.toFixed(1)} (week)`);
+        });
+      else void this.pool.probe(probeEngine, lease.accountId);
+    }
     return lease;
   }
 
