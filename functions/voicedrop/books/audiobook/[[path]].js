@@ -1,4 +1,5 @@
 // 有声书：GET /voicedrop/books/audiobook/<slug>/<章stem>  （voicedrop.cn 走 /books/audiobook/...）
+//        GET …/<章stem>.txt → 这一章实际朗读的原文（动画版字幕用）
 //
 // 播放策略（一次合成、永久缓存）：
 //   1. R2 有 audiobook/<slug>/<stem>.mp3 → 直接回源，带 Range 支持（可拖进度条）。
@@ -39,8 +40,19 @@ export async function onRequest({ request, env, params, waitUntil }) {
   const seg = Array.isArray(params.path) ? params.path : (params.path ? [params.path] : []);
   if (seg.length !== 2) return json404('usage: /audiobook/<book>/<chapter>');
   const book = decodeURIComponent(seg[0]);
-  const stem = decodeURIComponent(seg[1]).replace(/\.mp3$/, '');
+  const raw = decodeURIComponent(seg[1]);
+  const stem = raw.replace(/\.(mp3|txt)$/, '');
   if (book.includes('..') || stem.includes('..') || stem.includes('/')) return json404('bad path');
+
+  // ── 朗读原文：<stem>.txt = 合成时实际念的文本（同一个 loadSegments，表演指令已剥掉），
+  //    一段一行。动画版字幕拿它按 ASR 字时间对齐——字幕用原文，不用会听错字的 ASR。纯读，不触发合成。
+  if (raw.endsWith('.txt')) {
+    const segments = await loadSegments(env, book, stem);
+    if (!segments || !segments.length) return json404('chapter not found');
+    return new Response(segments.map((x) => x.text).join('\n') + '\n', {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
+    });
+  }
 
   const mp3Key = `${CACHE_PREFIX}${book}/${stem}.mp3`;
 
