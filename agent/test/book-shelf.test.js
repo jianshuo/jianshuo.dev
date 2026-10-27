@@ -63,6 +63,28 @@ describe("书架类目", () => {
   });
 });
 
+describe("书架动画版", () => {
+  it("book.json 有 video.url 才算：JSON 带 video:true，封面叠播放键，导航出「视频」tab", async () => {
+    const env = await shelfEnv();
+    env.FILES._store.set(srcKey("entropy"), newBook("entropy", { category: "科学", video: { url: "video/", chapters: 2 } }));
+    env.FILES._store.set(srcKey("money"), newBook("money", { video: {} }));   // 没 url = 还没做成
+    const { books } = await (await call(env, { format: "json" })).json();
+    expect(books.filter((b) => b.video).map((b) => b.slug)).toEqual(["entropy"]);
+
+    const html = await (await call(env)).text();
+    const cells = [...html.matchAll(/<a class="cell"[^>]*data-slug="([^"]+)"[^>]*>(.*?)<\/a>/gs)];
+    const withPlay = cells.filter((m) => m[2].includes('class="play"')).map((m) => m[1]);
+    expect(withPlay).toEqual(["entropy"]);
+    const tabs = /<nav class="tabs">(.*?)<\/nav>/s.exec(html)[1];
+    expect([...tabs.matchAll(/>([^<]+)<\/a>/g)].map((m) => m[1])).toEqual(["全部", "视频", "科学"]);
+  });
+
+  it("一本动画版都没有 → 不出「视频」tab", async () => {
+    const html = await (await call(await shelfEnv())).text();
+    expect(html).not.toContain('data-video="1">视频');
+  });
+});
+
 describe("书架作者", () => {
   it("author 缺省回落主人 profile 名；显式 author: \"\" = 不署名，不回落", async () => {
     const owner = await anonScopeFromToken(OWNER_TOK);

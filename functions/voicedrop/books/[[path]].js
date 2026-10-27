@@ -560,6 +560,8 @@ async function buildShelf(env) {
     // 归属口径与 setHidden 一致：owner 缺失的老书算发布者的。
     return { slug, title, author, category, hidden: b.hidden === true, owner: b.owner || PUBLISHER_SCOPE,
              cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
+             // 有动画版（build/视频书流水线写进 book.json 的 video.url）：书架封面叠播放水印、「视频」tab 据此筛。
+             video: !!(b.video && b.video.url),
              chapters, createdAt: Number(b.createdAt) || 0, subtitle, intro, toc };
   }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
@@ -644,6 +646,7 @@ async function collectBooks(env, viewerScope = '', waitUntil) {
     return { slug: b.slug, title: b.title, main, sub, c, c2, author: b.author, category: b.category,
              cover: b.cover, coverAt: b.coverAt, chapters: b.chapters, createdAt: b.createdAt,
              ...(b.hidden ? { hidden: true } : {}),
+             ...(b.video ? { video: true } : {}),
              ...(mine ? { mine: true } : {}) };
   });
 }
@@ -797,13 +800,15 @@ async function index(env, waitUntil) {
     return (base || tag) ? `${base}${base && tag ? ' ' : ''}${tag}` : '&nbsp;';
   };
 
+  // 有动画版的书：封面正中一枚淡淡的半透明播放键（与 App 书架同款）。
+  const playMark = '<i class="play"><svg viewBox="0 0 10 10"><path d="M1.5 .8 9.2 5 1.5 9.2z"/></svg></i>';
   const bookCell = (b) => {
     const href = `/books/${encodeURI(b.slug)}/`;
     const face = b.cover
       ? `<img src="${href}cover.jpg?v=${b.coverAt}" alt="" loading="lazy">`
       : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
-    return `<a class="cell" href="${href}" title="${esc(b.title)}" data-cat="${esc(b.category)}" data-slug="${esc(b.slug)}" data-author="${esc(b.author)}">` +
-      `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i></span>` +
+    return `<a class="cell" href="${href}" title="${esc(b.title)}"${b.video ? ' data-video="1"' : ''} data-cat="${esc(b.category)}" data-slug="${esc(b.slug)}" data-author="${esc(b.author)}">` +
+      `<span class="cover" style="--c:${b.c};--c2:${b.c2}">${face}<i class="spine"></i><i class="edge"></i>${b.video ? playMark : ''}</span>` +
       `<span class="cap"><b>${esc(b.main)}</b><small>${metaLine(b)}</small></span></a>`;
   };
   // 第一格固定是「写书」入口（App 里开 BookWritingSheet，网页上进 VoiceDrop 落地页）。
@@ -819,9 +824,10 @@ async function index(env, waitUntil) {
 
   // 分类导航：与社区 tab 同款（选中墨色加粗，未选中 metaChrome），只列实际有书的类目。
   const present = CATEGORY_ORDER.filter((c) => books.some((b) => b.category === c));
-  const tabs = ['全部', ...present]
-    .map((c, i) => `<a href="#" data-cat="${c === '全部' ? '' : esc(c)}"${i === 0 ? ' class="on"' : ''}>${esc(c)}</a>`)
-    .join('');
+  // 「视频」tab 紧跟「全部」：只筛有动画版的书，书架上一本都没有时不出。
+  const tabs = `<a href="#" data-cat="" class="on">全部</a>`
+    + (books.some((b) => b.video) ? `<a href="#" data-video="1">视频</a>` : '')
+    + present.map((c) => `<a href="#" data-cat="${esc(c)}">${esc(c)}</a>`).join('');
 
   const html = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -854,6 +860,11 @@ async function index(env, waitUntil) {
     font-size:11.5px;line-height:1.55;color:rgba(247,241,223,.72)}
   .spine{position:absolute;inset:0 auto 0 0;width:13px;pointer-events:none;
     background:linear-gradient(90deg,rgba(0,0,0,.36) 0,rgba(0,0,0,.10) 55%,rgba(255,255,255,.12) 100%)}
+  .play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:40px;height:40px;
+    border-radius:50%;background:rgba(0,0,0,.18);border:1.2px solid rgba(255,255,255,.6);
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+    display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .play svg{width:14px;height:14px;margin-left:3px;fill:rgba(255,255,255,.85)}
   .edge{position:absolute;inset:0 0 0 auto;width:3px;pointer-events:none;
     background:repeating-linear-gradient(180deg,rgba(255,255,255,.85) 0 1px,rgba(214,202,180,.9) 1px 2px)}
   .coverW{background:#F3ECE0;border:1.5px dashed #CFC0A6;
@@ -916,6 +927,7 @@ ${rows.join('\n')}
   var all=[].slice.call(shelf.querySelectorAll('a.cell'));
   var write=all.shift();                       // 第一格「写书」入口，任何类目下都在
   var cat='';                                  // 当前类目 tab
+  var vid=false;                               // 「视频」tab：只看有动画版的书
   var idx=null,idxLoading=false;               // 章节索引：第一次打字才拉 ?format=search
   all.forEach(function(c){
     c._q=((c.getAttribute('title')||'')+' '+(c.getAttribute('data-author')||'')+' '+(c.getAttribute('data-cat')||'')).toLowerCase();
@@ -943,6 +955,7 @@ ${rows.join('\n')}
     form.classList.toggle('has',!!kw);
     var list=all.filter(function(c){
       if(cat&&c.getAttribute('data-cat')!==cat)return false;
+      if(vid&&!c.hasAttribute('data-video'))return false;
       if(!kw){setHit(c,null);return true;}
       if(c._q.indexOf(kw)>=0){setHit(c,null);return true;}
       var h=idx?tocHit(idx[c.getAttribute('data-slug')],kw):false;
@@ -980,6 +993,7 @@ ${rows.join('\n')}
       [].forEach.call(tabs,function(x){x.classList.remove('on');});
       t.classList.add('on');
       cat=t.getAttribute('data-cat')||'';
+      vid=t.hasAttribute('data-video');
       render();
     });
   });
