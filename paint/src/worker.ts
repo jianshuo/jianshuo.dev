@@ -1,16 +1,15 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Config } from "./config.js";
 import type { JobStore, Job } from "./store.js";
 import type { EventHub } from "./events.js";
-import { buildArgs, parseResult, parseEventLine, isModelRejected, isQuotaExhausted, isRateLimited } from "./engine.js";
+import { buildArgs, parseResult, parseEventLine, isModelRejected, isRateLimited } from "./engine.js";
 import { seedreamSize, refImageDataUri, seedreamGenerate, finalizeImage } from "./seedream.js";
 import { deliver, type CallbackPayload } from "./callback.js";
 import { buildXmp, embedXmp } from "./xmp.js";
-import { GroupStore } from "./groups.js";
-import { httpRouter, type EngineRouter, type RouterDecision } from "./router.js";
+import { httpRouter, type BatchIn, type Claim, type ImageRouter, type RouterBatch } from "./router.js";
 
 const EXT: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
 
@@ -18,13 +17,22 @@ const EXT: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
 // 同一 prompt 重跑大概率就过）——这类错误自动重试一次。
 const RETRYABLE = new Set(["missing_image_result"]);
 const MAX_ATTEMPTS = 2;
-/** 降级 Seedream 至少要留这么多时间，不够就别花这笔钱了，直接 deadline_exceeded */
-const MIN_SEEDREAM_MS = 45_000;
+const HEARTBEAT_MS = 30_000;
+const SYNC_MS = 60_000;
 
 type EngineError = { code: string; message: string; detail?: unknown };
 type LegResult = { ok: boolean; bytes: number; error?: EngineError };
+export type Executed = { ok: boolean; error?: EngineError; attempts: number };
+type Running = { child?: ChildProcess; stopped?: boolean };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 报给 router 的错误原文：detail 里才有 usage_limit_reached / resets_at 这些原话，router 靠它判冷却多久 */
+export function errorText(e: EngineError | undefined): string {
+  if (!e) return "unknown: generation failed";
+  const d = e.detail ? " " + String(typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail)).slice(0, 400) : "";
+  return `${e.code}: ${e.message}${d}`;
+}
 
 // image_url 输入的异步下载（2026-07-25 从 submitJob 挪来）：提交方不再为跨洋原图
 // 干等 5–8s 才拿 202。URL 的协议/内网黑名单校验在提交时已做过；redirect:"manual"
@@ -43,25 +51,57 @@ export async function downloadInput(url: string, inputPath: string, maxBytes: nu
 }
 
 /**
- * 出图的唯一调度点（2026-10-02 统一）：引擎选择、Codex 模型候选、瞬时 429 重试、
- * 额度冷却、Seedream 降级、group 粘性、整单期限——全在这里，调用方只管 POST /api/jobs。
- * 规则见 paint/USAGE.md。
+ * 出图执行器（2026-10-28 起只执行，不调度）。
+ *
+ * 调度全在 engine-router：job 建好后整批交过去（submitBatch），router 一批定一个引擎、按账号并发
+ * 排队；这里向它领活（claim）、按它给的引擎画、画完回报（complete），画的时候每 30 秒心跳。
+ * 失败的单是「这张失败」还是「放回队列 / 整批暂停」由 router 判定（它回报里给 status），
+ * 这里照办：失败才回调，放回队列就把 job 改回 queued 等下次领。
+ * 不再有：自动降级 Seedream、group 粘性、进程内排队——都在 router。规则见 paint/USAGE.md。
  */
 export class Worker {
-  private queue: string[] = [];
-  private active = 0;
-  readonly groups: GroupStore;
+  readonly router: ImageRouter;
+  private running = new Map<string, Running>();
+  /** 已交批、还没终态的 job（sync 用：router 那边判了失败的，这边要回调） */
+  private pending = new Set<string>();
+  /** 建好了但还没交上 router 的单张 job（router 一时连不上），后台补交 */
+  private unsubmitted = new Set<string>();
+  private timers: NodeJS.Timeout[] = [];
+  private pumping = false;
+  private pumpAgain = false;
+  private claimFailing = false;
 
-  readonly router?: EngineRouter;
-
-  constructor(private store: JobStore, private hub: EventHub, private cfg: Config, router?: EngineRouter) {
-    this.groups = new GroupStore(join(cfg.dataDir, "groups.json"), cfg.groupTtlMs);
-    this.router = router ?? (cfg.router ? httpRouter(cfg.router.url, cfg.router.token) : undefined);
+  constructor(private store: JobStore, private hub: EventHub, private cfg: Config, router?: ImageRouter) {
+    const r = router ?? (cfg.router ? httpRouter(cfg.router.url, cfg.router.token) : undefined);
+    if (!r) throw new Error("engine-router is required (ROUTER_URL + ROUTER_TOKEN)");
+    this.router = r;
   }
 
-  enqueue(id: string): void {
-    this.queue.push(id);
-    this.pump();
+  /** 启动：先把上次没画完的交还 router，补交没交上的，然后开始领活 / 心跳 / 对账。 */
+  async start(recovered: string[] = []): Promise<void> {
+    try {
+      const n = await this.router.releaseAll();
+      if (n) console.log(`[worker] 交还 router ${n} 张上次没画完的图`);
+    } catch (e: any) {
+      console.warn(`[worker] release-all 失败（router 3 分钟没心跳也会自己收回）：${e?.message ?? e}`);
+    }
+    for (const id of recovered) {
+      const j = await this.store.get(id);
+      if (!j || j.status !== "queued") continue;
+      if (j.batchId) this.pending.add(id);
+      else this.unsubmitted.add(id);
+    }
+    await this.flushUnsubmitted();
+    this.timers.push(setInterval(() => void this.pump(), this.cfg.claimIntervalMs));
+    this.timers.push(setInterval(() => void this.heartbeat(), HEARTBEAT_MS));
+    this.timers.push(setInterval(() => void this.sync().then(() => this.flushUnsubmitted()), SYNC_MS));
+    for (const t of this.timers) t.unref?.();
+    void this.pump();
+  }
+
+  stop(): void {
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
   }
 
   /** 显式 engine=seedream 能不能接（提交时就校验，免得排队半天再失败） */
@@ -69,44 +109,177 @@ export class Worker {
     return !!this.cfg.seedream.apiKey;
   }
 
-  private pump(): void {
-    while (this.active < this.cfg.maxConcurrency && this.queue.length > 0) {
-      const id = this.queue.shift()!;
-      this.active++;
-      this.run(id)
-        .catch((e) => console.error(`[worker] job ${id} crashed`, e))
-        .finally(() => {
-          this.active--;
-          this.pump();
-        });
+  /** 一批 job 交给 router（job 已落盘）。交不上抛错，由调用方决定怎么办。 */
+  async submitBatch(jobs: Job[], opts: Omit<BatchIn, "items">): Promise<RouterBatch> {
+    const b = await this.router.submitBatch({
+      ...opts,
+      items: jobs.map((j) => ({ job_id: j.id, ...(j.key ? { key: j.key } : {}), ...(j.params.transparent ? { transparent: true } : {}) })),
+    });
+    for (const j of jobs) {
+      await this.store.update(j.id, { batchId: b.batch_id });
+      this.pending.add(j.id);
+      this.unsubmitted.delete(j.id);
+    }
+    void this.pump();
+    return b;
+  }
+
+  /** 单张（VoiceDrop / 网页 / POST /api/jobs）：插队优先；router 一时连不上不让调用方失败，后台补交。 */
+  async submitSingle(job: Job): Promise<void> {
+    try {
+      await this.submitBatch([job], {
+        priority: "interactive",
+        ...(job.group ? { group: job.group } : {}),
+        ...(job.enginePref && job.enginePref !== "auto" ? { engine: job.enginePref } : {}),
+      });
+    } catch (e: any) {
+      console.warn(`[worker] job ${job.id} 交 router 失败，稍后补交：${e?.message ?? e}`);
+      this.unsubmitted.add(job.id);
     }
   }
 
-  private async run(id: string): Promise<void> {
-    const job = await this.store.get(id);
-    if (!job || job.status === "done" || job.status === "failed") return;
+  private async flushUnsubmitted(): Promise<void> {
+    for (const id of [...this.unsubmitted]) {
+      const j = await this.store.get(id);
+      if (!j || j.status !== "queued" || j.batchId) {
+        this.unsubmitted.delete(id);
+        continue;
+      }
+      await this.submitSingle(j);
+    }
+  }
 
-    // 整单期限从提交时刻算（含排队）：调用方等的就是这么久，超了再画也没人收。
-    const deadline = Date.parse(job.createdAt) + this.cfg.jobDeadlineMs;
-    const left = () => deadline - Date.now();
-    const deadlineError = (where: string): EngineError => ({
-      code: "deadline_exceeded",
-      message: `job exceeded ${Math.round(this.cfg.jobDeadlineMs / 1000)}s deadline (${where})`,
-    });
-    if (left() <= 0) {
-      if (job.inputPath) await unlink(job.inputPath).catch(() => {});
-      await this.fail(job, deadlineError("still queued"), 0);
+  /** 向 router 领活，领到就开画。重入安全：正在领时再叫一次会在这一轮结束后补一轮。 */
+  async pump(): Promise<void> {
+    if (this.pumping) {
+      this.pumpAgain = true;
       return;
     }
+    this.pumping = true;
+    try {
+      do {
+        this.pumpAgain = false;
+        const free = this.cfg.maxConcurrency - this.running.size;
+        if (free <= 0) break;
+        let claims: Claim[];
+        try {
+          claims = await this.router.claim(free);
+          if (this.claimFailing) console.log("[worker] router 恢复了");
+          this.claimFailing = false;
+        } catch (e: any) {
+          if (!this.claimFailing) console.warn(`[worker] 向 router 领活失败：${e?.message ?? e}`);
+          this.claimFailing = true;
+          break;
+        }
+        for (const c of claims) {
+          if (this.running.has(c.job_id)) continue;
+          this.running.set(c.job_id, {});
+          void this.runClaim(c);
+        }
+        if (claims.length) this.pumpAgain = true;
+      } while (this.pumpAgain);
+    } finally {
+      this.pumping = false;
+    }
+  }
 
-    // image_url 输入在这里才真正落地（提交时只校验了 URL）。失败 = job 失败走回调，
-    // 提交方（VoiceDrop）的失败分支会把原图写回占位 key，文章不烂。
+  private async runClaim(c: Claim): Promise<void> {
+    const engine = c.engine === "seedream" ? "seedream" : "codex";
+    console.log(`[worker] job ${c.job_id}: ${engine}（批次 ${c.batch_id}）`);
+    let res: Executed;
+    try {
+      res = await this.execute(c.job_id, engine);
+    } catch (e: any) {
+      console.error(`[worker] job ${c.job_id} crashed`, e);
+      res = { ok: false, attempts: 0, error: { code: "crash", message: e?.message ?? String(e) } };
+    }
+    if (this.running.get(c.job_id)?.stopped && !res.ok) res.error = { code: "cancelled", message: "batch cancelled" };
+    this.running.delete(c.job_id);
+    let verdict = "";
+    try {
+      const r = await this.router.complete(c.job_id, { ok: res.ok, ...(res.ok ? {} : { error: errorText(res.error) }) });
+      verdict = r?.status ?? "";
+    } catch (e: any) {
+      console.warn(`[worker] job ${c.job_id} 回报 router 失败（它没心跳会自己重排）：${e?.message ?? e}`);
+    }
+    if (!res.ok) {
+      const job = await this.store.get(c.job_id);
+      if (job && verdict === "failed") {
+        this.pending.delete(c.job_id);
+        await this.fail(job, res.error ?? { code: "unknown", message: "generation failed" }, res.attempts);
+      } else if (job) {
+        // router 把它放回队列（撞墙暂停 / 被打断重排）或这会儿联系不上：等下次派活
+        await this.store.update(c.job_id, { status: "queued", percent: 0, error: res.error ?? null, attempts: res.attempts });
+        this.hub.publish(c.job_id, "progress", { percent: 0, phase: "queued" });
+      }
+    } else this.pending.delete(c.job_id);
+    void this.pump();
+  }
+
+  /** 心跳：续上在画的；router 叫停的（批次取消）杀掉。 */
+  private async heartbeat(): Promise<void> {
+    const ids = [...this.running.keys()];
+    if (!ids.length) return;
+    try {
+      for (const id of await this.router.heartbeat(ids)) {
+        const r = this.running.get(id);
+        if (!r) continue;
+        r.stopped = true;
+        r.child?.kill("SIGTERM");
+        console.log(`[worker] job ${id}: router 叫停`);
+      }
+    } catch (e: any) {
+      console.warn(`[worker] 心跳失败：${e?.message ?? e}`);
+    }
+  }
+
+  /** 对账：router 判失败了（暂停超时 / 取消）而这边还在排队的 job，补上失败 + 回调。 */
+  async sync(): Promise<void> {
+    const byBatch = new Map<string, Job[]>();
+    for (const id of [...this.pending]) {
+      const j = await this.store.get(id);
+      if (!j || j.status === "done" || j.status === "failed") {
+        this.pending.delete(id);
+        continue;
+      }
+      if (j.status !== "queued" || !j.batchId) continue;
+      byBatch.set(j.batchId, [...(byBatch.get(j.batchId) ?? []), j]);
+    }
+    for (const [bid, jobs] of byBatch) {
+      let b: RouterBatch | null;
+      try {
+        b = await this.router.getBatch(bid);
+      } catch {
+        continue; // router 一时连不上，下轮再说
+      }
+      for (const j of jobs) {
+        const it = b?.items.find((x) => x.job_id === j.id);
+        if (b && it?.status !== "failed") continue;
+        this.pending.delete(j.id);
+        await this.fail(j, { code: it?.error === "cancelled" ? "cancelled" : "engine_unavailable", message: it?.error ?? `batch ${bid} not found` }, j.attempts ?? 0);
+      }
+    }
+  }
+
+  /**
+   * 用 router 指定的引擎画一张（不降级、不换引擎）。成功就地收尾（XMP、done、回调）；
+   * 失败只返回错误，终判等 router（runClaim）。
+   */
+  async execute(id: string, engine: "codex" | "seedream"): Promise<Executed> {
+    const job = await this.store.get(id);
+    if (!job) return { ok: false, attempts: 0, error: { code: "not_found", message: `job ${id} not found` } };
+    if (job.status === "done") return { ok: true, attempts: job.attempts ?? 0 };
+
+    // 期限从开画算（排队在 router，不算）
+    const deadline = Date.now() + this.cfg.jobDeadlineMs;
+    const left = () => deadline - Date.now();
+
+    // image_url 输入在这里才真正落地（提交时只校验了 URL）
     if (job.inputUrl && job.inputPath) {
       try {
         await downloadInput(job.inputUrl, job.inputPath, this.cfg.maxInputBytes, Math.min(30000, left()));
       } catch (e: any) {
-        await this.fail(job, { code: "input_download_failed", message: e?.message ?? "input download failed" }, 0);
-        return;
+        return { ok: false, attempts: 0, error: { code: "input_download_failed", message: e?.message ?? "input download failed" } };
       }
     }
 
@@ -118,160 +291,35 @@ export class Worker {
     try {
       buildArgs(job, outPath);
     } catch (e: any) {
-      if (job.inputPath) await unlink(job.inputPath).catch(() => {});
-      await this.fail(job, { code: "invalid_argument", message: e?.message ?? "bad args" }, 0);
-      return;
+      return { ok: false, attempts: 0, error: { code: "invalid_argument", message: e?.message ?? "bad args" } };
     }
 
-    await this.store.update(id, { status: "running", startedAt: new Date().toISOString(), percent: 0 });
-    this.hub.publish(id, "progress", { percent: 0, phase: "queued" });
+    await this.store.update(id, { status: "running", startedAt: new Date().toISOString(), percent: 0, engine });
+    this.hub.publish(id, "progress", { percent: 0, phase: "started" });
 
-    const pref = job.enginePref ?? "auto";
-    const sd = this.cfg.seedream;
-    // seedream 能不能接：有 key + 不是透明图（方舟没有透明背景）
-    const seedreamReady = this.seedreamConfigured() && !job.params.transparent;
-    // auto 单能不能自动降级：再加上 SEEDREAM_FALLBACK 开关
-    const canFallback = pref === "auto" && sd.enabled && seedreamReady;
+    let r: LegResult & { attempts: number; model: string };
+    if (engine === "seedream") {
+      r = !this.seedreamConfigured()
+        ? { ok: false, bytes: 0, attempts: 0, model: "", error: { code: "seedream_unavailable", message: "seedream not configured (ARK_API_KEY)" } }
+        : job.params.transparent
+          ? { ok: false, bytes: 0, attempts: 0, model: "", error: { code: "seedream_unavailable", message: "seedream cannot do transparent output" } }
+          : await this.runSeedream(id, job, outPath, deadline);
+    } else r = await this.runCodex(id, job, outPath, left);
 
-    let attempts = 0;
-    let ok = false;
-    let bytes = 0;
-    let error: EngineError | undefined;
-    let model = this.cfg.codexModels[0];
-    let engine: "codex" | "seedream" = "codex";
-    let fallbackReason: string | undefined;
-
-    let runCodex = pref !== "seedream";
-    if (runCodex && canFallback) {
-      const sticky = await this.groups.get(job.group).catch(() => undefined);
-      if (sticky) {
-        // 风格一致性：这组已经有图是 seedream 出的，别再混进 codex 画风
-        runCodex = false;
-        fallbackReason = `group "${job.group}" sticky on seedream since ${sticky.since}`;
-      }
+    if (!r.ok) {
+      await this.store.update(id, { model: r.model, engine }); // 失败也留痕：栽在哪个引擎/模型上
+      // 输入文件留着：router 可能把这张放回队列再画
+      return { ok: false, attempts: r.attempts, error: r.error ?? { code: "unknown", message: "generation failed" } };
     }
-
-    // engine-router 统一裁决（2026-10-25，配了 ROUTER_URL 才有）：它同时看着写书和出图对同一个
-    // ChatGPT 账号的消耗，按红线/周配速/冷却/Seedream 日上限决定这张图给谁。
-    //  - 已定死要 seedream（显式 / group 粘性）→ 只租 seedream；
-    //  - 只能 codex（显式 / 透明图 / 没有可降级的 seedream）→ 只租 gpt-image；
-    //  - 其余让 router 按策略挑（缺省 gpt-image 优先，不合格给 seedream）。
-    // 显式指定或无路可降级时 force：配速只用来把活挪给替代引擎，没有替代就别因配速拦图。
-    // router 出任何问题 decide 返回 undefined → 不裁决，按请求本身走（auto = 先 codex，撞墙这一单改 seedream）。
-    // 冷却只有 router 一处记（2026-10-25 删掉了 paint 进程内的冷却）。
-    let lease: RouterDecision | undefined;
-    let codexError: EngineError | undefined;
-    if (this.router) {
-      const onlyCodex = job.params.transparent || pref === "codex" || !canFallback;
-      const require: ("gpt-image" | "seedream")[] = !runCodex ? ["seedream"] : onlyCodex ? ["gpt-image"] : [];
-      lease = await this.router.decide({ require, force: pref !== "auto" || (runCodex && onlyCodex), jobId: id });
-      if (lease) console.log(`[worker] job ${id}: ${lease.reason}`);
-    }
-    if (lease && !lease.engine) {
-      if (job.inputPath) await unlink(job.inputPath).catch(() => {});
-      await this.store.update(id, { engine: runCodex ? "codex" : "seedream", fallbackReason: lease.reason });
-      await this.fail(job, { code: "engine_unavailable", message: lease.reason }, 0);
-      return;
-    }
-    if (lease?.engine === "seedream" && runCodex) {
-      runCodex = false;
-      fallbackReason = lease.reason;
-    }
-
-    if (runCodex) {
-      // 外层按模型候选序列走：账号说「这个模型你用不了」就换下一个，其它错一律不换。
-      for (const candidate of this.cfg.codexModels) {
-        model = candidate;
-        const args = buildArgs(job, outPath, candidate);
-        let missTries = 0;
-        let rlTries = 0;
-        while (true) {
-          attempts++;
-          ({ ok, bytes, error } = await this.attempt(id, args, outPath, left()));
-          if (ok) break;
-          if (error?.code === "deadline_exceeded") break;
-          if (RETRYABLE.has(error?.code ?? "") && ++missTries < MAX_ATTEMPTS) {
-            await this.store.update(id, { percent: 0 });
-            this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
-            continue;
-          }
-          // 瞬时 429（不是真额度）：原地短等再试，不冷却、不连累别的单
-          const wait = this.cfg.rateLimitRetryMs[rlTries];
-          if (isRateLimited(error) && wait !== undefined && left() > wait + 60_000) {
-            rlTries++;
-            console.warn(`[worker] job ${id}: codex 瞬时限流，${wait}ms 后原地重试（第 ${rlTries} 次）`);
-            this.hub.publish(id, "progress", { percent: 0, phase: "rate-limited" });
-            await sleep(wait);
-            continue;
-          }
-          break;
-        }
-        if (ok || !isModelRejected(error)) break;
-        console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
-        await this.store.update(id, { percent: 0 });
-        this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
-      }
-
-      if (!ok) {
-        // 回报给 router（带报错原文）：额度 / 模型被拒这类由 router 统一冷却这个账号，之后的单它不会再派 codex
-        codexError = error;
-        // 这一单能降级就改走 seedream：
-        if (canFallback) {
-          if (isQuotaExhausted(error)) fallbackReason = "codex quota exhausted";
-          else if (isModelRejected(error)) fallbackReason = "codex models all rejected";
-          else if (isRateLimited(error)) fallbackReason = `codex rate-limited after ${this.cfg.rateLimitRetryMs.length} retries (this job only)`;
-        }
-        // 参数错、安全拦截（missing_image_result）、401、超时等一律原样失败，绝不降级
-      }
-    }
-
-    if (!ok && (pref === "seedream" || fallbackReason)) {
-      if (!seedreamReady) {
-        error = { code: "seedream_unavailable", message: job.params.transparent ? "seedream cannot do transparent output" : "seedream not configured (ARK_API_KEY)" };
-      } else if (left() < MIN_SEEDREAM_MS) {
-        error = deadlineError(`no time left for seedream after codex: ${error?.message ?? ""}`);
-      } else {
-        engine = "seedream";
-        if (fallbackReason) console.warn(`[worker] job ${id}: 走 seedream —— ${fallbackReason}`);
-        const r = await this.runSeedream(id, job, outPath, deadline);
-        attempts += r.attempts;
-        ({ ok, bytes, error } = r);
-        model = r.model;
-      }
-    }
-
-    // 输入文件要等重试全部结束再清（edit 的第二次尝试 / seedream 降级还要用它）
     if (job.inputPath) await unlink(job.inputPath).catch(() => {});
 
-    // 回报 router：释放预留；codex 撞墙就冷却它；实际走了 seedream 就记一张。尽力而为。
-    if (lease?.leaseId && this.router) {
-      await this.router.complete(lease.leaseId, {
-        ok,
-        engineUsed: engine,
-        // detail 里才有 usage_limit_reached / resets_at 这些原话——router 靠它分辨 5h 还是周额度、冷却多久
-        codexError: codexError
-          ? `${codexError.code}: ${codexError.message}${codexError.detail ? " " + String(typeof codexError.detail === "string" ? codexError.detail : JSON.stringify(codexError.detail)).slice(0, 400) : ""}`
-          : undefined,
-      });
-    }
-
-    if (!ok) {
-      await this.store.update(id, { model, engine, fallbackReason });   // 失败也留痕：栽在哪个引擎/模型上
-      await this.fail(job, error ?? { code: "unknown", message: "generation failed" }, attempts);
-      return;
-    }
-
-    // 组里有一张走了 seedream：整组粘到 seedream（落盘，重启不丢）
-    if (engine === "seedream" && job.group) {
-      await this.groups.stick(job.group).catch((e) => console.error(`[worker] group stick failed`, e));
-    }
-
     // 出图后、回调前：嵌 XMP 溯源。失败绝不连累任务（spec §4）。
+    let bytes = r.bytes;
     try {
       const xmp = buildXmp({
         prompt: job.xmpPrompt === false ? undefined : job.prompt,
         jobId: id,
-        model: engine === "seedream" ? model : "gpt-image-2",
+        model: engine === "seedream" ? r.model : "gpt-image-2",
         createDate: new Date().toISOString(),
         meta: job.xmpMeta,
       });
@@ -283,13 +331,55 @@ export class Worker {
     }
 
     const done = await this.store.update(id, {
-      status: "done", percent: 100, doneAt: new Date().toISOString(), attempts,
+      status: "done", percent: 100, doneAt: new Date().toISOString(), attempts: r.attempts, error: null,
       resultPath: outPath, format: ext === "jpg" ? "jpeg" : ext, bytes,
-      size: job.params.size, model, engine, fallbackReason,
+      size: job.params.size, model: r.model, engine,
     });
     const resultUrl = `${this.cfg.publicBaseUrl}/results/${id}.${ext}`;
-    this.hub.publish(id, "done", { result_url: resultUrl, bytes, format: done.format, size: done.size, engine, model });
+    this.hub.publish(id, "done", { result_url: resultUrl, bytes, format: done.format, size: done.size, engine, model: r.model });
     await this.maybeCallback(done, "done", resultUrl, null);
+    return { ok: true, attempts: r.attempts };
+  }
+
+  /** Codex：按模型候选序列走（账号不认这个模型才换下一个）；安全拦截重试一次；瞬时 429 原地短等。 */
+  private async runCodex(id: string, job: Job, outPath: string, left: () => number): Promise<LegResult & { attempts: number; model: string }> {
+    let attempts = 0;
+    let ok = false;
+    let bytes = 0;
+    let error: EngineError | undefined;
+    let model = this.cfg.codexModels[0];
+    for (const candidate of this.cfg.codexModels) {
+      model = candidate;
+      const args = buildArgs(job, outPath, candidate);
+      let missTries = 0;
+      let rlTries = 0;
+      while (true) {
+        attempts++;
+        ({ ok, bytes, error } = await this.attempt(id, args, outPath, left()));
+        if (ok) break;
+        if (error?.code === "deadline_exceeded" || error?.code === "cancelled") break;
+        if (RETRYABLE.has(error?.code ?? "") && ++missTries < MAX_ATTEMPTS) {
+          await this.store.update(id, { percent: 0 });
+          this.hub.publish(id, "progress", { percent: 0, phase: "retrying" });
+          continue;
+        }
+        // 瞬时 429（不是真额度）：原地短等再试
+        const wait = this.cfg.rateLimitRetryMs[rlTries];
+        if (isRateLimited(error) && wait !== undefined && left() > wait + 60_000) {
+          rlTries++;
+          console.warn(`[worker] job ${id}: codex 瞬时限流，${wait}ms 后原地重试（第 ${rlTries} 次）`);
+          this.hub.publish(id, "progress", { percent: 0, phase: "rate-limited" });
+          await sleep(wait);
+          continue;
+        }
+        break;
+      }
+      if (ok || !isModelRejected(error)) break;
+      console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
+      await this.store.update(id, { percent: 0 });
+      this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
+    }
+    return { ok, bytes, error, attempts, model };
   }
 
   /**
@@ -350,13 +440,16 @@ export class Worker {
     return { ok: false, bytes: 0, attempts, model, error };
   }
 
-  /** 跑一次 CLI：spawn → 进度转发 → 解析结果 → 校验产物文件。超过 timeoutMs 杀掉 = deadline_exceeded */
+  /** 跑一次 CLI：spawn → 进度转发 → 解析结果 → 校验产物文件。超过 timeoutMs 杀掉 = deadline_exceeded；router 叫停 = cancelled */
   private async attempt(id: string, args: string[], outPath: string, timeoutMs: number): Promise<LegResult> {
     if (timeoutMs <= 0) return { ok: false, bytes: 0, error: { code: "deadline_exceeded", message: "job deadline reached before codex attempt" } };
+    const handle = this.running.get(id);
+    if (handle?.stopped) return { ok: false, bytes: 0, error: { code: "cancelled", message: "batch cancelled" } };
     const env = { ...process.env };
     if (this.cfg.codexHome) env.CODEX_HOME = this.cfg.codexHome;
 
     const child = spawn(this.cfg.gptImageBin, args, { env });
+    if (handle) handle.child = child;
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
     let killed = false;
@@ -375,6 +468,8 @@ export class Worker {
       child.on("error", () => res(1));
     });
     clearTimeout(timer);
+    if (handle) handle.child = undefined;
+    if (handle?.stopped) return { ok: false, bytes: 0, error: { code: "cancelled", message: "batch cancelled" } };
     if (killed) return { ok: false, bytes: 0, error: { code: "deadline_exceeded", message: "job deadline reached during codex attempt (killed)" } };
 
     const result = parseResult(stdout);
@@ -391,7 +486,8 @@ export class Worker {
     return { ok, bytes, error: result.error };
   }
 
-  private async fail(job: Job, error: EngineError, attempts: number): Promise<void> {
+  async fail(job: Job, error: EngineError, attempts: number): Promise<void> {
+    if (job.inputPath) await unlink(job.inputPath).catch(() => {});
     // detail 留在 job JSON 里做诊断留痕；对外（事件/回调）只给 code/message
     const failed = await this.store.update(job.id, { status: "failed", error, attempts, doneAt: new Date().toISOString() });
     const publicError = { code: error.code, message: error.message };
@@ -410,7 +506,7 @@ export class Worker {
       job_id: job.id, status, result_url: resultUrl,
       format: job.format ?? null, size: job.size ?? null, bytes: job.bytes ?? null,
       error, callback_meta: job.callbackMeta ?? null,
-      engine: job.engine ?? null, model: job.model ?? null, fallback_reason: job.fallbackReason ?? null,
+      engine: job.engine ?? null, model: job.model ?? null, fallback_reason: null,
     };
     const r = await deliver(job.callbackUrl, job.callbackToken, payload, this.cfg.callbackSigningSecret);
     await this.store.update(job.id, {

@@ -10,10 +10,10 @@ import { Worker } from "../src/worker.ts";
 import { loadConfig } from "../src/config.ts";
 import { isQuotaExhausted, isRateLimited, isModelRejected } from "../src/engine.ts";
 import { seedreamSize } from "../src/seedream.ts";
-import type { EngineRouter, DecideRequest, RouterDecision, CompleteRequest } from "../src/router.ts";
+import { fakeRouter } from "./fake-router.ts";
 
-// ── Codex 额度打满 → 自动降级火山方舟 Seedream（2026-10-02）─────────────────
-// 那天 Plus 的 5h 窗口被打满，paint 每一单都 429 usage_limit_reached，全线出不了图。
+// ── 火山方舟 Seedream（2026-10-02 接入）────────────────────────────────────────
+// 2026-10-28 起 paint 不再自己降级：用 codex 还是 seedream 由 engine-router 按批次定，一批不换。
 
 const FAKE = resolve("test/fixtures/fake-gpt-image-2-skill.mjs");
 const FAKE_CONVERT = resolve("test/fixtures/fake-convert.mjs");
@@ -87,36 +87,27 @@ async function fakeArk(t: any) {
   return { calls, baseUrl: `http://127.0.0.1:${(srv.address() as any).port}/api/v3` };
 }
 
-async function setup(env: Record<string, string> = {}, router?: EngineRouter) {
+async function setup(env: Record<string, string> = {}, engine: "gpt-image" | "seedream" = "seedream") {
   const dataDir = await mkdtemp(join(tmpdir(), "paint-seedream-"));
   const cfg = loadConfig({
     API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE,
-    CONVERT_BIN: FAKE_CONVERT, ...env,
+    CONVERT_BIN: FAKE_CONVERT, CLAIM_INTERVAL_MS: "20", ...env,
   } as any);
   const store = new JobStore(cfg.jobsDir);
-  const worker = new Worker(store, new EventHub(), cfg, router);
-  return { cfg, store, worker };
-}
-
-/** 假 engine-router：按脚本回答 decide，记下所有 decide / complete。 */
-function fakeRouter(answer: (r: DecideRequest) => RouterDecision | undefined) {
-  const decided: DecideRequest[] = [];
-  const completed: { leaseId: string; res: CompleteRequest }[] = [];
-  const router: EngineRouter = {
-    async decide(r) {
-      decided.push(r);
-      return answer(r);
-    },
-    async complete(leaseId, res) {
-      completed.push({ leaseId, res });
-    },
+  const fr = fakeRouter({ engine: () => engine });
+  const worker = new Worker(store, new EventHub(), cfg, fr.router);
+  await worker.start();
+  const run = async (j: Job) => {
+    await store.create(j);
+    await worker.submitSingle(j);
+    return settle(store, j.id);
   };
-  return { router, decided, completed };
+  return { cfg, store, worker, fr, run };
 }
 
 function job(id: string, over: Partial<Job> = {}): Job {
   return {
-    id, status: "queued", mode: "generate", prompt: "QUOTA a cat",
+    id, status: "queued", mode: "generate", prompt: "a cat",
     params: { size: "1024x1536", format: "jpeg", quality: "high", compression: 80, transparent: false },
     percent: 0, error: null, createdAt: new Date().toISOString(), ...over,
   };
@@ -132,17 +123,14 @@ async function settle(store: JobStore, id: string, ms = 5000) {
   throw new Error("timeout");
 }
 
-test("codex 429 额度满 → 降级 seedream 出图，记 engine/model/原因，XMP 写方舟模型名", async (t) => {
+test("router 派 seedream：直接方舟出图，记 engine/model，XMP 写方舟模型名，codex 一次不跑", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker, cfg } = await setup({ ARK_API_KEY: "ark-key", ARK_BASE_URL: ark.baseUrl });
-  await store.create(job("q1"));
-  worker.enqueue("q1");
-  const j = await settle(store, "q1");
+  const { cfg, run } = await setup({ ARK_API_KEY: "ark-key", ARK_BASE_URL: ark.baseUrl });
+  const j = await run(job("q1"));
   assert.equal(j?.status, "done");
   assert.equal(j?.engine, "seedream");
   assert.equal(j?.model, "doubao-seedream-5-0-pro-260628");
-  assert.match(j?.fallbackReason ?? "", /codex quota/);
-  assert.equal(j?.attempts, 2); // codex 1 次 + seedream 1 次
+  assert.equal(j?.attempts, 1);
   // 发给方舟的：显式 WxH、不带 sequential_image_generation、不加水印
   assert.equal(ark.calls[0].auth, "Bearer ark-key");
   assert.equal(ark.calls[0].body.size, "1024x1536");
@@ -158,121 +146,47 @@ test("codex 429 额度满 → 降级 seedream 出图，记 engine/model/原因�
   assert.ok(buf.includes(Buffer.from('paint:Model="doubao-seedream-5-0-pro-260628"')));
 });
 
-test("没配 ARK key / SEEDREAM_FALLBACK=off → 额度满照旧失败", async (t) => {
-  for (const env of [{}, { ARK_API_KEY: "k", SEEDREAM_FALLBACK: "off" }]) {
-    const ark = await fakeArk(t);
-    const { store, worker } = await setup({ ARK_BASE_URL: ark.baseUrl, ...env });
-    await store.create(job("n1"));
-    worker.enqueue("n1");
-    const j = await settle(store, "n1");
-    assert.equal(j?.status, "failed");
-    assert.equal(j?.error?.code, "http_error");
-    assert.equal(ark.calls.length, 0);
-  }
-});
-
-test("非额度错误（普通 http_error）不降级", async (t) => {
+test("router 派 codex、codex 撞额度：不降级 seedream，原文回报 router（由它冷却 / 暂停整批）", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
-  await store.create(job("p1", { prompt: "please FAIL" }));
-  worker.enqueue("p1");
-  const j = await settle(store, "p1");
+  const { run, fr } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, "gpt-image");
+  const j = await run(job("n1", { prompt: "QUOTA a cat" }));
   assert.equal(j?.status, "failed");
   assert.equal(j?.engine, "codex");
   assert.equal(ark.calls.length, 0);
+  assert.match(fr.completed[0].error ?? "", /usage_limit_reached/);
 });
 
-test("codex 候选模型全被账号拒 → 也降级 seedream", async (t) => {
+test("瞬时 429（非额度）：原地短等重试成功", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, CODEX_MODELS: "badmodel-a,badmodel-b" });
-  await store.create(job("r1", { prompt: "a cat" }));
-  worker.enqueue("r1");
-  const j = await settle(store, "r1");
-  assert.equal(j?.status, "done");
-  assert.equal(j?.engine, "seedream");
-  assert.match(j?.fallbackReason ?? "", /rejected/);
-  // 之后的单不再白打 codex：由 engine-router 冷却（回报里带了报错原文），见下面 router 那组测试
-});
-
-test("瞬时 429（非额度）：原地短等重试成功，不冷却、不降级", async (t) => {
-  const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, RATE_LIMIT_RETRY_MS: "10,10" });
-  await store.create(job("rl1", { prompt: "RATELIMIT_ONCE a cat" }));
-  worker.enqueue("rl1");
-  const j = await settle(store, "rl1");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, RATE_LIMIT_RETRY_MS: "10,10" }, "gpt-image");
+  const j = await run(job("rl1", { prompt: "RATELIMIT_ONCE a cat" }));
   assert.equal(j?.status, "done");
   assert.equal(j?.engine, "codex");
   assert.equal(j?.attempts, 2);
   assert.equal(ark.calls.length, 0);
 });
 
-test("瞬时 429 重试用完：只这一单降级 seedream，不设长冷却", async (t) => {
+test("瞬时 429 重试用完：这张失败，回报 router，不碰方舟", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, RATE_LIMIT_RETRY_MS: "10,10" });
-  await store.create(job("rl2", { prompt: "RATELIMIT a cat" }));
-  worker.enqueue("rl2");
-  const j = await settle(store, "rl2");
-  assert.equal(j?.status, "done");
-  assert.equal(j?.engine, "seedream");
-  assert.equal(j?.attempts, 4); // codex 1 + 2 次原地重试 + seedream 1
-  assert.match(j?.fallbackReason ?? "", /rate-limited.*this job only/);
-  // 下一单照常先打 codex
-  await store.create(job("rl3", { prompt: "a dog" }));
-  worker.enqueue("rl3");
-  assert.equal((await settle(store, "rl3"))?.engine, "codex");
-});
-
-test("engine=codex 显式：瞬时 429 用完也不降级", async (t) => {
-  const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, RATE_LIMIT_RETRY_MS: "10" });
-  await store.create(job("rl4", { prompt: "RATELIMIT a cat", enginePref: "codex" }));
-  worker.enqueue("rl4");
-  const j = await settle(store, "rl4");
+  const { run, fr } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, RATE_LIMIT_RETRY_MS: "10,10" }, "gpt-image");
+  const j = await run(job("rl2", { prompt: "RATELIMIT a cat" }));
   assert.equal(j?.status, "failed");
+  assert.equal(j?.attempts, 3); // codex 1 + 2 次原地重试
   assert.equal(ark.calls.length, 0);
+  assert.match(fr.completed[0].error ?? "", /429/);
 });
 
 test("seedream 出图后处理（convert）失败：postprocess_error，不再换模型二次付费", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "sd-a,sd-b" });
-  await store.create(job("convfail1", { prompt: "a cat", enginePref: "seedream" }));
-  worker.enqueue("convfail1");
-  const j = await settle(store, "convfail1");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "sd-a,sd-b" });
+  const j = await run(job("convfail1"));
   assert.equal(j?.status, "failed");
   assert.equal(j?.error?.code, "postprocess_error");
   assert.equal(ark.calls.length, 1); // 只调了一次方舟
   assert.equal(j?.model, "sd-a");
 });
 
-test("group 粘性：组里一张走了 seedream，后续 auto 单直走 seedream；落盘，重启（新 Worker）后仍生效", async (t) => {
-  const ark = await fakeArk(t);
-  const env = { ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl };
-  const { store, worker, cfg } = await setup(env);
-  await store.create(job("g1", { prompt: "a cat", enginePref: "seedream", group: "book-x" }));
-  worker.enqueue("g1");
-  assert.equal((await settle(store, "g1"))?.engine, "seedream");
-  const saved = JSON.parse(await readFile(join(cfg.dataDir, "groups.json"), "utf8"));
-  assert.equal(saved["book-x"].engine, "seedream");
-
-  // 新 Worker = 模拟重启（进程内冷却清零，但 group 粘性在盘上）
-  const worker2 = new Worker(store, new EventHub(), cfg);
-  await store.create(job("g2", { prompt: "a dog", group: "book-x" }));
-  worker2.enqueue("g2");
-  const j2 = await settle(store, "g2");
-  assert.equal(j2?.engine, "seedream");
-  assert.equal(j2?.attempts, 1);
-  assert.match(j2?.fallbackReason ?? "", /group "book-x" sticky/);
-
-  // 别的组 / 不带组：照常 codex；显式 engine=codex 不受粘性影响
-  await store.create(job("g3", { prompt: "a dog", group: "book-y" }));
-  worker2.enqueue("g3");
-  assert.equal((await settle(store, "g3"))?.engine, "codex");
-  await store.create(job("g4", { prompt: "a dog", group: "book-x", enginePref: "codex" }));
-  worker2.enqueue("g4");
-  assert.equal((await settle(store, "g4"))?.engine, "codex");
-});
-
-test("回调带 engine / model / fallback_reason", async (t) => {
+test("回调带 engine / model；fallback_reason 恒为 null（不再降级）", async (t) => {
   const ark = await fakeArk(t);
   const received: any[] = [];
   const srv = createServer((req, res) => {
@@ -283,62 +197,34 @@ test("回调带 engine / model / fallback_reason", async (t) => {
   await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
   t.after(() => srv.close());
   const cb = `http://127.0.0.1:${(srv.address() as any).port}/cb`;
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
-  await store.create(job("cb1", { callbackUrl: cb })); // QUOTA → 降级
-  worker.enqueue("cb1");
-  await settle(store, "cb1");
-  await store.create(job("cb2", { prompt: "a dog", callbackUrl: cb, enginePref: "codex" }));
-  worker.enqueue("cb2");
-  await settle(store, "cb2");
-  for (let i = 0; i < 100 && received.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
-  const a = received.find((r) => r.job_id === "cb1");
-  assert.equal(a.engine, "seedream");
-  assert.equal(a.model, "doubao-seedream-5-0-pro-260628");
-  assert.match(a.fallback_reason, /quota/);
-  const b = received.find((r) => r.job_id === "cb2");
-  assert.equal(b.engine, "codex");
-  assert.equal(b.model, "gpt-5.4-mini");
-  assert.equal(b.fallback_reason, null);
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
+  await run(job("cb1", { callbackUrl: cb }));
+  for (let i = 0; i < 100 && received.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(received[0].engine, "seedream");
+  assert.equal(received[0].model, "doubao-seedream-5-0-pro-260628");
+  assert.equal(received[0].fallback_reason, null);
 });
 
-test("整单期限：codex 卡住被杀 → deadline_exceeded，不降级花钱", async (t) => {
+test("执行期限：codex 卡住被杀 → deadline_exceeded", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, JOB_DEADLINE_MS: "800" });
-  await store.create(job("dl1", { prompt: "SLOW a cat" }));
-  worker.enqueue("dl1");
-  const j = await settle(store, "dl1");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, JOB_DEADLINE_MS: "800" }, "gpt-image");
+  const j = await run(job("dl1", { prompt: "SLOW a cat" }));
   assert.equal(j?.status, "failed");
   assert.equal(j?.error?.code, "deadline_exceeded");
   assert.equal(ark.calls.length, 0);
 });
 
-test("整单期限从提交算：排队排过了期限的单直接 deadline_exceeded，不出图", async (t) => {
+test("执行期限从开画算：在 router 排队排了很久的单照样画", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, JOB_DEADLINE_MS: "60000" });
-  await store.create(job("dl2", { prompt: "a cat", createdAt: new Date(Date.now() - 61_000).toISOString() }));
-  worker.enqueue("dl2");
-  const j = await settle(store, "dl2");
-  assert.equal(j?.error?.code, "deadline_exceeded");
-  assert.equal(j?.attempts, 0);
-});
-
-test("降级时剩余时间不够 seedream：deadline_exceeded，不调方舟", async (t) => {
-  const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, JOB_DEADLINE_MS: "60000" });
-  // 提交于 30s 前：codex 立刻 429 额度满，剩 ~30s < 45s 的 seedream 最低预算
-  await store.create(job("dl3", { createdAt: new Date(Date.now() - 30_000).toISOString() }));
-  worker.enqueue("dl3");
-  const j = await settle(store, "dl3");
-  assert.equal(j?.error?.code, "deadline_exceeded");
-  assert.equal(ark.calls.length, 0);
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, JOB_DEADLINE_MS: "60000" }, "gpt-image");
+  const j = await run(job("dl2", { createdAt: new Date(Date.now() - 3600_000).toISOString() }));
+  assert.equal(j?.status, "done");
 });
 
 test("seedream 第一个模型失败 → 换下一个", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "bad-sd,good-sd" });
-  await store.create(job("s1"));
-  worker.enqueue("s1");
-  const j = await settle(store, "s1");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "bad-sd,good-sd" });
+  const j = await run(job("s1"));
   assert.equal(j?.status, "done");
   assert.equal(j?.model, "good-sd");
   assert.deepEqual(ark.calls.map((c) => c.body.model), ["bad-sd", "good-sd"]);
@@ -346,32 +232,27 @@ test("seedream 第一个模型失败 → 换下一个", async (t) => {
 
 test("seedream 全失败 → failed，错误是 seedream_error，引擎留痕", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "bad-1,bad-2" });
-  await store.create(job("s2"));
-  worker.enqueue("s2");
-  const j = await settle(store, "s2");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl, SEEDREAM_MODELS: "bad-1,bad-2" });
+  const j = await run(job("s2"));
   assert.equal(j?.status, "failed");
   assert.equal(j?.error?.code, "seedream_error");
   assert.equal(j?.engine, "seedream");
   assert.equal(j?.model, "bad-2");
 });
 
-test("enginePref=seedream：不碰 codex；edit 的参考图以 data URI 发出；小尺寸放大后再裁回", async (t) => {
+test("seedream 改图：参考图以 data URI 发出；小尺寸放大后再裁回；输入文件清掉", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker, cfg } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
+  const { cfg, run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
   await mkdir(cfg.inputsDir, { recursive: true });
   const inputPath = join(cfg.inputsDir, "e1.img");
   await writeFile(inputPath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
-  await store.create(job("e1", {
-    prompt: "a dog", mode: "edit", inputPath, enginePref: "seedream",
+  const j = await run(job("e1", {
+    prompt: "a dog", mode: "edit", inputPath,
     params: { size: "768x1024", format: "png", quality: "high", transparent: false },
   }));
-  worker.enqueue("e1");
-  const j = await settle(store, "e1");
   assert.equal(j?.status, "done");
   assert.equal(j?.engine, "seedream");
   assert.equal(j?.attempts, 1);
-  assert.equal(j?.fallbackReason, undefined);
   assert.match(ark.calls[0].body.image, /^data:image\/png;base64,/);
   const [w, h] = ark.calls[0].body.size.split("x").map(Number);
   assert.ok(w * h >= 921600);
@@ -381,99 +262,23 @@ test("enginePref=seedream：不碰 codex；edit 的参考图以 data URI 发出�
   await assert.rejects(readFile(inputPath)); // 输入文件照样清掉
 });
 
-test("透明图不降级（方舟没有透明背景）", async (t) => {
+test("透明图派给 seedream（router 不该这么派）→ 失败，不调方舟", async (t) => {
   const ark = await fakeArk(t);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
-  await store.create(job("tp", { params: { size: "1024x1024", format: "png", quality: "high", transparent: true } }));
-  worker.enqueue("tp");
-  const j = await settle(store, "tp");
+  const { run } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
+  const j = await run(job("tp", { params: { size: "1024x1024", format: "png", quality: "high", transparent: true } }));
   assert.equal(j?.status, "failed");
+  assert.equal(j?.error?.code, "seedream_unavailable");
   assert.equal(ark.calls.length, 0);
 });
 
-// ── engine-router 统一裁决（2026-10-25）──────────────────────────────────────
-// 配了 router 就由它决定 codex 还是 seedream；router 出问题（decide 返回 undefined）退回本地逻辑。
-
-test("router 说给 seedream：不碰 codex，直接方舟出图；回报 ok + engineUsed=seedream", async (t) => {
+test("一批里每张都用 router 定的同一个引擎", async (t) => {
   const ark = await fakeArk(t);
-  const fr = fakeRouter(() => ({ leaseId: "l_1", engine: "seedream", reason: "router lease l_1 → seedream/ark-1" }));
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
-  await store.create(job("r1", { prompt: "a cat" }));
-  worker.enqueue("r1");
-  const j = await settle(store, "r1");
-  assert.equal(j?.status, "done");
-  assert.equal(j?.engine, "seedream");
-  assert.equal(j?.attempts, 1, "codex 一次都没跑");
-  assert.match(j?.fallbackReason ?? "", /router lease l_1/);
-  assert.deepEqual(fr.decided[0].require, []);
-  assert.equal(fr.decided[0].force, false);
-  assert.deepEqual(fr.completed, [{ leaseId: "l_1", res: { ok: true, engineUsed: "seedream", codexError: undefined } }]);
-});
-
-test("router 说给 codex，codex 撞额度 → 照旧降级 seedream；回报带 codex 报错原文（router 据此冷却）", async (t) => {
-  const ark = await fakeArk(t);
-  const fr = fakeRouter(() => ({ leaseId: "l_2", engine: "codex", reason: "router lease l_2 → gpt-image/codex-1" }));
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
-  await store.create(job("r2")); // prompt 含 QUOTA
-  worker.enqueue("r2");
-  const j = await settle(store, "r2");
-  assert.equal(j?.status, "done");
-  assert.equal(j?.engine, "seedream");
-  assert.equal(fr.completed[0].res.engineUsed, "seedream");
-  assert.match(fr.completed[0].res.codexError ?? "", /usage limit|usage_limit/i);
-});
-
-test("router 说谁都不合格 → engine_unavailable 失败，不跑任何引擎，不回报", async (t) => {
-  const ark = await fakeArk(t);
-  const fr = fakeRouter(() => ({ leaseId: null, engine: null, reason: "router: no engine available (seedream/ark-1: daily cap reached)" }));
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
-  await store.create(job("r3", { prompt: "a cat" }));
-  worker.enqueue("r3");
-  const j = await settle(store, "r3");
-  assert.equal(j?.status, "failed");
-  assert.equal(j?.error?.code, "engine_unavailable");
-  assert.match(j?.error?.message ?? "", /daily cap/);
-  assert.equal(ark.calls.length, 0);
-  assert.equal(fr.completed.length, 0);
-});
-
-test("router 挂了（decide 返回 undefined）→ 退回本地老逻辑：codex 额度满照样降级 seedream", async (t) => {
-  const ark = await fakeArk(t);
-  const fr = fakeRouter(() => undefined);
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
-  await store.create(job("r4"));
-  worker.enqueue("r4");
-  const j = await settle(store, "r4");
-  assert.equal(j?.status, "done");
-  assert.equal(j?.engine, "seedream");
-  assert.match(j?.fallbackReason ?? "", /codex quota/);
-  assert.equal(fr.completed.length, 0);
-});
-
-test("租什么由请求决定：显式 codex / 透明图 → 只租 gpt-image 且 force；显式 seedream / group 粘性 → 只租 seedream", async (t) => {
-  const ark = await fakeArk(t);
-  const fr = fakeRouter((r) => ({ leaseId: "l", engine: r.require[0] === "seedream" ? "seedream" : "codex", reason: "x" }));
-  const { store, worker } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl }, fr.router);
-  await store.create(job("e1", { prompt: "a cat", enginePref: "codex" }));
-  worker.enqueue("e1");
-  await settle(store, "e1");
-  await store.create(job("e2", { prompt: "a cat", params: { size: "1024x1024", format: "png", quality: "high", transparent: true } }));
-  worker.enqueue("e2");
-  await settle(store, "e2");
-  await store.create(job("e3", { prompt: "a cat", enginePref: "seedream" }));
-  worker.enqueue("e3");
-  await settle(store, "e3");
-  await worker.groups.stick("book-y");
-  await store.create(job("e4", { prompt: "a cat", group: "book-y" }));
-  worker.enqueue("e4");
-  await settle(store, "e4");
-  assert.deepEqual(
-    fr.decided.map((d) => [d.require, d.force]),
-    [
-      [["gpt-image"], true],
-      [["gpt-image"], true],
-      [["seedream"], true],
-      [["seedream"], false],
-    ],
-  );
+  const { store, worker, fr } = await setup({ ARK_API_KEY: "k", ARK_BASE_URL: ark.baseUrl });
+  const jobs = ["b1", "b2", "b3"].map((id) => job(id, { group: "book-q", key: `/w/${id}.jpg` }));
+  for (const j of jobs) await store.create(j);
+  await worker.submitBatch(jobs, { group: "book-q", label: "《测试》", priority: "batch" });
+  for (const j of jobs) assert.equal((await settle(store, j.id))?.engine, "seedream");
+  assert.equal(fr.batches.length, 1);
+  assert.deepEqual(fr.batches[0].items.map((i) => i.key), ["/w/b1.jpg", "/w/b2.jpg", "/w/b3.jpg"]);
+  assert.equal(ark.calls.length, 3);
 });

@@ -12,7 +12,7 @@ test("loadConfig reads values and derives dirs", () => {
   assert.equal(cfg.resultsDir, "/tmp/paint-x/results");
   assert.equal(cfg.inputsDir, "/tmp/paint-x/inputs");
   assert.equal(cfg.port, 8788);
-  assert.equal(cfg.maxConcurrency, 3);
+  assert.equal(cfg.maxConcurrency, 8);
 });
 
 test("loadConfig throws when secrets missing", () => {
@@ -32,15 +32,13 @@ test("codexModels：缺省钉死候选序列，CODEX_MODELS 可覆盖", () => {
   assert.equal(loadConfig({ ...base, CODEX_MODELS: "  " } as any).codexModels[0], "gpt-5.4-mini");
 });
 
-test("seedream：缺省开、无 key 不可用；SEEDREAM_MODELS/SEEDREAM_FALLBACK 可覆盖", () => {
+test("seedream：无 key 不可用；SEEDREAM_MODELS 可覆盖", () => {
   const base = { API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s" };
   const d = loadConfig(base as any).seedream;
-  assert.equal(d.enabled, true);
   assert.equal(d.apiKey, undefined);
   assert.equal(d.models[0], "doubao-seedream-5-0-pro-260628");
   assert.equal(d.minPixels, 921600);
-  const c = loadConfig({ ...base, ARK_API_KEY: "k", SEEDREAM_MODELS: "x, y", SEEDREAM_FALLBACK: "off" } as any).seedream;
+  const c = loadConfig({ ...base, ARK_API_KEY: "k", SEEDREAM_MODELS: "x, y" } as any).seedream;
   assert.equal(c.apiKey, "k");
   assert.deepEqual(c.models, ["x", "y"]);
-  assert.equal(c.enabled, false);
 });

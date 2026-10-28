@@ -8,19 +8,22 @@ import { JobStore } from "../src/store.ts";
 import { EventHub } from "../src/events.ts";
 import { Worker } from "../src/worker.ts";
 import { createApp, isBlockedHost } from "../src/server.ts";
+import { fakeRouter } from "./fake-router.ts";
 
 const FAKE = resolve("test/fixtures/fake-gpt-image-2-skill.mjs");
 
-async function boot() {
+async function boot(fr = fakeRouter()) {
   const dataDir = await mkdtemp(join(tmpdir(), "paint-routes-"));
-  const cfg = loadConfig({ API_TOKEN: "secret", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE, PUBLIC_BASE_URL: "http://localhost" } as any);
+  const cfg = loadConfig({ API_TOKEN: "secret", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE, PUBLIC_BASE_URL: "http://localhost", CLAIM_INTERVAL_MS: "20" } as any);
   const store = new JobStore(cfg.jobsDir);
   const hub = new EventHub();
-  const worker = new Worker(store, hub, cfg);
+  const worker = new Worker(store, hub, cfg, fr.router);
+  await worker.start();
   const app = createApp(cfg, { store, hub, worker });
+  app.on("close", () => worker.stop());
   await new Promise<void>((r) => app.listen(0, r));
   const base = `http://127.0.0.1:${(app.address() as any).port}`;
-  return { app, base };
+  return { app, base, fr, cfg };
 }
 
 test("POST /api/jobs requires bearer", async () => {
@@ -97,7 +100,7 @@ test("POST image_url to a blocked host is rejected by the SSRF guard", async () 
 test("POST image_b64 over size cap is rejected", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "paint-routes-"));
   const cfg = loadConfig({ API_TOKEN: "secret", CALLBACK_SIGNING_SECRET: "s", DATA_DIR: dataDir, GPT_IMAGE_BIN: FAKE, PUBLIC_BASE_URL: "http://localhost", MAX_INPUT_BYTES: "10" } as any);
-  const store = new JobStore(cfg.jobsDir); const hub = new EventHub(); const worker = new Worker(store, hub, cfg);
+  const store = new JobStore(cfg.jobsDir); const hub = new EventHub(); const worker = new Worker(store, hub, cfg, fakeRouter().router);
   const app = createApp(cfg, { store, hub, worker });
   await new Promise((r) => app.listen(0, r));
   const b = `http://127.0.0.1:${(app.address()).port}`;
@@ -213,8 +216,8 @@ test("POST /api/jobs：engine=seedream 但服务端没配 ARK_API_KEY → 提交
   app.close();
 });
 
-test("POST /api/jobs：size 服务端规整、group 校验；GET 回 engine/model/fallback_reason/group/deadline_at", async () => {
-  const { app, base } = await boot();
+test("POST /api/jobs：size 服务端规整、group 校验；单张插队交给 router；GET 回 engine/model/group/batch_id", async () => {
+  const { app, base, fr } = await boot();
   const H = { "Content-Type": "application/json", Authorization: "Bearer secret" };
   const post = (b: unknown) => fetch(`${base}/api/jobs`, { method: "POST", headers: H, body: JSON.stringify(b) });
   assert.equal((await post({ prompt: "a cat", size: "garbage" })).status, 400);
@@ -223,7 +226,7 @@ test("POST /api/jobs：size 服务端规整、group 校验；GET 回 engine/mode
   assert.equal(sub.status, 202);
   const s = await sub.json();
   assert.equal(s.size, "1360x1024");
-  assert.ok(s.deadline_at);
+  assert.equal(s.deadline_at, null, "排队在 router，期限从开画算");
   let j: any;
   for (let i = 0; i < 200; i++) {
     j = await (await fetch(`${base}/api/jobs/${s.job_id}`, { headers: H })).json();
@@ -237,5 +240,61 @@ test("POST /api/jobs：size 服务端规整、group 校验；GET 回 engine/mode
   assert.equal(j.fallback_reason, null);
   assert.equal(j.group, "book-abc");
   assert.equal(j.engine_pref, "auto");
+  assert.equal(j.batch_id, "b_1");
+  assert.equal(fr.batches[0].priority, "interactive");
+  assert.equal(fr.batches[0].group, "book-abc");
+  app.close();
+});
+
+const H = { "Content-Type": "application/json", Authorization: "Bearer secret" };
+
+test("POST /api/batches：整批一次交 router；共用参考图只传一次（inputs + image_ref）；GET 进度带每张 result_url", async () => {
+  const { app, base, fr, cfg } = await boot();
+  const ref = Buffer.from("REFIMG").toString("base64");
+  const items = ["p01", "p02", "p03"].map((k) => ({ key: `/w/${k}.jpg`, prompt: `page ${k}`, image_ref: "refs", size: "1024x1024", format: "jpeg" }));
+  const r = await fetch(`${base}/api/batches`, { method: "POST", headers: H, body: JSON.stringify({ group: "book-b", label: "《书》", inputs: { refs: ref }, items }) });
+  assert.equal(r.status, 202);
+  const b = await r.json();
+  assert.equal(b.batch_id, "b_1");
+  assert.equal(fr.batches.length, 1, "一批只交一次");
+  assert.equal(fr.batches[0].items.length, 3);
+  assert.equal(fr.batches[0].group, "book-b");
+  assert.equal(fr.batches[0].priority, "batch");
+  let v: any;
+  for (let i = 0; i < 200; i++) {
+    v = await (await fetch(`${base}/api/batches/${b.batch_id}`, { headers: H })).json();
+    if (v.items.every((x: any) => x.status === "done")) break;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  assert.deepEqual(v.items.map((x: any) => x.key), ["/w/p01.jpg", "/w/p02.jpg", "/w/p03.jpg"]);
+  assert.ok(v.items.every((x: any) => x.status === "done" && x.result_url && x.engine === "codex"));
+  assert.equal(v.engine, "codex");
+  void cfg;
+  app.close();
+});
+
+test("POST /api/batches：任何一项不合法整批 400 不建 job；image_ref 找不到 400；router 拒收 503", async () => {
+  const { app, base } = await boot();
+  const post = (b: unknown) => fetch(`${base}/api/batches`, { method: "POST", headers: H, body: JSON.stringify(b) });
+  assert.equal((await post({ items: [] })).status, 400);
+  const bad = await post({ items: [{ prompt: "ok" }, { prompt: "" }] });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /items\[1\]/);
+  assert.equal((await post({ items: [{ prompt: "x", image_ref: "nope" }] })).status, 400);
+  app.close();
+  const down = await boot(fakeRouter({ down: () => true }));
+  const r = await fetch(`${down.base}/api/batches`, { method: "POST", headers: H, body: JSON.stringify({ items: [{ prompt: "x" }] }) });
+  assert.equal(r.status, 503);
+  down.app.close();
+});
+
+test("POST /api/batches/:id/cancel 转给 router；不存在的批次 404", async () => {
+  const { app, base, fr } = await boot(fakeRouter({ engine: () => "gpt-image" }));
+  const r = await fetch(`${base}/api/batches`, { method: "POST", headers: H, body: JSON.stringify({ items: [{ prompt: "SLOW a" }, { prompt: "SLOW b" }] }) });
+  const b = await r.json();
+  const c = await fetch(`${base}/api/batches/${b.batch_id}/cancel`, { method: "POST", headers: H });
+  assert.equal(c.status, 200);
+  assert.ok([...fr.items.values()].every((i) => i.status === "failed" || fr.stop.has(i.job_id)));
+  assert.equal((await fetch(`${base}/api/batches/b_nope`, { headers: H })).status, 404);
   app.close();
 });

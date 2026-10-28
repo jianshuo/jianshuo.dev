@@ -28,14 +28,16 @@ export interface Job {
   attempts?: number;
   /** 这一单最后用的 Codex 外层模型（换过腿的话是换到的那个）——诊断用 */
   model?: string;
-  /** 实际出图的引擎（2026-10-02 起）：codex 额度打满自动降级到 seedream */
+  /** 实际出图的引擎：由 engine-router 按批次定（一批一个引擎） */
   engine?: "codex" | "seedream";
-  /** 调用方指定的引擎偏好（缺省 auto = codex 优先、额度满降级 seedream） */
+  /** 调用方点名的引擎（缺省 auto = 让 router 挑） */
   enginePref?: "auto" | "codex" | "seedream";
-  /** 降级到 seedream 的原因（codex 的错误摘要 / 冷却中 / group 粘性），诊断用 */
-  fallbackReason?: string;
-  /** 风格一致性分组（如书的 slug）：组里有一张走了 seedream，后续 auto 单同走 seedream */
+  /** 风格一致性分组（如书的 slug）：router 让同组所有批次用同一个引擎 */
   group?: string;
+  /** 所属的 engine-router 批次（交批成功才有；没有 = 还没交上，worker 会补交） */
+  batchId?: string;
+  /** 调用方给这张图的标识（批次里的 key，如输出文件路径） */
+  key?: string;
   callbackUrl?: string;
   callbackToken?: string;
   callbackMeta?: unknown;

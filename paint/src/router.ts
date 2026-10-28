@@ -1,45 +1,66 @@
-// src/router.ts — 向 engine-router 租「这张图用谁画」（2026-10-25）。
+// src/router.ts — paint 和 engine-router 之间的出图批次协议（2026-10-28）。
 //
-// 额度的唯一裁决者是 engine-router（同机服务，见 engine-router/README）：它同时看着写书和
-// 出图对同一个 ChatGPT 账号的消耗，按 5h 红线、周配速、冷却、Seedream 日上限决定这张图给
-// gpt-image（Codex）还是 seedream。paint 只负责执行（自己的 Codex 链、gpt-image-2-skill、
-// 方舟、后处理），画完回报结果。
-//
-// 硬约束：router 出任何问题（没配、连不上、超时、返回乱码）都不能连累出图——decide 返回
-// undefined，worker 退回原来的本地逻辑（进程内冷却 + 自动降级）。
+// 调度全在 engine-router（engine-router/src/batches.ts）：一批图交过去，它按整批定一个引擎，
+// 按账号并发排队。paint 只执行：
+//   交批      POST /v1/image-batches            {items:[{job_id,key?,transparent?}], group?, label?, engine?, priority?}
+//   领活      POST /v1/image-jobs/claim         {max} → {items:[{job_id, batch_id, engine}]}
+//   回报      POST /v1/image-jobs/:id/complete  {ok, error?}（error 带引擎报错原文，router 据此冷却 / 暂停）
+//   心跳      POST /v1/image-jobs/heartbeat     {job_ids} → {stop:[…]}（批次被取消的要停下）
+//   重启交还  POST /v1/image-jobs/release-all
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-export type RouterDecision = {
-  leaseId: string | null;
-  engine: "codex" | "seedream" | null; // null = router 说现在谁都不合格
-  reason: string;
+const TIMEOUT_MS = 10_000;
+
+export type ImageEngine = "gpt-image" | "seedream";
+export type Claim = { job_id: string; batch_id: string; engine: ImageEngine };
+export type BatchItemIn = { job_id: string; key?: string; transparent?: boolean };
+export type BatchIn = {
+  items: BatchItemIn[];
+  group?: string;
+  label?: string;
+  engine?: "codex" | "seedream";
+  priority?: "interactive" | "batch";
+};
+/** router 的批次视图（publicBatch） */
+export type RouterBatch = {
+  batch_id: string;
+  status: string;
+  engine: ImageEngine | null;
+  account: string | null;
+  decided_reason: string | null;
+  group: string | null;
+  label: string | null;
+  paused_until: string | null;
+  pause_reason: string | null;
+  created_at: string;
+  finished_at: string | null;
+  counts: Record<string, number>;
+  items: { job_id: string; key: string | null; status: string; attempts: number; error: string | null }[];
 };
 
-export type DecideRequest = {
-  require: ("gpt-image" | "seedream")[];
-  force: boolean;
-  jobId: string;
-};
-
-export type CompleteRequest = {
-  ok: boolean;
-  engineUsed: "codex" | "seedream";
-  codexError?: string; // 租到 gpt-image 时 Codex 的报错原文（额度类会让 router 冷却它）
-};
-
-export interface EngineRouter {
-  decide(req: DecideRequest): Promise<RouterDecision | undefined>;
-  complete(leaseId: string, res: CompleteRequest): Promise<void>;
+export interface ImageRouter {
+  submitBatch(b: BatchIn): Promise<RouterBatch>;
+  getBatch(id: string): Promise<RouterBatch | null>;
+  cancelBatch(id: string): Promise<RouterBatch | null>;
+  claim(max: number): Promise<Claim[]>;
+  /** 返回 router 对这张的判定：done / failed（终判）/ queued（放回队列：撞墙暂停或被打断重排） */
+  complete(jobId: string, r: { ok: boolean; error?: string }): Promise<{ status?: string }>;
+  heartbeat(jobIds: string[]): Promise<string[]>;
+  releaseAll(): Promise<number>;
 }
 
-const TIMEOUT_MS = 5000;
+export class RouterError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
 
-function call(url: string, token: string, path: string, body: unknown): Promise<any> {
+function call(url: string, token: string, method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
   const unix = url.startsWith("unix:");
   const base = unix ? new URL("http://router/") : new URL(url.endsWith("/") ? url : url + "/");
   const u = new URL(path, base);
-  const payload = JSON.stringify(body);
+  const payload = body === undefined ? "" : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = (base.protocol === "https:" ? httpsRequest : httpRequest)(
       {
@@ -47,21 +68,23 @@ function call(url: string, token: string, path: string, body: unknown): Promise<
         hostname: unix ? undefined : u.hostname,
         port: unix ? undefined : u.port || undefined,
         path: u.pathname,
-        method: "POST",
+        method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
         timeout: TIMEOUT_MS,
       },
       (res) => {
         let text = "";
         res.setEncoding("utf8");
-        res.on("data", (c: string) => (text += c));
+        res.on("data", (c) => (text += c));
         res.on("end", () => {
-          if (res.statusCode !== 200) return reject(new Error(`router ${res.statusCode}: ${text.slice(0, 200)}`));
+          let j: any;
           try {
-            resolve(JSON.parse(text));
+            j = JSON.parse(text);
           } catch {
-            reject(new Error("router returned non-JSON"));
+            return reject(new RouterError(res.statusCode ?? 0, "router returned non-JSON"));
           }
+          if ((res.statusCode ?? 0) >= 300) return reject(new RouterError(res.statusCode ?? 0, j?.error ?? `router ${res.statusCode}`));
+          resolve(j);
         });
       },
     );
@@ -71,34 +94,22 @@ function call(url: string, token: string, path: string, body: unknown): Promise<
   });
 }
 
-export function httpRouter(url: string, token: string): EngineRouter {
+export function httpRouter(url: string, token: string): ImageRouter {
+  const orNull = async (p: Promise<any>) => {
+    try {
+      return await p;
+    } catch (e) {
+      if (e instanceof RouterError && e.status === 404) return null;
+      throw e;
+    }
+  };
   return {
-    async decide(r) {
-      try {
-        const j = await call(url, token, "v1/leases", {
-          kind: "image",
-          task_class: "image",
-          engine_hints: { require: r.require },
-          force: r.force,
-        });
-        const engine = j.engine === "gpt-image" ? "codex" : j.engine === "seedream" ? "seedream" : null;
-        const reason = engine ? `router lease ${j.lease_id} → ${j.account}` : `router: no engine available (${(j.reasons ?? []).join("; ")})`;
-        return { leaseId: j.lease_id ?? null, engine, reason };
-      } catch (e: any) {
-        console.warn(`[router] decide failed for ${r.jobId}, falling back to local logic: ${e?.message ?? e}`);
-        return undefined;
-      }
-    },
-    async complete(leaseId, r) {
-      try {
-        await call(url, token, `v1/leases/${leaseId}/complete`, {
-          ok: r.ok,
-          engine_used: r.engineUsed === "codex" ? "gpt-image" : "seedream",
-          ...(r.codexError ? { error: r.codexError } : {}),
-        });
-      } catch (e: any) {
-        console.warn(`[router] complete ${leaseId} failed (lease will expire on its own): ${e?.message ?? e}`);
-      }
-    },
+    submitBatch: (b) => call(url, token, "POST", "v1/image-batches", b),
+    getBatch: (id) => orNull(call(url, token, "GET", `v1/image-batches/${encodeURIComponent(id)}`)),
+    cancelBatch: (id) => orNull(call(url, token, "POST", `v1/image-batches/${encodeURIComponent(id)}/cancel`, {})),
+    claim: async (max) => (await call(url, token, "POST", "v1/image-jobs/claim", { max })).items ?? [],
+    complete: (jobId, r) => call(url, token, "POST", `v1/image-jobs/${encodeURIComponent(jobId)}/complete`, r),
+    heartbeat: async (jobIds) => (await call(url, token, "POST", "v1/image-jobs/heartbeat", { job_ids: jobIds })).stop ?? [],
+    releaseAll: async () => (await call(url, token, "POST", "v1/image-jobs/release-all", {})).released ?? 0,
   };
 }

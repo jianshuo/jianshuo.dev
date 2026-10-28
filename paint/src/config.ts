@@ -10,6 +10,7 @@ export interface Config {
   inputsDir: string;
   apiToken: string;
   callbackSigningSecret: string;
+  /** 本进程最多同时执行几张（真正的并发闸门在 engine-router：每账号 / 全站上限）；这里只是兜底 */
   maxConcurrency: number;
   retentionDays: number;
   gptImageBin: string;
@@ -26,34 +27,25 @@ export interface Config {
   codexModels: string[];
   maxInputBytes: number;
   maxPromptChars: number;
-  /**
-   * Codex 额度打满（429 usage_limit_reached）时的自动降级：火山方舟 Seedream。
-   * 2026-10-02 起。enabled=false 或没配 apiKey 就不降级（原样失败）。
-   */
+  /** 火山方舟 Seedream（router 把批次派给 seedream 时用；2026-10-28 起不再自动降级） */
   seedream: SeedreamConfig;
   /** ImageMagick `convert`：Seedream 出图后裁/缩到调用方要的尺寸 + 转格式 */
   convertBin: string;
   /**
-   * 一单的总期限（从提交时刻算，含排队、Codex 各次尝试、Seedream 降级、下载）。
-   * 每条腿的超时都取 min(自身上限, 剩余时间)；到点 = deadline_exceeded。
-   * 默认 8 分钟：bin/paint 等 9 分钟，比 agent 单条 Bash 的 10 分钟上限留出余量。
+   * 一张图的执行期限（从 router 派活、开画算起；排队不算）：Codex 各次尝试、限流等待、下载都在内。
+   * 到点 = deadline_exceeded（router 会把它重排一次）。
    */
   jobDeadlineMs: number;
-  /** 瞬时 429（非额度）原地重试前的等待序列（ms），用完还不行才（auto 单）降级这一单 */
+  /** 瞬时 429（非额度）原地重试前的等待序列（ms） */
   rateLimitRetryMs: number[];
-  // （额度 / 模型被拒的冷却 2026-10-25 起只在 engine-router 一处记，QUOTA_COOLDOWN_MS 等已删）
-  /** group 粘性（某组一旦走了 Seedream，后续 auto 单同走 Seedream）的保留期 */
-  groupTtlMs: number;
-  /**
-   * engine-router（2026-10-25）：配了就由它决定每张图用 Codex 还是 Seedream（额度统一裁决），
-   * 没配 / 连不上就走本地老逻辑。url 形如 unix:/run/engine-router/router.sock。
-   */
+  // 额度 / 模型被拒的冷却、引擎选择、group 统一引擎、排队并发：全在 engine-router（2026-10-28）
+  /** engine-router（必配）：url 形如 unix:/run/engine-router/router.sock */
   router?: { url: string; token: string };
+  /** 空闲时多久向 router 领一次活（ms） */
+  claimIntervalMs: number;
 }
 
 export interface SeedreamConfig {
-  /** 允许 auto 单自动降级（SEEDREAM_FALLBACK）；显式 engine=seedream 只看有没有 apiKey */
-  enabled: boolean;
   apiKey?: string;
   baseUrl: string;
   /** 按顺序试，前一个失败换下一个（env SEEDREAM_MODELS 逗号分隔） */
@@ -101,7 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     inputsDir: join(dataDir, "inputs"),
     apiToken,
     callbackSigningSecret,
-    maxConcurrency: Number(env.MAX_CONCURRENCY ?? 3),
+    maxConcurrency: Number(env.MAX_CONCURRENCY ?? 8),
     retentionDays: Number(env.RETENTION_DAYS ?? 30),
     gptImageBin: env.GPT_IMAGE_BIN ?? "gpt-image-2-skill",
     codexHome: env.CODEX_HOME,
@@ -109,7 +101,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxInputBytes: Number(env.MAX_INPUT_BYTES ?? 26214400),
     maxPromptChars: Number(env.MAX_PROMPT_CHARS ?? 4000),
     seedream: {
-      enabled: !/^(0|false|off|no)$/i.test(env.SEEDREAM_FALLBACK ?? "on"),
       apiKey: env.ARK_API_KEY || undefined,
       baseUrl: (env.ARK_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, ""),
       models: parseModels(env.SEEDREAM_MODELS, DEFAULT_SEEDREAM_MODELS),
@@ -120,7 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     convertBin: env.CONVERT_BIN ?? "convert",
     jobDeadlineMs: Number(env.JOB_DEADLINE_MS ?? 8 * 60 * 1000),
     rateLimitRetryMs: (env.RATE_LIMIT_RETRY_MS ?? "15000,30000").split(",").map((s) => Number(s.trim())).filter((n) => n >= 0),
-    groupTtlMs: Number(env.GROUP_TTL_MS ?? 7 * 24 * 3600 * 1000),
     router: env.ROUTER_URL && env.ROUTER_TOKEN ? { url: env.ROUTER_URL, token: env.ROUTER_TOKEN } : undefined,
+    claimIntervalMs: Number(env.CLAIM_INTERVAL_MS ?? 2000),
   };
 }
