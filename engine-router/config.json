@@ -56,6 +56,6 @@
     "video": { "claude": { "d5h": 40, "d7d": 8 } },
     "image": { "gpt-image": { "d5h": 3, "d7d": 1 } }
   },
-  "concurrency": { "global_text": 2, "global_image": 3, "per_account": 1 },
+  "concurrency": { "global_text": 2, "per_account": 1, "image_per_account": 4, "image_total": 6 },
   "portable": { "claude_family": true, "codex": false }
 }

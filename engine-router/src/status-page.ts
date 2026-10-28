@@ -1,11 +1,12 @@
 // src/status-page.ts — 状态页（lab.jianshuo.dev/router/，Caddy basic_auth 后面）。
 // 服务端直接渲染，30 秒自动刷新，没有前端脚本。
-import { acctKey, ENGINE_KIND, ENGINE_NAMES, limitsFor, policyFor, type EngineName } from "./config.js";
+import { acctKey, ENGINE_KIND, ENGINE_NAMES, imageSlots, limitsFor, policyFor, type EngineName } from "./config.js";
 import type { Pool } from "./pool.js";
 import { quotaKey, weeklyLine } from "./selector.js";
 import type { RunRecord } from "./runs.js";
 import type { Lease, Leases } from "./leases.js";
 import { bookForKey } from "./book-index.js";
+import type { Batch, Batches } from "./batches.js";
 
 const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -46,6 +47,19 @@ function leaseRow(l: Lease, now: number): string {
   return `<tr><td class="nw">${bj(l.createdAt)}</td><td><b>${esc(l.label ?? l.taskClass)}</b><span class="sub">${esc(l.caller)} · ${esc(l.taskClass)}</span></td><td>${pill}</td><td class="mono sub">${esc(l.key)}</td><td>${step}</td><td class="nw">${live ? mins(l.createdAt, now) + "…" : mins(l.createdAt, l.finishedAt!)}</td><td>${tail}</td></tr>`;
 }
 
+function batchRow(b: Batch, now: number): string {
+  const n = (s: string) => b.items.filter((i) => i.status === s).length;
+  const cls = b.status === "done" ? "ok" : b.status === "failed" ? "bad" : b.status === "running" ? "run" : b.status === "paused" ? "warn" : "muted";
+  const label = { queued: "排队", running: "在画", paused: "暂停", done: "完成", failed: "失败", cancelled: "取消" }[b.status];
+  const prog = `${n("done")}/${b.items.length}${n("running") ? ` · 在画 ${n("running")}` : ""}${n("queued") ? ` · 排队 ${n("queued")}` : ""}${n("failed") ? ` · <span class="err">失败 ${n("failed")}</span>` : ""}`;
+  const note =
+    b.status === "paused"
+      ? `暂停到 ${bj(b.pausedUntil)}：${esc(b.pauseReason ?? "")}`
+      : (b.items.find((i) => i.status === "failed")?.error ?? "");
+  const dur = b.finishedAt ? mins(b.createdAt, b.finishedAt) : `${mins(b.createdAt, now)}…`;
+  return `<tr><td class="nw">${bj(b.createdAt)}</td><td><b>${esc(b.label ?? b.group ?? "—")}</b><span class="sub">${esc(b.caller)} · ${esc(b.id)}${b.group ? ` · ${esc(b.group)}` : ""}${b.priority === "interactive" ? " · 插队" : ""}</span></td><td><span class="pill ${cls}">${label}</span></td><td class="mono sub">${esc(b.engine && b.accountId ? `${b.engine}/${b.accountId}` : "未定")}<br>${esc(b.decidedReason ?? "")}</td><td class="nw">${prog}</td><td>${dur}</td><td class="err">${b.status === "paused" ? note : esc(note)}</td></tr>`;
+}
+
 function bar(used: number | null, cap: number, line?: number): string {
   if (used == null) return `<span class="muted">unknown</span>`;
   const cls = used >= cap ? "bad" : line != null && used > line ? "warn" : "ok";
@@ -53,9 +67,10 @@ function bar(used: number | null, cap: number, line?: number): string {
   return `<div class="bar ${cls}"><b style="width:${Math.min(100, used)}%"></b>${mark}</div><span class="num">${used.toFixed(0)}%</span>`;
 }
 
-export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, now = Date.now()): string {
+export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, batches?: Batches, now = Date.now()): string {
   const cfg = pool.cfg;
   const st = pool.selectState();
+  const imageLoad = batches?.load() ?? {};
   const rows: string[] = [];
   for (const e of ENGINE_NAMES as EngineName[]) {
     for (const a of cfg.engines[e]?.accounts ?? []) {
@@ -81,8 +96,12 @@ export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, now
         const line = weeklyLine(lim, u?.reset7d ?? null, now);
         week = `${bar(u?.used7d ?? null, lim.cap_7d, lim.pacing ? line : undefined)}<span class="sub">resets ${until(u?.reset7d, now)}${lim.pacing ? "" : " · 不配速"}</span>`;
       }
+      const busy =
+        ENGINE_KIND[e] === "image"
+          ? `${imageLoad[k]?.running ?? 0}/${imageSlots(cfg, a)}${imageLoad[k]?.queued ? `<span class="sub">排队 ${imageLoad[k].queued}</span>` : ""}`
+          : inf || "";
       rows.push(
-        `<tr><td><b>${esc(e)}</b><span class="sub">${esc(a.id)}${qk !== k ? ` · quota of ${esc(qk)}` : ""}</span></td><td>${health}</td><td>${five}</td><td>${week}</td><td class="c">${inf || ""}</td><td class="sub">${ago(u?.probedAt, now)}</td><td class="err">${esc(u?.error ?? "")}</td></tr>`,
+        `<tr><td><b>${esc(e)}</b><span class="sub">${esc(a.id)}${qk !== k ? ` · quota of ${esc(qk)}` : ""}</span></td><td>${health}</td><td>${five}</td><td>${week}</td><td class="c">${busy}</td><td class="sub">${ago(u?.probedAt, now)}</td><td class="err">${esc(u?.error ?? "")}</td></tr>`,
       );
     }
   }
@@ -106,6 +125,8 @@ export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, now
 <div class="meta">${esc(q.note)}${q.note ? " · " : ""}<span class="${stale ? "err" : ""}">更新于 ${ago(q.updatedAt, now)}${stale ? "（调用方好久没报了）" : ""}</span></div>
 <div class="card"><table><tr><th>#</th><th>内容</th><th>下单</th><th>说明</th></tr>${items || `<tr><td colspan="4" class="muted">队里没有东西</td></tr>`}</table></div>`;
   });
+  const allBatches = batches?.list() ?? [];
+  const batchRows = [...allBatches.filter((b) => !b.finishedAt), ...allBatches.filter((b) => b.finishedAt).slice(0, 15)].map((b) => batchRow(b, now));
   const learned = Object.entries(pool.learnedTable())
     .map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${v.d5h.toFixed(1)}</td><td>${v.d7d.toFixed(1)}</td></tr>`)
     .join("");
@@ -137,10 +158,11 @@ th{font-size:12px;color:var(--mute);font-weight:500}tr:last-child td{border-bott
 .num{margin-left:8px;font-variant-numeric:tabular-nums}.muted{color:var(--mute)}code{font-size:12px;background:#f1f0eb;padding:1px 5px;border-radius:4px}
 </style></head><body><main>
 <h1>Engine Router</h1>
-<div class="meta">红线：5h ${cfg.limits.cap_5h}% · 周 ${cfg.limits.cap_7d}%（配速宽限 ${cfg.limits.weekly_slack} 点，竖线 = 当前配速线） · 并发 文字 ${cfg.concurrency.global_text} / 出图 ${cfg.concurrency.global_image} · 策略 ${policies} · 北京时间 ${bj(now)}</div>
+<div class="meta">红线：5h ${cfg.limits.cap_5h}% · 周 ${cfg.limits.cap_7d}%（配速宽限 ${cfg.limits.weekly_slack} 点，竖线 = 当前配速线） · 并发 文字 ${cfg.concurrency.global_text} / 出图 每账号 ${cfg.concurrency.image_per_account}、全站 ${cfg.concurrency.image_total} · 策略 ${policies} · 北京时间 ${bj(now)}</div>
 <h2>账号</h2><div class="card"><table><tr><th>账号</th><th>状态</th><th>5 小时</th><th>本周</th><th>在跑</th><th>探测</th><th>最近错误</th></tr>${rows.join("") || `<tr><td colspan="7" class="muted">config.json 里还没有账号</td></tr>`}</table></div>
 ${queueCards.length ? `<h2>排队</h2>${queueCards.join("")}` : ""}
-<h2>租约（调用方自己执行：视频书、出图）</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>状态</th><th>账号</th><th>当前步骤</th><th>用时</th><th></th></tr>${leaseRows.join("") || `<tr><td colspan="7" class="muted">现在没有租约</td></tr>`}</table></div>
+<h2>出图批次（一批一个引擎，按账号并发排队）</h2><div class="card"><table><tr><th>提交</th><th>内容</th><th>状态</th><th>引擎</th><th>进度</th><th>用时</th><th>说明</th></tr>${batchRows.join("") || `<tr><td colspan="7" class="muted">还没有出图批次</td></tr>`}</table></div>
+<h2>租约（调用方自己执行：视频书）</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>状态</th><th>账号</th><th>当前步骤</th><th>用时</th><th></th></tr>${leaseRows.join("") || `<tr><td colspan="7" class="muted">现在没有租约</td></tr>`}</table></div>
 <h2>最近任务</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>run · 调用方</th><th>状态</th><th>账号</th><th>用时</th><th>说明</th></tr>${runRows.join("") || `<tr><td colspan="7" class="muted">还没有任务</td></tr>`}</table></div>
 <h2>学到的单次消耗（百分点）</h2><div class="card"><table><tr><th>任务类|引擎</th><th>5h</th><th>周</th></tr>${learned || `<tr><td colspan="3" class="muted">还没有样本（用配置里的预估）</td></tr>`}</table></div>
 </main></body></html>`;

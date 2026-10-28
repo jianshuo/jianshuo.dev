@@ -47,6 +47,9 @@ export type SelectRequest = {
   prefer?: string; // 粘性：合格就直接用它（会话续接用原账号）
   capabilities?: Capabilities; // 硬：做不到这些限制的引擎不选
   force?: boolean; // 无视配速和红线，只要没撞墙
+  // 出图批次（batches.ts）：整批 N 张一次定引擎——额度预估按 N 张算；「忙」不算不合格（批次自己排队）
+  count?: number;
+  ignoreBusy?: boolean;
 };
 
 export type Candidate = {
@@ -122,7 +125,7 @@ function evaluate(cfg: Config, lim: PickLimits, st: SelectState, req: SelectRequ
   const gap = capabilityGap(engine, req.capabilities);
   if (gap) return { ...c, reason: gap };
   const busy = st.inflight[key]?.count ?? 0;
-  if (busy >= cfg.concurrency.per_account) return { ...c, reason: `busy (${busy} running)`, waitUntil: now + 30_000 };
+  if (!req.ignoreBusy && busy >= cfg.concurrency.per_account) return { ...c, reason: `busy (${busy} running)`, waitUntil: now + 30_000 };
   const cool = st.cooldown[qk] ?? 0;
   if (cool > now) return { ...c, reason: `cooling down until ${new Date(cool).toISOString()}`, waitUntil: cool };
   const weight = a.weight ?? 1;
@@ -130,7 +133,7 @@ function evaluate(cfg: Config, lim: PickLimits, st: SelectState, req: SelectRequ
   if (engine === "seedream") {
     const cap = a.daily_cap ?? 200;
     const n = st.dailyCount[key] ?? 0;
-    if (n >= cap && !req.force) {
+    if (n + (req.count ?? 1) > cap && !req.force) {
       const tomorrow = new Date(now);
       tomorrow.setUTCHours(24, 0, 0, 0);
       return { ...c, reason: `daily cap reached (${n}/${cap})`, waitUntil: tomorrow.getTime() };
@@ -145,7 +148,7 @@ function evaluate(cfg: Config, lim: PickLimits, st: SelectState, req: SelectRequ
   if (!u || now - u.probedAt > staleAfter(cfg, engine) || (u.used5h == null && u.used7d == null))
     return { ...c, eligible: true, reason: "usage unknown" };
 
-  const est = estimateFor(cfg, st, req.taskClass, engine, req.size);
+  const est = scaled(estimateFor(cfg, st, req.taskClass, engine, req.size), req.count);
   const res = st.inflight[qk] ?? { count: 0, d5h: 0, d7d: 0 };
   const used5h = (u.used5h ?? 0) + res.d5h;
   const used7d = (u.used7d ?? 0) + res.d7d;
@@ -173,6 +176,7 @@ function evaluate(cfg: Config, lim: PickLimits, st: SelectState, req: SelectRequ
   return { ...c, eligible: true, reason: `5h ${fmt(used5h)}% · week ${fmt(used7d)}% / ${lim.pacing === false ? "cap" : "line"} ${fmt(line)}`, headroom };
 }
 
+const scaled = (e: Estimate, n = 1): Estimate => ({ d5h: e.d5h * n, d7d: e.d7d * n });
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();
 
 // 已知余量 > 未知（未知排在已知可用的后面，但仍可选）。

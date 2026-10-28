@@ -21,6 +21,7 @@ export type Account = {
   base_url?: string; // kimi：Anthropic 兼容端点
   weight?: number; // headroom 乘这个权重（缺省 1）
   daily_cap?: number; // seedream：每日张数上限
+  concurrency?: number; // 出图账号同时画几张（缺省 concurrency.image_per_account）；文字账号用 per_account
   // 这个账号的引擎进程额外的环境变量（router 配置，不是调用方给的，最后覆盖）。
   // 例：Kimi 的 1M 上下文 CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_CODE_MAX_CONTEXT_TOKENS、effort。
   env?: Record<string, string>;
@@ -41,7 +42,9 @@ export type Config = {
   limits: PickLimits & { probe_every_s: number; claude_probe_every_s: number };
   policies: Record<string, Policy>;
   estimates: Record<string, Partial<Record<EngineName, Estimate>>>;
-  concurrency: { global_text: number; global_image: number; per_account: number };
+  // per_account：文字账号同时几个 run；出图：每个账号缺省 image_per_account 张（account.concurrency 可单独改），
+  // 全站同时最多 image_total 张（1GB 小机器，每张 gpt-image 是一个 node 进程）。
+  concurrency: { global_text: number; per_account: number; image_per_account: number; image_total: number };
   // 会话第 ② 档（同类引擎跨账号 resume）是否启用。claude_family 2026-10-25 实测通过
   // （claude↔kimi 双向、fast/best 两档都能 resume 同一会话），默认开；codex 跨 CODEX_HOME 未测，默认关。
   portable: { claude_family: boolean; codex: boolean };
@@ -59,7 +62,7 @@ const DEFAULTS: Config = {
   limits: { cap_5h: 85, cap_7d: 92, weekly_slack: 10, pacing: true, probe_every_s: 300, claude_probe_every_s: 900 },
   policies: { default: { engines: "headroom", keys: "headroom" } },
   estimates: {},
-  concurrency: { global_text: 2, global_image: 3, per_account: 1 },
+  concurrency: { global_text: 2, per_account: 1, image_per_account: 4, image_total: 6 },
   portable: { claude_family: true, codex: false },
 };
 
@@ -145,6 +148,11 @@ export function modelFor(cfg: Config, engine: EngineName, quality: string | unde
   const m = cfg.models[engine];
   if (!m) return "";
   return quality === "fast" ? m.fast : m.best;
+}
+
+/** 出图账号同时画几张。 */
+export function imageSlots(cfg: Config, a: Account): number {
+  return Math.max(1, a.concurrency ?? cfg.concurrency.image_per_account);
 }
 
 /** (engine, account) 的全局唯一键。 */

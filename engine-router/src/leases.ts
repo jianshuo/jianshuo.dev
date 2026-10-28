@@ -1,10 +1,8 @@
-// src/leases.ts — 租约：router 只做「挑谁」，调用方自己执行。
+// src/leases.ts — 租约：router 只做「挑谁」，调用方自己执行（只剩文字长活，如视频书）。
 //
-// 给已经有成熟执行层、又不适合把执行搬进 router 的调用方用——paint 出图就是这样：
-// 它有自己的 Codex 链（gpt-image-2-skill 写 auth.json 的格式和 codex CLI 不兼容，不能和
-// router 的链共用）、8 分钟整单期限、ImageMagick 后处理、XMP 溯源。租约让 router 仍是
-// 额度的唯一裁决者：开画前问一句用 gpt-image 还是 seedream（红线、周配速、冷却、
-// Seedream 日上限都在这里判），画完回报结果（撞墙就冷却、Seedream 记张数）。
+// 给已经有成熟执行层、又不适合把执行搬进 router 的调用方用：开工前问一句用哪个账号（红线、周配速、
+// 冷却都在这里判），做完回报结果（撞墙就冷却，顺带学单次消耗）。出图 2026-10-28 起不走租约，
+// 整批交 /v1/image-batches（batches.ts）。
 //
 // 长租约（视频书一单几个小时）调用方可以带 label（书名）、边做边 progress 报步骤，每报一次按原 ttl 续期；
 // 状态页显示在跑的租约和最近完成的带 label 租约。调用方还能 PUT 一份排队快照（/v1/queues/<name>），
@@ -13,7 +11,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
-import { ENGINE_NAMES, acctKey, type EngineName, type Kind } from "./config.js";
+import { ENGINE_NAMES, type EngineName, type Kind } from "./config.js";
 import { shouldTryNextLeg } from "./legs.js";
 import type { Before, Pool } from "./pool.js";
 import { reserveKeys, select, type SelectResult } from "./selector.js";
@@ -101,8 +99,9 @@ export class Leases {
 
   /** 挑一个账号并占上预留。没有合格的返回 lease:null + 各候选理由 + 最早恢复时刻。 */
   create(b: any, caller: string, now = Date.now()): { lease: Lease | null; selection: SelectResult } {
-    const kind: Kind = b?.kind === "text" ? "text" : "image";
-    const taskClass = typeof b?.task_class === "string" && b.task_class ? b.task_class.slice(0, 40) : kind === "image" ? "image" : "default";
+    if (b?.kind !== "text") throw new HttpError(400, "image leases removed: submit images via POST /v1/image-batches");
+    const kind: Kind = "text";
+    const taskClass = typeof b?.task_class === "string" && b.task_class ? b.task_class.slice(0, 40) : "default";
     const st = this.pool.selectState();
     const selection = select(
       this.pool.cfg,
@@ -164,7 +163,7 @@ export class Leases {
   /**
    * 回报结果，释放预留。
    *   ok            这次总体成没成
-   *   engine_used   实际干活的引擎（调用方可能在租到 gpt-image 后又自己降级到 seedream）
+   *   engine_used   实际干活的引擎
    *   error         租到的那个引擎的报错原文——额度/凭据类会让这个账号进冷却
    */
   complete(id: string, caller: string, b: any, now = Date.now()): Lease {
@@ -178,15 +177,10 @@ export class Leases {
       console.log(`[leases] ${lease.key} 报错 → 冷却：${error.slice(0, 160)}`);
     }
     const used = ENGINE_NAMES.includes(b?.engine_used) ? (b.engine_used as EngineName) : b?.ok ? lease.engine : undefined;
-    if (used === "seedream") {
-      const id2 = lease.engine === "seedream" ? lease.accountId : this.pool.cfg.engines.seedream?.accounts.find((a) => !a.disabled)?.id;
-      if (id2) this.pool.countDaily(acctKey("seedream", id2));
-    }
-    // 用过订阅额度：探一次让配速尽快看到这次消耗（gpt-image 读的是 codex 账号）；成功且租的引擎就是干活的引擎时，
+    // 用过订阅额度：探一次让配速尽快看到这次消耗；成功且租的引擎就是干活的引擎时，
     // 顺带学单次消耗（同 run：没并发、同窗口才算，规则在 Pool.learnDelta）
     const probeEngine = lease.quotaKey.split("/")[0] as EngineName;
-    if (used && used !== "seedream" && (probeEngine === "codex" || probeEngine === "claude" || probeEngine === "kimi")) {
-      // 只学文字引擎的租约（视频书）；出图（gpt-image 读 codex 额度）照旧只探不学，不动 paint 的预估
+    if (used && (probeEngine === "codex" || probeEngine === "claude" || probeEngine === "kimi")) {
       if (b?.ok === true && used === lease.engine && lease.engine === probeEngine)
         void this.pool.learnDelta(lease.taskClass, lease.engine, lease.quotaKey, lease.accountId, lease.before).then((s) => {
           if (!s) return;

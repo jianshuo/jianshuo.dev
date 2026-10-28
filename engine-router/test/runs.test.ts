@@ -312,10 +312,10 @@ test("路径与 env 校验：context_dirs 走白名单，router 自己的目录�
   await runs.cancel(ok.run.id);
 });
 
-test("请求校验：workdir 必须在白名单根下；不许注入凭据类 env；image 尚未实现", async () => {
+test("请求校验：workdir 必须在白名单根下；不许注入凭据类 env；image 走批次接口", async () => {
   const { runs } = setup(() => ({ ok: true }));
   await assert.rejects(runs.submit({ prompt: "x", workdir: "/etc" }, "c"), /workdir must be under/);
   await assert.rejects(runs.submit({ prompt: "x", env: { ANTHROPIC_API_KEY: "k" } }, "c"), /not allowed/);
-  await assert.rejects(runs.submit({ prompt: "x", kind: "image" }, "c"), /not implemented/);
+  await assert.rejects(runs.submit({ prompt: "x", kind: "image" }, "c"), /image-batches/);
   await assert.rejects(runs.submit({ prompt: "" }, "c"), /prompt required/);
 });

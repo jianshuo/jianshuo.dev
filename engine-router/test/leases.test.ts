@@ -1,4 +1,4 @@
-// 租约：router 只挑账号、调用方自己执行（paint 出图）。
+// 租约：router 只挑账号、调用方自己执行（只剩文字长活，如视频书；出图走 batches.ts）。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -32,48 +32,22 @@ async function setup() {
   return { pool, leases: new Leases(pool), probes };
 }
 
-test("出图租约：先给 gpt-image，预留记在 codex 账号上；回报后释放并探一次", async () => {
-  const { pool, leases, probes } = await setup();
-  const { lease } = leases.create({ kind: "image" }, "paint");
-  assert.equal(lease?.engine, "gpt-image");
-  assert.equal(pool.inflight["gpt-image/codex-1"].count, 1, "并发记在真实账号键");
-  assert.equal(pool.inflight["codex/codex-1"].d5h, 5, "额度预留记在 codex 上");
-  leases.complete(lease!.id, "paint", { ok: true, engine_used: "gpt-image" });
-  assert.equal(pool.inflight["gpt-image/codex-1"].count, 0);
-  assert.equal(pool.inflight["codex/codex-1"].d5h, 0);
-  assert.deepEqual(probes, ["codex/codex-1"]);
+test("出图租约已下线：kind 不是 text 一律 400，指向 /v1/image-batches", async () => {
+  const { leases } = await setup();
+  assert.throws(() => leases.create({ kind: "image" }, "paint"), /image-batches/);
+  assert.throws(() => leases.create({}, "paint"), /image-batches/);
 });
 
-test("回报 codex 额度报错 → codex 冷却，下一张改派 seedream，并记张数；日上限到了就没有可用引擎", async () => {
+test("文字租约：预留记在账号上；过期自动释放；别人的租约回报不了", async () => {
   const { pool, leases } = await setup();
-  const a = leases.create({ kind: "image" }, "paint").lease!;
-  leases.complete(a.id, "paint", { ok: true, engine_used: "seedream", error: "429 usage_limit_reached: The usage limit has been reached" });
-  assert.ok(pool.cooldownUntil("codex/codex-1") > Date.now());
-  assert.equal(pool.selectState().dailyCount["seedream/ark-1"], 1, "租的是 gpt-image、实际降级到 seedream 也记张数");
-  const b = leases.create({ kind: "image" }, "paint").lease!;
-  assert.equal(b.engine, "seedream");
-  leases.complete(b.id, "paint", { ok: true });
-  const none = leases.create({ kind: "image" }, "paint");
-  assert.equal(none.lease, null);
-  assert.ok(none.selection.candidates.some((c) => /daily cap/.test(c.reason)));
-});
-
-test("require / force：显式要 codex 时强制（配速线上也给），透明图只能 gpt-image", async () => {
-  const { pool, leases } = await setup();
-  pool.selectState().usage["codex/codex-1"] = fresh(10, 58); // 周窗口过半，配速线 60：58 + 3 超线
-  assert.equal(leases.create({ kind: "image" }, "paint").lease?.engine, "seedream");
-  assert.equal(leases.create({ kind: "image", engine_hints: { require: ["gpt-image"] } }, "paint").lease, null);
-  assert.equal(leases.create({ kind: "image", engine_hints: { require: ["gpt-image"] }, force: true }, "paint").lease?.engine, "gpt-image");
-});
-
-test("过期自动释放；别人的租约回报不了", async () => {
-  const { pool, leases } = await setup();
-  const l = leases.create({ kind: "image", ttl_ms: 60_000 }, "paint").lease!;
+  const l = leases.create({ kind: "text", ttl_ms: 60_000 }, "book-runner").lease!;
+  assert.equal(l.engine, "codex");
+  assert.equal(pool.inflight["codex/codex-1"].count, 1);
   assert.throws(() => leases.complete(l.id, "intruder", { ok: true }), /lease not found/);
   leases.sweep(Date.now() + 61_000);
-  assert.equal(pool.inflight["gpt-image/codex-1"].count, 0);
+  assert.equal(pool.inflight["codex/codex-1"].count, 0);
   assert.equal(leases.active().length, 0);
-  assert.throws(() => leases.complete(l.id, "paint", { ok: true }), /lease not found/);
+  assert.throws(() => leases.complete(l.id, "book-runner", { ok: true }), /lease not found/);
 });
 
 test("长租约：label + progress 续期；完成后进最近记录；落盘后重启能接回预留和显示", async () => {
@@ -82,7 +56,7 @@ test("长租约：label + progress 续期；完成后进最近记录；落盘后
   const file = join(d, "leases.json");
   const leases = new Leases(pool, file);
   const t0 = Date.now();
-  const { lease } = leases.create({ kind: "image", label: "《随机》视频书", ttl_ms: 600_000 }, "book-runner", t0);
+  const { lease } = leases.create({ kind: "text", label: "《随机》视频书", ttl_ms: 600_000 }, "book-runner", t0);
   assert.equal(lease?.label, "《随机》视频书");
   leases.progress(lease!.id, "book-runner", { step: "安装制作环境" }, t0 + 500_000);
   assert.equal(lease!.progress?.step, "安装制作环境");
@@ -96,19 +70,12 @@ test("长租约：label + progress 续期；完成后进最近记录；落盘后
   const again = new Leases(fresh, file);
   assert.equal(again.active().length, 1);
   assert.equal(again.active()[0].progress?.step, "安装制作环境");
-  assert.equal(fresh.inflight["gpt-image/codex-1"].count, 1, "预留接回来了");
+  assert.equal(fresh.inflight["codex/codex-1"].count, 1, "预留接回来了");
   assert.equal(again.queueSnapshots()[0].items[0].label, "《恒生科技》");
   assert.throws(() => again.putQueue("video-book", "paint", { items: [] }), /another caller/);
 
   again.complete(again.active()[0].id, "book-runner", { ok: true });
   assert.equal(again.active().length, 0);
   assert.equal(again.recent()[0].ok, true);
-  assert.equal(fresh.inflight["gpt-image/codex-1"].count, 0);
-});
-
-test("没 label 的租约（出图）完成后不进最近记录", async () => {
-  const { leases } = await setup();
-  const { lease } = leases.create({ kind: "image" }, "paint");
-  leases.complete(lease!.id, "paint", { ok: true });
-  assert.equal(leases.recent().length, 0);
+  assert.equal(fresh.inflight["codex/codex-1"].count, 0);
 });

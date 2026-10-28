@@ -72,12 +72,3 @@ test("失败、跨 5h 窗口都不学", async () => {
   await tick(); await tick();
   assert.equal(pool.learnedTable()["video|claude"], undefined);
 });
-
-test("出图租约照旧只探不学（不动 paint 的预估）", async () => {
-  const { pool, leases, probes } = await setup(usage(42, 27));
-  const { lease } = leases.create({ kind: "image" }, "paint");
-  leases.complete(lease!.id, "paint", { ok: true, engine_used: "gpt-image" });
-  await tick(); await tick();
-  assert.deepEqual(probes, ["codex/codex-1"]);
-  assert.equal(pool.learnedTable()["image|gpt-image"], undefined);
-});

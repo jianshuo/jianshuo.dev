@@ -18,6 +18,7 @@ import { renderStatus } from "./status-page.js";
 import { acctKey, ENGINE_NAMES } from "./config.js";
 import { quotaKey } from "./selector.js";
 import { Leases, publicLease } from "./leases.js";
+import { Batches, publicBatch } from "./batches.js";
 import { attemptSessions, findTranscriptFile, listRunRecords, readRunRecord } from "./transcripts.js";
 
 const MAX_BODY = 1024 * 1024;
@@ -158,7 +159,13 @@ async function streamEvents(req: IncomingMessage, res: ServerResponse, runs: Run
   res.end();
 }
 
-export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore, leases: Leases = new Leases(pool)) {
+export function createRouterServer(
+  pool: Pool,
+  runs: Runs,
+  threads: ThreadStore,
+  leases: Leases = new Leases(pool),
+  batches: Batches = new Batches(pool),
+) {
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://router");
@@ -166,7 +173,7 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore,
       const path = url.pathname.replace(/^\/router(?=\/|$)/, "") || "/";
       if (req.method === "GET" && (path === "/" || path === "/status")) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(renderStatus(pool, [...runs.runs.values()], leases));
+        res.end(renderStatus(pool, [...runs.runs.values()], leases, batches));
         return;
       }
       if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
@@ -226,7 +233,31 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore,
         }
         if (req.method === "POST" && m[2] === "/cancel") return send(res, 200, publicRun((await runs.cancel(r.id))!));
       }
-      // 租约：router 只挑账号，调用方自己执行（paint 出图）。见 leases.ts。
+      // 出图批次：整批交进来，一批一个引擎、按账号并发排队（batches.ts）。paint 交批、领活、回报。
+      if (req.method === "POST" && path === "/v1/image-batches") {
+        const { batch, existing } = batches.submit(await readJson(req), caller);
+        return send(res, existing ? 200 : 202, publicBatch(batch));
+      }
+      m = /^\/v1\/image-batches\/([A-Za-z0-9_-]+)(\/cancel)?$/.exec(path);
+      if (m) {
+        const b = batches.get(m[1]);
+        if (!b || !own(b.caller)) return send(res, 404, { error: "batch not found" });
+        if (req.method === "GET" && !m[2]) return send(res, 200, publicBatch(b));
+        if (req.method === "POST" && m[2]) return send(res, 200, publicBatch(batches.cancel(b.id, caller)));
+      }
+      if (req.method === "POST" && path === "/v1/image-jobs/claim") {
+        const max = Math.min(Math.max(Number((await readJson(req))?.max) || 1, 1), 32);
+        return send(res, 200, { items: batches.claim(caller, max) });
+      }
+      if (req.method === "POST" && path === "/v1/image-jobs/heartbeat")
+        return send(res, 200, { stop: batches.heartbeat(caller, (await readJson(req))?.job_ids) });
+      if (req.method === "POST" && path === "/v1/image-jobs/release-all") return send(res, 200, { released: batches.releaseAll(caller) });
+      m = /^\/v1\/image-jobs\/([A-Za-z0-9_-]+)\/complete$/.exec(path);
+      if (m && req.method === "POST") {
+        const i = batches.complete(caller, m[1], await readJson(req));
+        return send(res, 200, { ok: true, job_id: i.job_id, status: i.status });
+      }
+      // 租约：router 只挑账号，调用方自己执行（视频书这类文字长活）。见 leases.ts。
       if (req.method === "POST" && path === "/v1/leases") {
         const { lease, selection } = leases.create(await readJson(req), caller);
         if (lease) return send(res, 200, publicLease(lease));
@@ -288,7 +319,9 @@ async function main() {
   runs.start();
   const leases = new Leases(pool, join(STATE_DIR, "leases.json"));
   leases.start();
-  const server = createRouterServer(pool, runs, threads, leases);
+  const batches = new Batches(pool, join(STATE_DIR, "batches.json"));
+  batches.start();
+  const server = createRouterServer(pool, runs, threads, leases, batches);
   if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
   server.listen(SOCKET_PATH, () => {
     chmodSync(SOCKET_PATH, 0o660); // 属组 engines：caddy 和本机调用方

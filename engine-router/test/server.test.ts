@@ -147,3 +147,27 @@ test("回看：GET /v1/runs 列自己的 run + 会话号；transcript 按字节�
   assert.equal((await raw("GET", `/v1/runs/${out.run_id}/transcript?attempt=9`, auth)).status, 404);
   assert.equal((await raw("GET", `/v1/runs/${out.run_id}/transcript`)).status, 401);
 });
+
+function postJson(path: string, token: string, body: unknown): Promise<{ status: number; json: any }> {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath: SOCK, path, method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }, (res) => {
+      let b = "";
+      res.on("data", (c) => (b += c));
+      res.on("end", () => resolve({ status: res.statusCode!, json: JSON.parse(b) }));
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
+test("出图批次路由：交批 202、查得到自己的、取消；领活只给执行方；出图租约 400", async () => {
+  const sub = await postJson("/v1/image-batches", TOKEN, { items: [{ job_id: "h1" }, { job_id: "h2" }], label: "冒烟" });
+  assert.equal(sub.status, 202);
+  assert.equal(sub.json.counts.total, 2);
+  assert.equal(sub.json.status, "paused", "这份配置没有出图账号：暂停等账号");
+  const got = await raw("GET", `/v1/image-batches/${sub.json.batch_id}`, { Authorization: `Bearer ${TOKEN}` });
+  assert.equal(JSON.parse(got.body).batch_id, sub.json.batch_id);
+  assert.equal((await postJson("/v1/image-jobs/claim", TOKEN, { max: 2 })).status, 403);
+  assert.equal((await postJson(`/v1/image-batches/${sub.json.batch_id}/cancel`, TOKEN, {})).json.status, "cancelled");
+  assert.equal((await postJson("/v1/leases", TOKEN, { kind: "image" })).status, 400);
+});

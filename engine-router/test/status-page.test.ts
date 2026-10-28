@@ -39,7 +39,7 @@ test("状态页渲染排队快照、租约步骤、任务开始时间（北京�
     id: "r_x", caller: "book-runner", createdAt: now - 600_000, status: "running", attempts: [], tried: [],
     threadId: "t", req: { task_class: "book", idempotency_key: "nope", label: "写书 · 关于随机的一本书" },
   };
-  const html = renderStatus(pool, [run], leases, now);
+  const html = renderStatus(pool, [run], leases, undefined, now);
   for (const s of ["视频书排队", "《恒生科技指数》", "下个名额 18:50", "《随机》视频书", "Claude 开始制作", "10-26 18:40", "写书 · 关于随机的一本书", "北京时间 10-26 18:50"])
     assert.ok(html.includes(s), `页面里应有 ${s}`);
 });

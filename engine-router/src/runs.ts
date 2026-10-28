@@ -153,7 +153,7 @@ export function normalizeRequest(b: any): RunRequest {
   if (!prompt.trim()) throw new HttpError(400, "prompt required");
   if (prompt.length > 200_000) throw new HttpError(413, "prompt too long");
   const kind: Kind = b.kind === "image" ? "image" : "text";
-  if (kind === "image") throw new HttpError(501, "kind:image not implemented yet (P5)");
+  if (kind === "image") throw new HttpError(400, "images go through POST /v1/image-batches");
   if (b.thread_id != null && !ID_RE.test(String(b.thread_id))) throw new HttpError(400, "bad thread_id");
   const continuity: Continuity = ["strict", "loose", "none"].includes(b.continuity) ? b.continuity : "loose";
   const workdir = b.workdir != null ? checkPath(b.workdir, workdirRoots(), "workdir") : undefined;
@@ -369,7 +369,7 @@ export class Runs {
       // 快照是循环开始时拍的；每次 await 之后都要重看——期间可能被 cancel 了。
       if (r.status !== "queued") continue;
       const running = [...this.runs.values()].filter((x) => x.status === "running" && x.req.kind === r.req.kind).length;
-      const cap = r.req.kind === "image" ? this.pool.cfg.concurrency.global_image : this.pool.cfg.concurrency.global_text;
+      const cap = this.pool.cfg.concurrency.global_text; // 出图不走 run（kind:image 在 normalizeRequest 就拒了），走 batches.ts
       if (running >= cap) {
         await this.setQueued(r, `global concurrency ${running}/${cap}`, null);
         continue;
