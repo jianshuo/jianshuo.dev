@@ -13,6 +13,7 @@ process.env.WORK_ROOT = join(root, "work");
 process.env.WORKDIR_ROOTS = join(root, "work");
 process.env.CONFIG_PATH = join(root, "config.json");
 process.env.SECRETS_PATH = join(root, ".env");
+process.env.HOME = root; // 引擎对话记录落在 HOME/.claude/projects 下
 const SOCK = join(root, "router.sock");
 const TOKEN = "tok-book-runner-0123456789";
 await writeFile(process.env.CONFIG_PATH, JSON.stringify({ engines: { kimi: { accounts: [{ id: "kimi-1", key_env: "K" }] } } }));
@@ -36,6 +37,11 @@ const runs = new Runs(pool, threads, {
       const spec = JSON.parse(await readFile(specPath, "utf8"));
       const ev = join(RUNS_DIR, `${spec.runId}.jsonl`);
       const { appendFile } = await import("node:fs/promises");
+      const sid = "sess-" + spec.runId.slice(2).replace(/_/g, "-");
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(root, ".claude", "projects", "-cwd"), { recursive: true });
+      await writeFile(join(root, ".claude", "projects", "-cwd", sid + ".jsonl"), '{"type":"user","n":1}\n{"type":"assistant","n":2}\n');
+      await appendFile(ev, JSON.stringify({ ts: Date.now(), attempt: spec.attempt, type: "session", id: sid }) + "\n");
       await appendFile(ev, JSON.stringify({ ts: Date.now(), type: "text", text: "正在写第一章" }) + "\n");
       await new Promise((r) => setTimeout(r, 300));
       await writeFile(join(RUNS_DIR, `${spec.runId}.result-${spec.attempt}.json`), JSON.stringify({ ok: true, reply: "全书写完", error: "", sessionId: "s1" }));
@@ -119,4 +125,25 @@ test("干跑 /v1/select 返回选中账号和理由", async () => {
   });
   assert.equal(r.pick.key, "kimi/kimi-1");
   assert.match(r.candidates[0].reason, /5h/);
+});
+
+test("回看：GET /v1/runs 列自己的 run + 会话号；transcript 按字节偏移续取；没 token 拿不到", async () => {
+  const conn = { url: `unix:${SOCK}`, token: TOKEN };
+  const out = await runTask({ prompt: "第三本", label: "《测试书》" }, undefined, conn);
+  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const list = JSON.parse((await raw("GET", "/v1/runs?limit=10", auth)).body).runs;
+  const item = list.find((x: any) => x.run_id === out.run_id);
+  assert.equal(item.label, "《测试书》");
+  assert.equal(item.sessions[0].engine, "kimi");
+  assert.ok(item.updated_at);
+  const full = await raw("GET", `/v1/runs/${out.run_id}/transcript`, auth);
+  assert.equal(full.status, 200);
+  assert.equal(full.body.split("\n").filter(Boolean).length, 2);
+  const firstLen = Buffer.byteLength(full.body.split("\n")[0] + "\n");
+  const tail = await raw("GET", `/v1/runs/${out.run_id}/transcript?offset=${firstLen}`, auth);
+  assert.equal(tail.body, '{"type":"assistant","n":2}\n');
+  const past = await raw("GET", `/v1/runs/${out.run_id}/transcript?offset=${Buffer.byteLength(full.body)}`, auth);
+  assert.equal(past.body, "");
+  assert.equal((await raw("GET", `/v1/runs/${out.run_id}/transcript?attempt=9`, auth)).status, 404);
+  assert.equal((await raw("GET", `/v1/runs/${out.run_id}/transcript`)).status, 401);
 });

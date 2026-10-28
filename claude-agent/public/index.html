@@ -261,7 +261,7 @@
         // codex（写书）会话是磁盘快照，attach 不到直播——轮询跟进，像 tail -f：
         // 书还在写时页面自动长出新内容，读者贴着底部就一直跟到底。
         const s = sessions.find((x) => x.id === id);
-        if (s && s.engine === "codex") startPoll(id);
+        if (s && (s.engine === "codex" || (s.engine === "router" && s.running))) startPoll(id);
       }
 
       function startPoll(id) {

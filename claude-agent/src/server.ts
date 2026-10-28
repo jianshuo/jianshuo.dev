@@ -20,6 +20,7 @@ import {
 import { launchBookUnit, listActiveUnits, planLaunches, unitName } from "./book-launch.js";
 import { handleVideoBook, startVideoBook } from "./video-book.js";
 import { jsonlLines, jsonlLinesFrom, type LineCursor } from "./jsonl.js";
+import { ROUTER_RUN_ID_RE, getRouterRun, listRouterRuns, syncTranscript } from "./router-sessions.js";
 import { readJsonBody, BodyError } from "./http-body.js";
 import {
   SLUG_RE, chargeBook, refundBook, notifyAdmin, fetchScope, publisherScope, fetchSrcBook, bookAuthor,
@@ -175,6 +176,17 @@ async function listSessions() {
     } catch {
       /* skip unreadable */
     }
+  }
+  // 10-25 起的书在 engine-router 里跑（见 router-sessions.ts）
+  for (const r of await listRouterRuns()) {
+    out.push({
+      id: r.run_id,
+      title: "🧭 " + (r.label || r.task_class || r.run_id).slice(0, 78),
+      updatedAt: Date.parse(r.updated_at) || Date.parse(r.created_at),
+      turns: r.sessions.length,
+      running: r.status === "running" || r.status === "queued",
+      engine: "router",
+    });
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 200);
 }
@@ -362,7 +374,8 @@ async function getCodexSessionMessages(path: string) {
   if (S && S.mtimeMs === st.mtimeMs && S.size === st.size) return S.msgs;
   if (!S || st.size < S.cursor.offset) {
     S = { mtimeMs: 0, size: 0, cursor: { offset: 0 }, msgs: [], cur: null, toolIndex: {} };
-    codexMsgsCache.clear(); // 只留最新一份，防多会话轮流看时内存涨
+    // 只留最近几份，防多会话轮流看时内存涨（router 的一本书可能有好几段 attempt 要同时留着）
+    if (codexMsgsCache.size >= 4) codexMsgsCache.delete(codexMsgsCache.keys().next().value!);
     codexMsgsCache.set(path, S);
   }
   for await (const ln of jsonlLinesFrom(path, S.cursor)) {
@@ -382,11 +395,31 @@ async function getCodexSessionMessages(path: string) {
 // Replay a transcript into the same shape the live UI renders: one assistant
 // bubble per human turn, with text + tool cards (results attached) interleaved.
 async function getSessionMessages(id: string) {
+  if (ROUTER_RUN_ID_RE.test(id)) return getRouterSessionMessages(id);
   const path = await findTranscript(id);
   if (!path) {
     const cp = await findCodexRollout(id);
     return cp ? getCodexSessionMessages(cp) : null;
   }
+  return getClaudeMessages(path);
+}
+
+// engine-router 跑的书：每次 attempt 一份镜像（见 router-sessions.ts），按引擎各自解析后
+// 首尾相接；换过账号的在两段之间插一条分隔，看得出哪段是哪个引擎写的。
+async function getRouterSessionMessages(id: string) {
+  const run = await getRouterRun(id);
+  if (!run) return null;
+  const out: any[] = [];
+  for (const s of run.sessions) {
+    const path = await syncTranscript(id, s.attempt);
+    if (!path) continue;
+    if (run.sessions.length > 1) out.push({ role: "user", text: `—— 第 ${s.attempt} 次尝试 · ${s.engine}/${s.account} ——` });
+    out.push(...(s.engine === "codex" ? await getCodexSessionMessages(path) : await getClaudeMessages(path)));
+  }
+  return out;
+}
+
+async function getClaudeMessages(path: string) {
   const msgs: any[] = [];
   let cur: any = null;
   const toolIndex: Record<string, any> = {};
@@ -922,6 +955,10 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, payload: an
     return;
   }
   // codex（写书引擎）的会话只能回看——引擎不同，Claude 这边 resume 不了
+  if (sessionId && ROUTER_RUN_ID_RE.test(sessionId)) {
+    sseReject(res, "这是 engine-router 写书的会话，只能回看，不能在这里续聊");
+    return;
+  }
   if (sessionId && !(await findTranscript(sessionId)) && (await findCodexRollout(sessionId))) {
     sseReject(res, "这是写书引擎（ChatGPT）的会话，只能回看，不能在这里续聊");
     return;
@@ -956,8 +993,13 @@ const server = createServer((req, res) => {
   const sm = req.url?.match(/^\/api\/sessions\/([^/?]+)$/);
   if (sm) {
     const id = decodeURIComponent(sm[1]);
-    if (!SESSION_ID_RE.test(id)) {
+    const viaRouter = ROUTER_RUN_ID_RE.test(id);
+    if (!SESSION_ID_RE.test(id) && !viaRouter) {
       res.writeHead(400).end("bad id");
+      return;
+    }
+    if (viaRouter && req.method === "DELETE") {
+      res.writeHead(409).end("engine-router 的会话由 router 保管（14 天后自动清理），这里删不了");
       return;
     }
     if (req.method === "GET") {

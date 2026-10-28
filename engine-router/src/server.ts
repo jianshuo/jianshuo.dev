@@ -6,7 +6,7 @@
 // 冒号前是调用方名字。调用方只看得到自己的 run / thread；admin 全看得到。
 // 状态页 GET / 不验 token——它在 Caddy basic_auth 后面（socket 的文件权限是本机的那道门）。
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { chmodSync, existsSync, unlinkSync } from "node:fs";
+import { chmodSync, createReadStream, existsSync, unlinkSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import { CONFIG_PATH, SECRETS_PATH, SOCKET_PATH, STATE_DIR } from "./env.js";
@@ -18,6 +18,7 @@ import { renderStatus } from "./status-page.js";
 import { acctKey, ENGINE_NAMES } from "./config.js";
 import { quotaKey } from "./selector.js";
 import { Leases, publicLease } from "./leases.js";
+import { attemptSessions, findTranscriptFile, listRunRecords, readRunRecord } from "./transcripts.js";
 
 const MAX_BODY = 1024 * 1024;
 
@@ -64,6 +65,24 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   const s = JSON.stringify(body);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(s);
+}
+
+// 对话记录从 offset 起的剩余字节（append-only 文件，调用方本地镜像续拼）。
+// X-Transcript-Size 是本次读到的文件总长；offset 超过它（文件被重写）就从 0 给。
+async function sendTail(res: ServerResponse, file: string, offset: number, engine: string): Promise<void> {
+  const size = (await stat(file)).size;
+  const start = offset > 0 && offset <= size ? offset : 0;
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Transcript-Engine": engine,
+    "X-Transcript-Size": String(size),
+    "X-Transcript-Offset": String(start),
+  });
+  if (start >= size) return void res.end();
+  const rs = createReadStream(file, { start, end: size - 1 });
+  rs.on("error", () => res.end());
+  rs.pipe(res);
 }
 
 export function statusJson(pool: Pool, now = Date.now()) {
@@ -165,7 +184,38 @@ export function createRouterServer(pool: Pool, runs: Runs, threads: ThreadStore,
         const { run, existing } = await runs.submit(await readJson(req), caller);
         return send(res, existing ? 200 : 202, publicRun(run));
       }
-      let m = /^\/v1\/runs\/([A-Za-z0-9_-]+)(\/events|\/cancel)?$/.exec(path);
+      // 回看：调用方自己的 run 列表（含磁盘上 14 天内的），lab 侧栏用
+      if (req.method === "GET" && path === "/v1/runs") {
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 200);
+        const byId = new Map((await listRunRecords()).map((r) => [r.id, r]));
+        for (const r of runs.runs.values()) byId.set(r.id, r); // 内存里的更新
+        const mine = [...byId.values()].filter((r) => own(r.caller)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+        const out = [];
+        for (const r of mine) {
+          const st = await stat(eventsFile(r.id)).catch(() => null);
+          out.push({
+            ...publicRun(r),
+            label: r.req.label,
+            task_class: r.req.task_class,
+            updated_at: new Date(st?.mtimeMs ?? r.finishedAt ?? r.createdAt).toISOString(),
+            sessions: await attemptSessions(r),
+          });
+        }
+        return send(res, 200, { runs: out });
+      }
+      // 回看：某次 attempt 的原始对话记录（Claude jsonl / codex rollout），从字节 offset 起的剩余部分
+      let m = /^\/v1\/runs\/([A-Za-z0-9_-]+)\/transcript$/.exec(path);
+      if (m && req.method === "GET") {
+        const r = runs.get(m[1]) ?? (await readRunRecord(m[1]));
+        if (!r || !own(r.caller)) return send(res, 404, { error: "run not found" });
+        const sessions = await attemptSessions(r);
+        const n = Number(url.searchParams.get("attempt")) || sessions[sessions.length - 1]?.attempt;
+        const s = sessions.find((x) => x.attempt === n);
+        const file = s && (await findTranscriptFile(pool.cfg, s));
+        if (!s || !file) return send(res, 404, { error: "transcript not found" });
+        return void (await sendTail(res, file, Number(url.searchParams.get("offset")) || 0, s.engine));
+      }
+      m = /^\/v1\/runs\/([A-Za-z0-9_-]+)(\/events|\/cancel)?$/.exec(path);
       if (m) {
         const r = runs.get(m[1]);
         if (!r || !own(r.caller)) return send(res, 404, { error: "run not found" });
