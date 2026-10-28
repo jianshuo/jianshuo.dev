@@ -98,6 +98,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
 
   const ext = (rel.split('.').pop() || '').toLowerCase();
   const leaf = rel.split('/').pop();
+  const vq = new URL(request.url).searchParams.get('v') || '';
   const headers = {
     'Content-Type': obj.httpMetadata?.contentType || TYPES[ext] || 'application/octet-stream',
     'Content-Length': String(obj.size),
@@ -105,7 +106,11 @@ export async function onRequest({ request, env, params, waitUntil }) {
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(leaf)}`,
     // 所有可被替换重传的文件（HTML/图片/cover）都走短缓存——曾因 1 天缓存把换错的封面钉在
     // 边缘一整天（2026-08-16），又因 1 天缓存让重画的绘本页图钉住旧版（2026-08-18），别改回长缓存。
-    'Cache-Control': 'public, max-age=300',
+    // 例外（2026-10-28）：动画版的脚本/字体/口播带 ?v=<内容 md5 前 8 位>（build_html / optimize_html 算的），
+    // 地址变 = 内容变，可以一年 immutable——但只在 v 和 R2 etag（单次 PUT 的 etag 就是内容 md5）对得上时给，
+    // 同名重传过的文件旧 v 对不上，照旧短缓存，不会把错内容钉住。二次打开免得 50 多个文件挨个回源问一遍。
+    'Cache-Control': /^[^/]+\/video\//.test(rel) && /^[0-9a-f]{8}$/.test(vq) && (obj.etag || '').startsWith(vq)
+      ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
     'Access-Control-Allow-Origin': '*',
   };
 
