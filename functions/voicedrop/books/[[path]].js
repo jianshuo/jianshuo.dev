@@ -122,7 +122,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     // 有动画版（book.json 的 video 标志）：首屏是视频，往下滑才是目录
     let bj = null;
     try { const o = await env.FILES.get(`${PUBLISHER}${bi[1]}/_src/book.json`); if (o) bj = JSON.parse(await o.text()); } catch {}
-    if (bj && bj.video && bj.video.url) html = html.replace(/<body[^>]*>/, (m) => m + videoHero(bj));
+    if (bj && bj.video && bj.video.url) html = html.replace(/<body[^>]*>/, (m) => m + videoHero());
     delete headers['Content-Length'];
     return new Response(html, { headers });
   }
@@ -410,18 +410,13 @@ ${sections.join('\n')}
 // 目录页首屏的动画版（2026-10-26）：首屏直接嵌动画版播放器（video/，暂停态自带大播放键），往下滑是原来的目录。
 // 首屏滑出一半就给播放器发 {mb:'pause'}（播放器 template.html 收），滑走即停。音频 preload=metadata，不点播放不下口播。
 // 地址在浏览器里按 location 拼：目录页在 voicedrop.cn/books/<slug>/ 和 jianshuo.dev/voicedrop/books/<slug>/ 两处都要成立。
-function videoHero(bj) {
-  const done = Array.isArray(bj.chapters) ? bj.chapters.filter((x) => x && x.status === 'done').length : 0;
-  const v = bj.video, preview = v.chapters && done && v.chapters < done ? ` · 动画版试看前 ${v.chapters} 章` : '';
+// 2026-10-28 起首屏整屏都给播放器：原来底下 44px 的「下滑看正文」去掉，播放器把自己的 44px 进度栏放在那个位置（画面区仍是屏高−44）。
+function videoHero() {
   return `<style>
-#vhero{position:relative;overflow:hidden;background:#0d1117;height:calc(100vh - 44px);height:calc(100svh - 44px);min-height:420px;margin:0 calc(50% - 50vw)}
+#vhero{position:relative;overflow:hidden;background:#0d1117;height:100vh;height:100svh;min-height:464px;margin:0 calc(50% - 50vw)}
 #vhero iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#0d1117}
-#vhint{display:flex;align-items:center;justify-content:center;gap:6px;height:44px;margin:0 calc(50% - 50vw);color:#A89E8E;font-size:13px;text-decoration:none;letter-spacing:.04em}
-#vhint i{display:inline-block;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);animation:vhb 1.6s ease-in-out infinite}
-@keyframes vhb{50%{transform:rotate(45deg) translate(2px,0)}}
 </style>
 <section id="vhero"></section>
-<a id="vhint" href="#vhend"><i></i>下滑看正文${done ? ` · ${done} 章` : ''}${preview}</a><div id="vhend"></div>
 <script>(function(){
   var h=document.getElementById('vhero'),f=document.createElement('iframe');
   f.src=location.pathname.replace(/\\/?$/,'/')+'video/';f.allow='autoplay; fullscreen; screen-wake-lock';f.title='动画版';h.appendChild(f);
