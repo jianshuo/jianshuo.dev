@@ -215,11 +215,9 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 
 ## 第 6 步：最后一遍——封面（+ 必要时插图）
 
-**所有图片一律用 `/opt/claude-agent/bin/paint` / `paint-batch` 生成——动手前先完整读 `paint` skill（`~/.claude/skills/paint/SKILL.md`，出图说明书：选项、输出、错误码、引擎与降级）**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）——包括封面上的文字，也让出图模型直接画进图里。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。
+**所有图片一律用 `/opt/claude-agent/bin/paint` 生成——动手前先完整读 `paint` skill（`~/.claude/skills/paint/SKILL.md`，出图说明书：清单、选项、退出码、错误码）**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）——包括封面上的文字，也让出图模型直接画进图里。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。
 
-**整本书一个画风（硬规则）**：paint 背后有两个引擎（Codex gpt-image-2 优先，额度满自动降级 Seedream），画风明显不同。所以：
-- 这本书的**每一张图**（封面、refs.png、每页插图）都带 `--group <slug>`（paint-batch 用 `--group <slug>`）。组里一旦有图走了 Seedream，服务端会让这本书后面的图都走 Seedream。
-- **全部图画完、上传之前**跑 `/opt/claude-agent/bin/paint --engines <workdir>/*.jpg` 对账。若 codex 和 seedream 混用：把**少数派**的图删掉，用多数派的 `--engine`（平票用 `seedream`）重画，再对一次账；全书上传的图必须同一个引擎。
+**整本书一个画风（硬规则）**：paint 背后有两个引擎（Codex gpt-image-2 / 火山方舟 Seedream），画风明显不同。这本书的**每一张图**（封面、refs.png、每页插图）都带 `--group <slug>`：engine-router 给这个 group 定一个引擎后，这本书之后的所有批次都用它，中途不换——所以不用对账，也别自己 `--engine` 点另一个引擎重画。
 
 > **插图密度按类型走**：科普书默认**不配**插图（除非某概念不画就讲不清）；绘本**以图为主**、几乎每页都要图；小说一般不配图或只配少量氛围图。具体规则见各写作 skill。这里只讲通用的封面。
 
@@ -240,9 +238,9 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 
 封面/插图都是最后一遍，别打乱正文「过审即发」的节奏。
 
-### 多张图一起画：`paint-batch`（2026-10-01 起）
+### 多张图一起画：一份清单一次交（2026-10-28 起）
 
-paint 服务同时能画 3 张。凡是一次要画两张以上（绘本的页图、带插图的书的几张插图加封面），都用 `/opt/claude-agent/bin/paint-batch 清单.json --group <slug>` 一批画，别一张一张串行地等。清单是 JSON 数组，每项 `{"out","prompt"}` 必填，`image/size/quality/engine` 可选，与 `paint` 的参数同义。它是**前台命令**，整批一次提交、服务端 3 张并发，约 9 分钟内必返回，逐张报 `ok …(引擎)` / `FAIL <code>: <message>`；限流/降级由服务端处理，失败的照 paint skill 的错误码表处理后原样重跑同一清单（已存在的图自动跳过，`--force` 才全部重画）。结尾会报引擎分布，混用时点名少数派。**每批最多 6 张**，Bash timeout 给 600000ms。只画一张封面时直接用 `paint` 就行。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
+凡是一次要画两张以上（绘本的页图、带插图的书的几张插图加封面），把它们**全部写进一份清单**，一条 `/opt/claude-agent/bin/paint 清单.json --group <slug> --label 书名` 交完，别拆批、别一张一张串行地等。清单是 JSON 数组，每项 `{"out","prompt"}` 必填，`image/size/quality` 可选，与单张参数同义。engine-router 整批定一个引擎、每账号 4 张并发排队画。它是**前台命令**，约 9 分钟内必返回：退出码 0 全好；**3 = 还没画完，原样重跑同一条命令接着等**（不会重复画）；1 = 有图失败，照 paint skill 的错误码表处理后原样重跑（画好的自动跳过）。Bash timeout 给 600000ms。只画一张封面时直接 `paint "提示词" cover.jpg --group <slug>`。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
 
 ---
 
@@ -278,7 +276,7 @@ await pipeline(batchOf(book.chapters),
 - 把整本攒到一个长 workflow 最后一次性 return / 一次性发 → 长书会话切换会全丢。必须每章过审即 `build.mjs done NN`；长书**分批**跑。
 - 长书首选长时后台 Workflow / 以为进程会连续活到跑完 → 会话被切就成孤儿。长书**默认走主循环并行 spawn + 每章前台即发**。
 - 被打断后从头重跑 → 先探 R2（curl 各章 200/404）再 `build.mjs status` 对账，只补没做的。别只信本地 `status`。
-- 把 `paint` / `build.mjs` 用 `run_in_background`、`nohup`、`Monitor` 丢到后台，然后写一段「出图后我会……」的总结结束回合 → **回合结束 = 进程退出，后台任务全被杀**（2026-09-23《一封一封的写》14 页只发了 1 页，runner 还照常推送了「书写好了」）。画图/发布一律前台同步跑到出结果（多张图要提速就用前台的 `paint-batch` 一批并发画，不是丢后台）；**全部章节 done + 封面上传 + index 刷新之后才许结束回合**。服务器收尾会对账 `book.json`，没齐会把你叫回来续写，续写仍不齐按失败退款。
+- 把 `paint` / `build.mjs` 用 `run_in_background`、`nohup`、`Monitor` 丢到后台，然后写一段「出图后我会……」的总结结束回合 → **回合结束 = 进程退出，后台任务全被杀**（2026-09-23《一封一封的写》14 页只发了 1 页，runner 还照常推送了「书写好了」）。画图/发布一律前台同步跑到出结果（多张图写进一份清单前台交，退出码 3 就原样重跑接着等，不是丢后台）；**全部章节 done + 封面上传 + index 刷新之后才许结束回合**。服务器收尾会对账 `book.json`，没齐会把你叫回来续写，续写仍不齐按失败退款。
 - 死循环重写 >3 轮 → 降级该章，记录短板，放行。
 - 发完 `/voicedrop/books/<slug>/index.html` 还是 404 → 不是没发成，是路由没读本账号的 `books/` 前缀（读写 store 没对上）；`PUT /files/api/upload/books/...` 返回 200 就算成功，别反复重传，去对齐后端。
 - 直接对 `/voicedrop/books` 发 PUT/POST → 405，它只读；写一律走 `/files/api/upload/books/...`。
@@ -286,7 +284,7 @@ await pipeline(batchOf(book.chapters),
 - 内链出现根绝对路径 `/voicedrop/books/…` → 违反硬约束 1，改回相对文件名。
 - 页面出现 Google Fonts 或任何外部 CSS/JS/字体 → 违反硬约束 2，删掉、只用系统字体栈。
 - 用了本地生图/改图/叠字工具 → 违反「图片全走 paint」，重做；封面文字也让出图模型画进图。
-- 出图没带 `--group <slug>`，或发布前没跑 `paint --engines` 对账、书里 codex/seedream 两种画风混着 → 把少数派用多数派的 `--engine` 重画。
+- 出图没带 `--group <slug>`，或自己用 `--engine` 点了跟这本书不同的引擎 → 画风混着，全书统一按 group 重画。
 - 把 cover.jpg 渲染进正文/目录页 → 封面只是文件、供别的工具取用，不进 HTML。
 - 封面没有清晰可读的书名 → 不合格，重画。
 - 图里/绘本里出现了主人没点名、又不是汪汪的角色形象（自创的小兔、小猫、新吉祥物、有名有姓的新人物）→ 违反形象铁律，换成汪汪或删掉，重画。

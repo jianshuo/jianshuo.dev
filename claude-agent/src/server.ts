@@ -863,11 +863,11 @@ function startRun(message: string, sessionId: string | undefined): Run {
         preset: "claude_code",
         append: [
           "## 画图能力",
-          "本机唯一的出图入口是 paint（paint.jianshuo.dev：Codex gpt-image-2 优先，额度满自动降级火山方舟 Seedream，选引擎/重试/降级全在服务端）。",
+          "本机唯一的出图入口是 paint（paint.jianshuo.dev + engine-router：Codex gpt-image-2 或火山方舟 Seedream，一批一个引擎、排队并发、重试全在服务端）。",
           "用户要画图/生成图片/改图时，先读 paint skill（~/.claude/skills/paint/SKILL.md，出图说明书：选项、输出、错误码、引擎），然后：",
           '  /opt/claude-agent/bin/paint "提示词" 输出.jpg              # 文生图',
           '  /opt/claude-agent/bin/paint "提示词" 输出.jpg --image 输入.jpg   # 改图',
-          "  多张用 /opt/claude-agent/bin/paint-batch 清单.json（每批 ≤6 张）。",
+          "  多张写进一份清单一次交：/opt/claude-agent/bin/paint 清单.json [--group 名字]（退出码 3 = 还没画完，原样重跑接着等）。",
           "格式按输出扩展名定（.jpg→JPEG，压缩默认 80；.png→PNG）。默认出 .jpg；只有要透明底才用 .png（透明底只有 Codex 能画）。",
           "可选: --size WxH(默认1024x1024，任意合理比例，服务端自动规整) --engine auto|codex|seedream --group 名字 --transparent --quality low|medium|high",
           "出图通常 1-3 分钟，最长约 9 分钟必返回——调 Bash 时把 timeout 设到 600000ms，前台等它跑完，别丢后台。",

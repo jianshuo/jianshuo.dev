@@ -13,8 +13,9 @@ Codex 订阅版 gpt-image-2 图片服务：网页手动用 + HTTP API（异步 +
 - 排查：`ssh root@66.42.45.128 'journalctl -u paint -n 50 --no-pager'`
 
 ## API / 使用说明书
-**唯一真源：[USAGE.md](USAGE.md)**——接口参数、engine/group 语义、自动降级条件、错误码与对策、时间预算、费用、
-`bin/paint` / `paint-batch` 用法都在那里。agent 版精简说明：`claude-agent/skills/paint/SKILL.md`。
+**唯一真源：[USAGE.md](USAGE.md)**——批次 / 单张接口、engine/group 语义、错误码与对策、时间预算、费用、
+`bin/paint` 用法都在那里。agent 版精简说明：`claude-agent/skills/paint/SKILL.md`。
 
-一句话：只有一个接口 `POST /api/jobs`（+ `GET /api/jobs/:id` / 回调），引擎选择、自动降级、冷却、限流重试、
-尺寸规整、group 画风粘性、整单期限全在服务端 `src/worker.ts`，调用方不碰。
+一句话（2026-10-28 起）：一批图 `POST /api/batches`（单张 `POST /api/jobs` = 1 张的批次）交给 engine-router 调度——
+一批一个引擎、同一 group 同一个引擎、按账号并发排队、撞墙暂停不换引擎；paint 只执行（`src/worker.ts`：向 router 领活、
+按给定引擎画、回报），Codex 模型候选、限流原地重试、尺寸规整、Seedream 后处理、XMP 都在这里，调用方不碰。

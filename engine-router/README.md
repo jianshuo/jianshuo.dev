@@ -41,7 +41,14 @@ POST /v1/runs/:id/cancel
 GET  /v1/threads/:id               会话里每一轮的问答
 GET  /v1/status                    账号池总览
 POST /v1/select                    干跑：现在会选谁、为什么（请求体同 /v1/runs）
-POST /v1/leases                    租约：只挑账号不执行 → { lease_id, engine, account } 或 { lease_id:null, reasons, eta }
+POST /v1/image-batches             出图批次 { items:[{job_id,key?,transparent?}], group?, label?, engine?, priority? } → 202 批次视图（见「出图批次」）
+GET  /v1/image-batches/:id         批次进度 { status, engine, paused_until, pause_reason, counts, items }
+POST /v1/image-batches/:id/cancel  取消：排队的判失败，在画的下次心跳叫停
+POST /v1/image-jobs/claim          执行方（paint）领活 { max } → { items:[{job_id, batch_id, engine, account}] }
+POST /v1/image-jobs/:id/complete   执行方回报 { ok, error? } → { status: done|failed|queued }（queued = 撞墙放回队列 / 被打断重排）
+POST /v1/image-jobs/heartbeat      执行方心跳 { job_ids } → { stop:[…] }（3 分钟没心跳的放回队列）
+POST /v1/image-jobs/release-all    执行方刚重启：手上的全放回队列
+POST /v1/leases                    租约（只剩文字长活，kind 必须 text）：只挑账号不执行 → { lease_id, engine, account } 或 { lease_id:null, reasons, eta }
 POST /v1/leases/:id/complete       回报 { ok, engine_used, error } → 释放预留；error 是额度类就冷却该账号
 POST /v1/leases/:id/progress       长租约报进度 { step, label? } → 状态页「租约」栏显示这一步，并按原 ttl 续期
 PUT  /v1/queues/:name              调用方整份替换自己的排队快照 { title, note, items:[{label, at, note}] } → 状态页「排队」栏（router 不参与排队）
@@ -70,14 +77,25 @@ POST /v1/admin/probe               立刻探一轮额度（admin）
 | 调用方 | 方式 | router 不可用时 |
 |---|---|---|
 | **写书 / 修书**（claude-agent `book-runner`） | 整本书交给 router 执行（`POST /v1/runs`，task_class `book` / `revise`，workdir = `/opt/claude-agent/workspace`，`context_dirs` = 写书 skill，`env` 传 `PAINT_API_TOKEN`，幂等键 `jobId:main` / `jobId:contN` / `revise:slug#ts`）。lab `.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 这一单失败（退款 + 管理员告警）。原来的三腿链 2026-10-25 已删，router 是唯一写书引擎 |
-| **paint 出图** | 租约：每张图开画前 `POST /v1/leases`（kind image），router 决定 gpt-image 还是 seedream；paint 用自己的 Codex 链和方舟执行，画完 `complete` 回报（额度冷却只在 router 记）。`/opt/paint/.env` 配 `ROUTER_URL` / `ROUTER_TOKEN` | 5 秒连不上就不裁决，按请求本身画（auto = 先 Codex，撞墙这一单改 Seedream），出图不中断 |
+| **paint 出图**（2026-10-28 起） | 出图批次：paint 把一批 job 交 `POST /v1/image-batches`（单张也是 1 张的批次，priority interactive 插队），然后循环 `claim` 领活、按给定引擎画、`complete` 回报、`heartbeat` 续命，见下「出图批次」。`/opt/paint/.env` 配 `ROUTER_URL` / `ROUTER_TOKEN`（必配） | 单张 job 先排在 paint 里，每分钟补交；批次接口返回 503；正在画的不受影响，回报失败的 3 分钟后由 router 收回重派 |
 | **视频书**（motion-book `run_book.sh`） | 租约：开机前 `POST /v1/leases`（kind text，task_class `video`，`engine_hints.require=["claude"]`，ttl 6h）挑 claude-1 / claude-2；挑不出再带 `force` 问一次（无视配速和红线，只躲撞墙）。router 只回账号名，令牌由 run_book.sh 从 `motion-book/secrets.env` 的 `CLAUDE_TOKEN_<账号 id，- 换 _>` 取，发给一次性做书机；机器销毁时 `complete`（附 claude.err 尾巴，撞墙就冷却）。租约带 `label`（《书名》视频书），每换一步 `progress` 报一次（顺带续期，12h 整本不过期）；lab 每分钟泵完把排队快照 `PUT /v1/queues/video-book`（书目、24 小时配额、下个名额时间）。读 lab `.env` 的 `ROUTER_URL` / `ROUTER_TOKEN` | 连不上 / 挑不出 / 没有该账号的令牌 → 用 lab `.env` 的 `CLAUDE_CODE_OAUTH_TOKEN`（= claude-1）照做 |
 
 三者都经 `https://lab.jianshuo.dev/router` 访问（不必把服务用户加进 engines 组）。
 
 **写书环境**：engine CLI 以 engine-router 用户跑写书 skill，为此——书库 `/opt/claude-agent/workspace` 有 ACL（`u:engine-router:rwX` + 默认 ACL 让新文件两个用户都能读写）、unit 的 `ReadWritePaths` 含书库；`/opt/engine-router/.claude/skills` 软链到 lab 的 skill 目录（skill 里到处是 `~/.claude/skills/…`）；`/opt/engine-router/.config/voicedrop/credentials` 是发布账号凭据的副本（`build.mjs` 读它）。Kimi 账号在 config 里带 `env`（1M 上下文、effort high），模型 `k3[1m]`，与原写书 Kimi 腿一致。
 
-**为什么 paint 用租约而不是交给 router 执行**：paint 的执行层（8 分钟整单期限、模型候选、瞬时限流原地重试、安全拦截重试、ImageMagick 后处理、XMP 溯源）很成熟，整个搬进 router 等于重写；而且 gpt-image-2-skill 写 auth.json 的格式（epoch）和 codex CLI（RFC3339）不兼容，不能与 router 的链共用。租约让 router 仍是额度的唯一裁决者：Codex 出图和写书的消耗记在同一个账号上，互相看得见。出图策略 `image` = failover（gpt-image → seedream）+ 不配速、红线 90%：优先 Codex，快用完才给 Seedream（按张收费，每日上限 200，历史峰值 98/天）。显式 `engine:"codex"`/`"seedream"`、透明图、或没有可降级的 seedream 时用 force（配速只用来把活挪给替代引擎）。
+## 出图批次（2026-10-28，`src/batches.ts`）
+
+之前 paint 每张图租一次约：账号一忙就判失败或外溢到 Seedream，外溢一次 paint 的 group 粘性又把整本书钉死在 Seedream 单车道上（10/28《嘟嘟的松木大桌子》15 张画了半小时只出 5 张；7 天 52 次租约 23 次「no engine available」当场失败）。现在 router 负责调度，paint 只执行：
+
+- **一批一个引擎**：开批时按出图策略、**整批剩余张数 × 单张预估**挑引擎（`select` 带 `count`、`ignoreBusy`——忙不算不合格，排队就是了）。中途不换。
+- **group 统一引擎**：批次带 `group`（书的 slug）时，第一批定下的引擎记在 `pins`（14 天），之后同组的批次直接用它（force：只要没撞墙，配速和红线不拦）。点名 `engine` 优先；有透明图的批次只能 gpt-image。
+- **并发**：每个出图账号 `account.concurrency`（缺省 `concurrency.image_per_account` = 4）张，全站 `concurrency.image_total` = 6 张（1GB 小机器，每张 gpt-image 是一个 node 进程）。interactive（VoiceDrop 单张）排在整本书前面，其余先来后到。
+- **撞墙**：回报的 error 是额度 / 模型被拒类（`shouldTryNextLeg`）→ 冷却这个账号（`cooldownFor`），这张放回队列，整批暂停到冷却结束——不换引擎。连续暂停超过 2 小时剩下的图判失败。被打断（paint 重启、`deadline_exceeded`）重排一次。其余错误就是这张失败。
+- **执行方协议**：`claim` 只给 `paint`（或 admin）；paint 每 30 秒心跳，3 分钟没心跳的放回队列；paint 启动先 `release-all`。在画的每张都在账号上记预留（并发记 `gpt-image/codex-1`，额度记 `codex/codex-1`），和写书互相看得见；Seedream 每画一张记当日张数，到 `daily_cap` 暂停到明天。整批完了探一次 codex 额度。
+- 状态落盘 `state/batches.json`（批次 + group 绑定），重启接着排；终态批次留 3 天。状态页「出图批次」表看每批的引擎、进度、暂停原因，账号表「在跑」列对出图账号显示「在画/并发上限 · 排队」。
+
+**为什么执行留在 paint**：paint 的执行层（模型候选、瞬时限流原地重试、安全拦截重试、ImageMagick 后处理、XMP 溯源）很成熟，整个搬进 router 等于重写；而且 gpt-image-2-skill 写 auth.json 的格式（epoch）和 codex CLI（RFC3339）不兼容，不能与 router 的链共用。所以 router 调度、paint 来领活——router 仍是额度的唯一裁决者。出图策略 `image` = failover（gpt-image → seedream）+ 不配速、红线 90%：优先 Codex，整批放不进 Codex 余量才给 Seedream（按张收费，每日上限 200）。
 
 ## 账号
 

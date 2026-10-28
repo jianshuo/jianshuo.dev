@@ -32,10 +32,9 @@ export const BOOK_PREAMBLE =
   `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
   `不过就照 must_fix 重写（最多 3 轮），过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
   `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。\n` +
-  `出图前先读 ${SKILLS_DIR}/paint/SKILL.md（出图说明书）；每张图都带 --group <书的slug>，发布前用 paint --engines 对账，` +
-  `codex/seedream 混用就把少数派用多数派的 --engine 重画，全书一个画风。\n` +
-  `一次要画多张图（绘本页图等）用 /opt/claude-agent/bin/paint-batch 清单.json --group <slug> 一批画（服务端 3 张同时，每批最多 6 张，` +
-  `命令本身前台阻塞到整批画完才返回），别一张一张串行地等。\n` +
+  `出图前先读 ${SKILLS_DIR}/paint/SKILL.md（出图说明书）；每张图都带 --group <书的slug>（同组的图服务端始终用同一个引擎，全书一个画风，别自己 --engine 换引擎）。\n` +
+  `一次要画多张图（绘本页图等）把它们全部写进一份清单，用 /opt/claude-agent/bin/paint 清单.json --group <slug> 一次交（不拆批、没有张数上限），` +
+  `别一张一张串行地等；命令前台最多等约 9 分钟，退出码 3 = 还没画完，原样重跑同一条命令接着等同一批（不会重复画）。\n` +
   `paint 和 build.mjs 一律在前台同步跑到出结果，绝不用 run_in_background / nohup / Monitor 丢到后台再写总结——` +
   `你的回合一结束进程就退出，后台任务会被一起杀掉，书就停在半路（2026-09-23《一封一封的写》14 页只发了 1 页）。` +
   `全部章节 build.mjs done、封面上传、目录刷新之后才能结束回合；服务器会对账 book.json，没齐会把你叫回来续写。`;

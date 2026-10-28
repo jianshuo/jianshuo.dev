@@ -2,56 +2,97 @@
 // paint — 出图的唯一命令行入口（调本机 paint 服务 127.0.0.1:8788，即 paint.jianshuo.dev）。
 // 完整说明书：paint/USAGE.md；agent 版：skills/paint/SKILL.md。
 //
-//   文生图:  paint "提示词" 输出.jpg
-//   改图:    paint "提示词" 输出.jpg --image 输入.jpg
-//   选项:    --size WxH(默认1024x1024，任意合理比例，服务端自动规整) --transparent
-//            --quality low|medium|high(默认medium) --format png|jpeg|webp --compression 0-100
-//            --engine auto|codex|seedream（默认 auto）  --group <书的slug>（同组统一画风）
-//   查引擎:  paint --engines a.jpg b.jpg …   （读图里 XMP，报每张是 codex 还是 seedream + 少数派）
+//   一批（一本书的所有图一次交）:  paint 清单.json [--group <书的slug>] [--engine auto|codex|seedream] [--label 书名] [--force]
+//     清单 = JSON 数组，每项一张图 {"out":"/abs/p01.jpg","prompt":"…","image":"/abs/refs.png","size":"1024x1024","quality":"medium"}
+//   单张:  paint "提示词" 输出.jpg [--image 输入.jpg] [--size WxH] [--transparent] [--quality q]
+//          [--format f] [--compression n] [--engine e] [--group slug]
 //
-// 格式不给就按输出扩展名定；jpeg/webp 不给 --compression 一律 80。
-// 成功：stdout 打 saved / result_url / engine / job，退出 0。
-// 失败：stderr 打「paint job failed: <code>: <message>」，退出 1。最长等 9 分钟（服务端整单期限 8 分钟）。
-import { paintOne, formatError, engineLine, engineOfFile, engineTally } from "./paint-client.mjs";
+// 整批交给 engine-router：一批一个引擎（同一 group 的各批也同一个引擎），按账号并发排队，中途不换引擎。
+// 已存在的 out 跳过（--force 重画）。格式不给按扩展名定；jpeg/webp 不给 --compression 一律 80。
+// 退出码：0 全部画好 / 1 有失败（原样重跑只重画失败的）/ 2 用法错 / 3 没等完（原样重跑接着等同一批，不会重复画）。
+import { existsSync, readFileSync } from "node:fs";
+import { paintBatch, formatError, engineLine, waitingLine } from "./paint-client.mjs";
 
-const USAGE = 'usage: paint "prompt" out.jpg [--image in.jpg] [--size WxH] [--transparent] [--quality q] [--format f] [--compression n] [--engine auto|codex|seedream] [--group slug]\n       paint --engines file…';
+const USAGE =
+  'usage: paint 清单.json [--group slug] [--engine auto|codex|seedream] [--label 书名] [--force]\n' +
+  '       paint "prompt" out.jpg [--image in.jpg] [--size WxH] [--transparent] [--quality q] [--format f] [--compression n] [--engine e] [--group slug]';
 const argv = process.argv.slice(2);
+const die = (msg) => { console.error(msg); process.exit(2); };
 
-if (argv[0] === "--engines") {
-  const files = argv.slice(1);
-  if (!files.length) { console.error(USAGE); process.exit(2); }
-  for (const f of files) console.log(`${(engineOfFile(f) ?? "unknown").padEnd(8)} ${f}`);
-  const t = engineTally(files);
-  console.log(`— codex ${t.counts.codex} / seedream ${t.counts.seedream} / unknown ${t.counts.unknown}` +
-    (t.minority.length ? `；混用了！多数是 ${t.majority}，少数派要用 --engine ${t.majority} 重画：${t.minority.join(" ")}` : "；画风引擎一致"));
-  process.exit(0);
-}
-
-const [prompt, out, ...rest] = argv;
-if (!prompt || !out) { console.error(USAGE); process.exit(2); }
-
-const VALUED = { "--image": "image", "--size": "size", "--quality": "quality", "--format": "format", "--compression": "compression", "--engine": "engine", "--group": "group" };
-const opts = { prompt, out };
-for (let i = 0; i < rest.length; i++) {
-  const a = rest[i];
+const VALUED = { "--image": "image", "--size": "size", "--quality": "quality", "--format": "format", "--compression": "compression", "--engine": "engine", "--group": "group", "--label": "label" };
+const positional = [];
+const opts = {};
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
   if (a === "--transparent") opts.transparent = true;
-  else if (VALUED[a] && i + 1 < rest.length) opts[VALUED[a]] = rest[++i];
-  else { console.error(`unknown option: ${a}\n${USAGE}`); process.exit(2); }
+  else if (a === "--force") opts.force = true;
+  else if (VALUED[a] && i + 1 < argv.length) opts[VALUED[a]] = argv[++i];
+  else if (a.startsWith("--")) die(`unknown option: ${a}\n${USAGE}`);
+  else positional.push(a);
 }
 
-let lastStatus = "";
-const r = await paintOne(opts, (j) => {
-  if (j.status === "submitted") console.error(`job ${j.job_id} submitted, waiting...`);
-  else if (j.status !== lastStatus) console.error(`  ${j.status}...`);
-  lastStatus = j.status;
+let items;
+let stateFile;
+const single = !(positional.length === 1 && positional[0].endsWith(".json"));
+if (!single) {
+  const manifest = positional[0];
+  try {
+    items = JSON.parse(readFileSync(manifest, "utf8"));
+    if (!Array.isArray(items) || !items.length) throw new Error("清单顶层必须是非空数组");
+    items.forEach((it, i) => {
+      if (!it || typeof it.out !== "string" || typeof it.prompt !== "string" || !it.out || !it.prompt) throw new Error(`第 ${i + 1} 项缺 out 或 prompt`);
+      if (it.image && !existsSync(it.image)) throw new Error(`第 ${i + 1} 项的 image 不存在：${it.image}`);
+    });
+    const outs = items.map((it) => it.out);
+    const dup = outs.find((o, i) => outs.indexOf(o) !== i);
+    if (dup) throw new Error(`out 重复：${dup}`);
+  } catch (e) {
+    die(`清单读不了：${e.message}`);
+  }
+  stateFile = `${manifest}.batch`;
+} else {
+  const [prompt, out] = positional;
+  if (!prompt || !out || positional.length > 2) die(USAGE);
+  if (opts.image && !existsSync(opts.image)) die(`--image 不存在：${opts.image}`);
+  const { group, engine, label, force, ...one } = opts;
+  items = [{ prompt, out, ...one }];
+  stateFile = `${out}.batch`;
+}
+
+const t0 = Date.now();
+const res = await paintBatch(items, {
+  group: opts.group, engine: opts.engine, label: opts.label, force: opts.force, stateFile,
+  onItem: (r) => {
+    if (single) return;
+    console.log(r.ok ? `ok    ${r.out}  (${r.engine ?? "?"}${r.model ? " " + r.model : ""})` : `FAIL  ${r.out}  ${formatError(r.error)}`);
+  },
 });
+const secs = Math.round((Date.now() - t0) / 1000);
+const b = res.batch;
 
-if (r.ok) {
-  console.log(`saved: ${r.out}`);
-  console.log(`result_url: ${r.result_url}`);
-  console.log(engineLine(r));
-  console.log(`job: ${r.job_id} (${Math.round(r.secs)}s)`);
-  process.exit(0);
+if (single) {
+  const r = res.results[0];
+  if (res.status === "waiting") {
+    console.error(`${waitingLine(b)}\n原样重跑这条命令接着等（不会重复画）。批次 ${b?.batch_id}`);
+    process.exit(3);
+  }
+  if (r.ok) {
+    console.log(`saved: ${r.out}`);
+    if (r.skipped) console.log("(已存在，--force 才重画)");
+    else console.log(`result_url: ${r.result_url}\n${engineLine(r)}\njob: ${r.job_id} (${secs}s)`);
+    process.exit(0);
+  }
+  console.error(`paint job failed: ${formatError(r.error)}${r.job_id ? ` (job ${r.job_id}${r.engine ? `, ${engineLine(r)}` : ""})` : ""}`);
+  process.exit(1);
 }
-console.error(`paint job failed: ${formatError(r.error)}${r.job_id ? ` (job ${r.job_id}${r.engine ? `, ${engineLine(r)}` : ""})` : ""}`);
-process.exit(1);
+
+for (const r of res.results) if (r.skipped) console.log(`skip  ${r.out}  (已存在，--force 才重画)`);
+const failed = res.results.filter((r) => !r.ok && r.error);
+const done = res.results.filter((r) => r.ok).length;
+if (b) console.log(`批次 ${b.batch_id}：引擎 ${b.engine ?? "未定"}${b.decided_reason ? `（${b.decided_reason}）` : ""}`);
+if (res.status === "waiting") {
+  console.log(`— ${waitingLine(b)}，已用 ${secs}s。原样重跑这条命令接着等同一批（不会重复画）。`);
+  process.exit(3);
+}
+console.log(`— ${done}/${res.results.length} 张画好，用时 ${secs}s` + (failed.length ? `；失败 ${failed.length} 张：${failed.map((f) => f.out).join(" ")}（原样重跑本命令只重画失败的）` : ""));
+process.exit(failed.length ? 1 : 0);
