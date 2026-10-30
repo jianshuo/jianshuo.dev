@@ -189,6 +189,10 @@ article code{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.9em;
 article figure{margin:24px 0;text-align:center}
 article img{max-width:100%;border-radius:12px}
 article figcaption{color:var(--ink-soft);font-size:13px;margin-top:8px}
+article table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;
+  margin:18px 0;font-size:14.5px;line-height:1.6;-webkit-overflow-scrolling:touch}
+article th,article td{padding:7px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+article th{font-weight:600;color:var(--accent);background:var(--tint);white-space:nowrap}
 .plain{background:var(--tint);border:1px solid var(--line);border-radius:12px;
   padding:14px 18px;margin:18px 0}
 .plain::before{content:"大白话";display:inline-block;font-size:11px;letter-spacing:1px;

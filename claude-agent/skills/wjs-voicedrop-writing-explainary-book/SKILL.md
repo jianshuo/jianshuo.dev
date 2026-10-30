@@ -39,7 +39,7 @@ Spawn 一个 agent，产出书名、slug、subtitle、切入角度、**8–20 �
 给写手：本章 `no / title / brief` + 全书大纲（知道上下文、别重复别的章节）+ 上面的读者画像与费曼铁律。要求：
 
 - **输出格式**：一段 `<article>` 里面的 HTML 片段，只用这些标签：
-  `<p> <h2> <h3> <ul>/<ol>/<li> <strong> <blockquote> <code> <figure><img><figcaption> <dfn>`。
+  `<p> <h2> <h3> <ul>/<ol>/<li> <strong> <blockquote> <code> <figure><img><figcaption> <dfn> <table>/<tr>/<th>/<td>`（表格只在确实是多行多列对比时用，比如数据表、预测表）。
 - **科普专属 HTML 约定**：
   - 名词第一次出现，用 `<dfn>词</dfn>` 标记，并**紧跟一句大白话**解释。
   - 需要「翻译成人话」的地方，用大白话盒子：`<div class="plain"><p>……</p></div>`（`build.mjs` 的 CSS 会给它加「大白话」标签样式）。
