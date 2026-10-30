@@ -49,6 +49,8 @@ export async function runClaude(spec: AttemptSpec, account: Account, secrets: Re
       "CLAUDE_CODE_SUBAGENT_MODEL",
     ])
       env[k] = spec.model;
+    // behavesAs 会把 max_tokens 从 32000 抬到 64000，钉回 Kimi 的上限（账号 env 仍可覆盖）
+    env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = "32000";
   } else {
     env.CLAUDE_CODE_OAUTH_TOKEN = secrets[account.token_env ?? ""] ?? "";
   }
@@ -75,6 +77,9 @@ export async function runClaude(spec: AttemptSpec, account: Account, secrets: Re
     env,
     abortController: ac,
   };
+  // 新版 Claude Code 不认识 k3 会往 stderr 刷 [claude-code:unrecognized_model]：behavesAs 指一个它认识的模型，
+  // 发出去的模型名不变。opus-4-8 实测请求和「不认识」时几乎一样（同 beta、同 tools）；sonnet-4-6 会换掉整套 system prompt。
+  if (spec.engine === "kimi") options.settings = { modelPicker: { options: [{ model: spec.model, behavesAs: "claude-opus-4-8" }] } };
   if (spec.capabilities.write === false || spec.capabilities.shell === false) {
     options.permissionMode = "default";
     options.disallowedTools = [
