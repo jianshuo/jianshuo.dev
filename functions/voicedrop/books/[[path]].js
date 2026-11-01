@@ -419,8 +419,8 @@ function videoHero(bj) {
   const done = Array.isArray(bj.chapters) ? bj.chapters.filter((x) => x && x.status === 'done').length : 0;
   const v = bj.video, preview = v.chapters && done && v.chapters < done ? ` · 动画版试看前 ${v.chapters} 章` : '';
   return `<style>
-#vhero{position:relative;overflow:hidden;background:#0d1117;height:calc(100vh - 44px);height:calc(100svh - 44px);min-height:420px;margin:0 calc(50% - 50vw)}
-#vhero iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#0d1117}
+#vhero{position:relative;overflow:hidden;background:#f7f2e7;height:calc(100vh - 44px);height:calc(100svh - 44px);min-height:420px;margin:0 calc(50% - 50vw)}
+#vhero iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#f7f2e7}   /* 2026-11-01 黑底改纸色，同书页 */
 #vhint{display:flex;align-items:center;justify-content:center;gap:6px;height:44px;margin:0 calc(50% - 50vw);color:#A89E8E;font-size:13px;text-decoration:none;letter-spacing:.04em}
 #vhint i{display:inline-block;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);animation:vhb 1.6s ease-in-out infinite}
 @keyframes vhb{50%{transform:rotate(45deg) translate(2px,0)}}
