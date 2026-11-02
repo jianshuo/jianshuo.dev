@@ -43,3 +43,22 @@ test("状态页渲染排队快照、租约步骤、任务开始时间（北京�
   for (const s of ["视频书排队", "《恒生科技指数》", "下个名额 18:50", "《随机》视频书", "Claude 开始制作", "10-26 18:40", "写书 · 关于随机的一本书", "北京时间 10-26 18:50"])
     assert.ok(html.includes(s), `页面里应有 ${s}`);
 });
+
+test("排队项的取消按钮：只收 /api/ 开头的同域相对地址，渲染成 button，label 转义", async () => {
+  const d = await mkdtemp(join(tmpdir(), "spc-"));
+  await writeFile(join(d, "config.json"), JSON.stringify({ engines: { claude: { accounts: [{ id: "claude-1" }] } }, policies: {} }));
+  const pool = new Pool(join(d, "config.json"), join(d, ".env"), join(d, "pool.json"));
+  const leases = new Leases(pool);
+  const now = Date.parse("2026-11-02T10:00:00Z");
+  const q = leases.putQueue("video-book", "book-runner", { items: [
+    { label: "《甲》", cancel: "/api/video-queue/cancel?slug=a" },
+    { label: "《乙》", cancel: "javascript:alert(1)" },
+    { label: "《丙》", cancel: "https://evil.example/api/x" },
+    { label: "<b>丁</b>", cancel: "/api/video-queue/cancel?slug=d\"onmouseover=x" },
+  ] }, now);
+  assert.deepEqual(q.items.map((x) => x.cancel), ["/api/video-queue/cancel?slug=a", undefined, undefined, undefined]);
+  const html = renderStatus(pool, [], leases, undefined, now);
+  assert.equal((html.match(/<button class="cancel"/g) ?? []).length, 1);
+  assert.ok(html.includes('data-url="/api/video-queue/cancel?slug=a" data-label="《甲》"'));
+  assert.ok(html.includes("&lt;b&gt;丁&lt;/b&gt;") && !html.includes("<b>丁</b>"));
+});

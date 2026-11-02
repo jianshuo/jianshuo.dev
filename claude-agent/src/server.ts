@@ -18,7 +18,7 @@ import {
   type Inflight, type InflightCreate, type InflightRevise,
 } from "./inflight.js";
 import { launchBookUnit, listActiveUnits, planLaunches, unitName } from "./book-launch.js";
-import { handleVideoBook, startVideoBook } from "./video-book.js";
+import { cancelVideo, handleVideoBook, startVideoBook } from "./video-book.js";
 import { jsonlLines, jsonlLinesFrom, type LineCursor } from "./jsonl.js";
 import { ROUTER_RUN_ID_RE, getRouterRun, listRouterRuns, syncTranscript } from "./router-sessions.js";
 import { readJsonBody, BodyError } from "./http-body.js";
@@ -1079,6 +1079,14 @@ const server = createServer((req, res) => {
   const vm = req.url?.match(/^\/api\/video-book(\/status)?\?(.*)$/);
   if (vm && (req.method === "GET" || req.method === "POST")) {
     handleVideoBook(req, res, new URLSearchParams(vm[2]).get("slug") ?? "", !vm[1]).catch((err) => {
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: String(err?.message ?? err) }));
+    });
+    return;
+  }
+  // 视频书排队取消：router 状态页的按钮调（同域）。不在 Caddy 豁免名单里，有 basic_auth / lab_session 才进得来。
+  const cm = req.url?.match(/^\/api\/video-queue\/cancel\?(.*)$/);
+  if (cm) {
+    cancelVideo(req, res, new URLSearchParams(cm[1]).get("slug") ?? "").catch((err) => {
       if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: String(err?.message ?? err) }));
     });
     return;

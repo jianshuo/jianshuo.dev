@@ -39,7 +39,9 @@ export type Lease = {
   learned?: { d5h: number; d7d: number };
 };
 
-export type QueueItem = { label: string; at?: number; note?: string };
+// cancel：调用方给的同域相对地址（如 lab 的 /api/video-queue/cancel?slug=x），状态页渲染成「取消」按钮 POST 过去。
+export type QueueItem = { label: string; at?: number; note?: string; cancel?: string };
+const CANCEL_URL = /^\/api\/[A-Za-z0-9/_-]+(\?[A-Za-z0-9=&_.-]*)?$/;
 export type QueueSnapshot = { name: string; caller: string; title: string; note: string; items: QueueItem[]; updatedAt: number };
 
 const DEFAULT_TTL_MS = 15 * 60_000;
@@ -201,6 +203,7 @@ export class Leases {
       label: str(x?.label, 120) || "?",
       ...(Number.isFinite(x?.at) ? { at: Number(x.at) } : {}),
       ...(str(x?.note, 160) ? { note: str(x?.note, 160) } : {}),
+      ...(typeof x?.cancel === "string" && x.cancel.length <= 200 && CANCEL_URL.test(x.cancel) ? { cancel: x.cancel } : {}),
     }));
     const q: QueueSnapshot = { name, caller, title: str(b?.title, 80) || name, note: str(b?.note, 300), items, updatedAt: now };
     this.queues.set(name, q);

@@ -78,4 +78,16 @@ test("排队快照（给 router 状态页）：额度满时每本写出哪个名
   // 额度还有：头一本只等前一本做完
   assert.equal(queueSnapshot(q.slice(0, 1), 1, [l2], now).items[0].note, "a · 额度有，等前一本做完");
   assert.deepEqual(queueSnapshot([], 0, [], now).items, []);
+  // 每本都带取消地址（router 状态页渲染成按钮）
+  assert.deepEqual(s.items.map((x) => x.cancel), ["/api/video-queue/cancel?slug=a", "/api/video-queue/cancel?slug=b", "/api/video-queue/cancel?slug=c"]);
+});
+
+test("取消过的书：7 天内打开书架页不再下单，答 not_ready；过了 7 天照常；已发布/在做/在排队优先", () => {
+  const day = 86400000, base = { published: false, running: false, queued: null, state: null, trigger: true };
+  const d = decideVideo("x", { ...base, now: 10 * day, cancelledAt: 10 * day - day });
+  assert.equal(d.kind, "answer"); assert.equal(d.body.state, "not_ready"); assert.match(d.body.error, /先不做/);
+  assert.equal(decideVideo("x", { ...base, now: 10 * day, cancelledAt: 10 * day - 8 * day }).kind, "enqueue");
+  assert.equal(decideVideo("x", { ...base, now: 10 * day, cancelledAt: null }).kind, "enqueue");
+  assert.equal(decideVideo("x", { ...base, published: true, now: 10 * day, cancelledAt: 10 * day }).body.state, "done");
+  assert.equal(decideVideo("x", { ...base, queued: 2, now: 10 * day, cancelledAt: 10 * day }).body.state, "queued");
 });

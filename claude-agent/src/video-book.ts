@@ -12,6 +12,9 @@
 //   · 全局同时只做 VIDEO_MAX_CONCURRENT 本（缺省 1）——Claude 额度和写书引擎共用
 //   · 每 24 小时最多开工 VIDEO_MAX_PER_DAY 本（缺省 2），排队上限 VIDEO_MAX_QUEUE（缺省 20）
 // 兜底：每 10 分钟跑一次 cloud/reaper.sh，删掉开了太久的 motion-book 机器（run_book.sh 被杀时的保险）。
+// 取消（2026-11-02）：router 状态页「排队」栏每本书一个取消按钮 → POST /api/video-queue/cancel?slug=（不在 Caddy 豁免里，
+//   走 lab 的 basic_auth）。删队列文件 + 写 cancelled/<slug>.json，VIDEO_CANCEL_DAYS（缺省 7）天内书架页打开也不再自动下单。
+//   只撤排队的，已开工的不管。
 //
 // 纯函数 decideVideo 不碰网络和进程，可单测（test/video-book.test.mjs）。
 import { spawn } from "node:child_process";
@@ -30,6 +33,8 @@ const MAX_CONCURRENT = Number(process.env.VIDEO_MAX_CONCURRENT ?? 1);
 const MAX_PER_DAY = Number(process.env.VIDEO_MAX_PER_DAY ?? 2);
 const MAX_QUEUE = Number(process.env.VIDEO_MAX_QUEUE ?? 20);
 const FAIL_COOLDOWN_MS = 6 * 3600 * 1000;
+const CANCEL_DIR = join(MB_ROOT, "cancelled");
+const CANCEL_MS = Number(process.env.VIDEO_CANCEL_DAYS ?? 7) * 24 * 3600 * 1000;
 const SHELF = "https://jianshuo.dev/voicedrop/books";
 const PUBLIC = "https://voicedrop.cn/books";
 const SYSTEMD_RUN = process.env.SYSTEMD_RUN_BIN ?? "systemd-run";
@@ -40,6 +45,7 @@ export type VideoState = { state: string; step?: string; startedAt?: number; upd
 export type VideoFacts = {
   published: boolean; running: boolean; queued: number | null;   // queued = 排第几（1 起），null = 不在队里
   state: VideoState | null; trigger: boolean; now: number;
+  cancelledAt?: number | null;   // 状态页取消过的时间（cancelled/<slug>.json），没取消过是 null
 };
 export type VideoDecision =
   | { kind: "answer"; status: number; body: Record<string, unknown> }
@@ -59,6 +65,8 @@ export function decideVideo(slug: string, f: VideoFacts): VideoDecision {
   // 失败只给一句步骤（过 publicText），不给 error / logTail——那里面是内部日志
   if (failedRecently) return { kind: "answer", status: 200, body: { state: "failed", step: publicText(f.state!.step) || "这次没做成",
     retryAfter: (f.state!.updatedAt ?? 0) + FAIL_COOLDOWN_MS } };
+  // 取消过的：等待页已认识 not_ready（「暂时还做不了」+ error），书架页不用改
+  if (f.cancelledAt && f.now - f.cancelledAt < CANCEL_MS) return { kind: "answer", status: 200, body: { state: "not_ready", error: "这本书的动画版先不做了" } };
   if (!f.trigger) return { kind: "answer", status: 200, body: { state: "none" } };
   return { kind: "enqueue" };
 }
@@ -140,7 +148,8 @@ export function queueSnapshot(queue: { slug: string; title?: string; requestedAt
   return {
     title: "视频书（书架动画版）",
     note: parts.join(" · "),
-    items: queue.map((q, i) => ({ label: `《${q.title ?? q.slug}》`, at: q.requestedAt, note: `${q.slug} · ${slotNote(i)}` })),
+    items: queue.map((q, i) => ({ label: `《${q.title ?? q.slug}》`, at: q.requestedAt, note: `${q.slug} · ${slotNote(i)}`,
+      cancel: `/api/video-queue/cancel?slug=${q.slug}` })),
   };
 }
 let reportFailed = false;
@@ -205,9 +214,9 @@ export async function handleVideoBook(req: IncomingMessage, res: ServerResponse,
   const send = (status: number, body: Record<string, unknown>) =>
     res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }).end(JSON.stringify({ slug, ...body }));
   if (!SLUG_RE.test(slug)) return send(400, { error: "bad slug" });
-  const [pub, active, queue, state] = await Promise.all([published(slug), activeVideoUnits(), queueList(), readState(slug)]);
+  const [pub, active, queue, state, cancelledAt] = await Promise.all([published(slug), activeVideoUnits(), queueList(), readState(slug), readCancelled(slug)]);
   const pos = queue.findIndex((q) => q.slug === slug);
-  const d = decideVideo(slug, { published: pub, running: active.has(videoUnit(slug)), queued: pos >= 0 ? pos + 1 : null, state, trigger, now: Date.now() });
+  const d = decideVideo(slug, { published: pub, running: active.has(videoUnit(slug)), queued: pos >= 0 ? pos + 1 : null, state, trigger, now: Date.now(), cancelledAt });
   if (d.kind === "answer") {
     // 在做、失败的单带上制作日志（等待页「查看制作日志」展开看）；已完成/没开始的不带
     if (!["done", "none"].includes(String(d.body.state))) d.body.events = await readEvents(slug);
@@ -223,6 +232,34 @@ export async function handleVideoBook(req: IncomingMessage, res: ServerResponse,
   if (launched.includes(slug)) return send(202, { state: "booting", step: "开机中", startedAt: Date.now() });
   const q2 = await queueList();
   return send(202, { state: "queued", position: q2.findIndex((q) => q.slug === slug) + 1 });
+}
+
+async function readCancelled(slug: string): Promise<number | null> {
+  try { return Number(JSON.parse(await readFile(join(CANCEL_DIR, `${slug}.json`), "utf8")).at) || null; } catch { return null; }
+}
+
+// ── HTTP：POST /api/video-queue/cancel?slug=…（router 状态页的取消按钮；basic_auth 后面） ──
+// 排进泵的链里做，免得和正在开工的泵抢同一本。已开工（单元在跑）的不撤，答 running。
+export async function cancelVideo(req: IncomingMessage, res: ServerResponse, slug: string) {
+  const send = (status: number, body: Record<string, unknown>) =>
+    res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify({ slug, ...body }));
+  if (req.method !== "POST") return send(405, { error: "POST only" });
+  if (!SLUG_RE.test(slug)) return send(400, { error: "bad slug" });
+  const p = pumpChain.then(async () => {
+    const active = await activeVideoUnits();
+    if (active.has(videoUnit(slug))) return { status: 409, body: { state: "running", error: "已经开工了，取消不了" } };
+    const queue = await queueList();
+    const wasQueued = queue.some((q) => q.slug === slug);
+    await rm(join(QUEUE_DIR, `${slug}.json`), { force: true });
+    await mkdir(CANCEL_DIR, { recursive: true });
+    await writeFile(join(CANCEL_DIR, `${slug}.json`), JSON.stringify({ slug, at: Date.now() }));
+    console.log(`[video] 取消 ${slug}${wasQueued ? "（从队里撤下）" : "（不在队里，只记取消）"}`);
+    await reportQueue(queue.filter((q) => q.slug !== slug), active.size);
+    return { status: 200, body: { state: "cancelled", wasQueued } };
+  });
+  pumpChain = p.catch((e) => console.error("[video] cancel failed", e));
+  const r = await p;
+  return send(r.status, r.body);
 }
 
 /** 服务起来后调用：每分钟泵一次（单元跑完腾出空位、过了 24 小时额度恢复，排队的才起得来），每 10 分钟兜底清理一次。 */

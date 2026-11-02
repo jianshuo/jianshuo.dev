@@ -119,11 +119,12 @@ export function renderStatus(pool: Pool, runs: RunRecord[], leases?: Leases, bat
   const queueCards = (leases?.queueSnapshots() ?? []).map((q) => {
     const stale = now - q.updatedAt > 5 * 60_000;
     const items = q.items
-      .map((x, i) => `<tr><td class="c">${i + 1}</td><td><b>${esc(x.label)}</b></td><td class="nw">${bj(x.at)}</td><td class="sub">${esc(x.note ?? "")}</td></tr>`)
+      .map((x, i) => `<tr><td class="c">${i + 1}</td><td><b>${esc(x.label)}</b></td><td class="nw">${bj(x.at)}</td><td class="sub">${esc(x.note ?? "")}</td><td>${
+        x.cancel ? `<button class="cancel" data-url="${esc(x.cancel)}" data-label="${esc(x.label)}">取消</button>` : ""}</td></tr>`)
       .join("");
     return `<h3>${esc(q.title)} <span class="pill ${q.items.length ? "warn" : "ok"}">${q.items.length} 本排队</span></h3>
 <div class="meta">${esc(q.note)}${q.note ? " · " : ""}<span class="${stale ? "err" : ""}">更新于 ${ago(q.updatedAt, now)}${stale ? "（调用方好久没报了）" : ""}</span></div>
-<div class="card"><table><tr><th>#</th><th>内容</th><th>下单</th><th>说明</th></tr>${items || `<tr><td colspan="4" class="muted">队里没有东西</td></tr>`}</table></div>`;
+<div class="card"><table><tr><th>#</th><th>内容</th><th>下单</th><th>说明</th><th></th></tr>${items || `<tr><td colspan="5" class="muted">队里没有东西</td></tr>`}</table></div>`;
   });
   const allBatches = batches?.list() ?? [];
   const batchRows = [...allBatches.filter((b) => !b.finishedAt), ...allBatches.filter((b) => b.finishedAt).slice(0, 15)].map((b) => batchRow(b, now));
@@ -150,6 +151,8 @@ th{font-size:12px;color:var(--mute);font-weight:500}tr:last-child td{border-bott
 .sub{display:block;color:var(--mute);font-size:12px}.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
 .err{color:var(--bad);font-size:12px;max-width:320px;word-break:break-word}
 .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:#eee;color:var(--mute)}
+button.cancel{font:inherit;font-size:12px;padding:2px 10px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--bad);cursor:pointer}
+button.cancel:hover{background:#fbe5e5}button.cancel:disabled{opacity:.5;cursor:default}
 .pill.ok{background:#e6f4ec;color:var(--ok)}.pill.warn{background:#fdf1dc;color:var(--warn)}.pill.bad{background:#fbe5e5;color:var(--bad)}.pill.run{background:#e4edfb;color:var(--run)}
 .bar{position:relative;display:inline-block;width:110px;height:8px;background:#efeee9;border-radius:4px;vertical-align:middle;overflow:visible}
 .bar b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}.bar.warn b{background:var(--warn)}.bar.bad b{background:var(--bad)}
@@ -165,5 +168,19 @@ ${queueCards.length ? `<h2>排队</h2>${queueCards.join("")}` : ""}
 <h2>租约（调用方自己执行：视频书）</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>状态</th><th>账号</th><th>当前步骤</th><th>用时</th><th></th></tr>${leaseRows.join("") || `<tr><td colspan="7" class="muted">现在没有租约</td></tr>`}</table></div>
 <h2>最近任务</h2><div class="card"><table><tr><th>开始</th><th>内容</th><th>run · 调用方</th><th>状态</th><th>账号</th><th>用时</th><th>说明</th></tr>${runRows.join("") || `<tr><td colspan="7" class="muted">还没有任务</td></tr>`}</table></div>
 <h2>学到的单次消耗（百分点）</h2><div class="card"><table><tr><th>任务类|引擎</th><th>5h</th><th>周</th></tr>${learned || `<tr><td colspan="3" class="muted">还没有样本（用配置里的预估）</td></tr>`}</table></div>
-</main></body></html>`;
+</main>
+<script>
+// 排队栏的「取消」：POST 调用方给的同域地址（lab 的接口在 basic_auth 后面，浏览器带着登录态），成功就刷新
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.cancel");
+  if (!b || !confirm("取消" + b.dataset.label + "？")) return;
+  b.disabled = true; b.textContent = "取消中…";
+  try {
+    const r = await fetch(b.dataset.url, { method: "POST", credentials: "same-origin" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    location.reload();
+  } catch (err) { alert("没取消成：" + err.message); b.disabled = false; b.textContent = "取消"; }
+});
+</script></body></html>`;
 }
