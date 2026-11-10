@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一套新 tracking 系统的功能需求清单 | VoiceDrop</title>
+<meta name="description" content="51 条 tracking 系统功能需求（FR-01~51），分十组、切好 P0/P1/P2，从 VoiceDrop 现有 PostHog 实现（iOS 56 处埋点 + 服务端 4 处）反推而来。可按优先级筛选、可勾选记录落地进度。">
+<meta property="og:title" content="一套新 tracking 系统的功能需求清单">
+<meta property="og:description" content="51 条需求，十组，P0/P1/P2 已切分。三条决定成败：注册表当唯一真源、上报走自有国内线路、trace_id 端到端串联。">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f1f2f8; --card:#ffffff; --ink:#2a2d3d; --ink2:#4d5169;
+    --soft:#8a8ea6; --line:rgba(42,45,61,.11);
+    --brand:#4b52bf; --brand2:#6f77e2; --brand-soft:#e4e6fa;
+    --warn:#b8603f; --warn-soft:#fae6dd;
+    --ok:#2f7d5d; --ok-soft:#dcf0e6;
+    --p0:#4b52bf; --p0s:#e4e6fa; --p1:#a06a1f; --p1s:#faeeda; --p2:#6b7280; --p2s:#eceef1;
+  }
+  html{scroll-behavior:smooth}
+  body{background:radial-gradient(ellipse 120% 80% at 50% -10%,#e9ebfa,var(--bg));color:var(--ink);font-family:'Nunito',sans-serif;-webkit-font-smoothing:antialiased;line-height:1.7}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 26px}
+  h1,h2,h3,.q{font-family:'Quicksand',sans-serif;letter-spacing:-.01em}
+  ::selection{background:var(--brand-soft)}
+  a{color:var(--brand)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:var(--brand-soft);padding:1px 6px;border-radius:6px;color:#3b419e}
+
+  /* nav */
+  .nav{position:sticky;top:0;z-index:60;background:rgba(241,242,248,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .nav-inner{max-width:1000px;margin:0 auto;padding:11px 26px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .nav-brand{display:flex;align-items:center;gap:10px;font-family:'Quicksand',sans-serif;font-weight:700;font-size:1rem;color:var(--ink);text-decoration:none}
+  .nav-brand .blob{width:26px;height:26px;border-radius:42% 58% 60% 40%/45% 45% 55% 55%;background:linear-gradient(135deg,var(--brand2),var(--brand))}
+  .nav-links{display:flex;gap:2px;flex-wrap:wrap}
+  .nav-links a{font-size:.8rem;color:var(--soft);text-decoration:none;padding:6px 11px;border-radius:999px;transition:.2s;white-space:nowrap;font-weight:700}
+  .nav-links a:hover{background:var(--brand-soft);color:var(--brand)}
+  @media(max-width:820px){.nav-links{display:none}}
+
+  /* hero */
+  .hero{padding:70px 0 34px}
+  .kicker{display:inline-flex;align-items:center;gap:9px;font-size:.76rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);margin-bottom:18px}
+  .kicker span{width:28px;height:2px;background:var(--brand);border-radius:2px;opacity:.7}
+  .hero h1{font-weight:700;font-size:clamp(2rem,5.6vw,3.2rem);line-height:1.14}
+  .hero h1 em{font-style:normal;color:var(--brand)}
+  .hero .lede{margin-top:20px;font-size:1.08rem;color:var(--ink2);font-weight:600;max-width:760px}
+  .hero .lede b{color:var(--ink);font-weight:800}
+  .meta{margin-top:18px;font-size:.82rem;color:var(--soft);font-weight:700}
+
+  /* tldr */
+  .tldr{background:linear-gradient(135deg,#eef0fe,#ffffff);border:1.5px solid var(--brand-soft);border-radius:24px;padding:28px;margin:26px 0 10px;box-shadow:0 14px 40px rgba(75,82,191,.10)}
+  .tldr .tag{font-family:'Quicksand',sans-serif;font-weight:700;font-size:.78rem;color:var(--brand);letter-spacing:.05em;text-transform:uppercase}
+  .tldr h3{margin-top:10px;font-size:1.2rem;font-weight:700}
+  .tldr ol{margin:14px 0 0 20px;font-weight:600;color:var(--ink2)}
+  .tldr ol li{margin:8px 0}
+  .tldr ol li b{color:var(--ink);font-weight:800}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:26px 0}
+  @media(max-width:860px){.stats{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:520px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 14px;text-align:center;box-shadow:0 6px 18px rgba(42,45,61,.05)}
+  .stat .n{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1.75rem;line-height:1.1;color:var(--brand)}
+  .stat .n.bad{color:var(--warn)}
+  .stat .l{font-size:.74rem;font-weight:700;color:var(--soft);margin-top:6px;line-height:1.35}
+
+  /* sections */
+  section{padding:34px 0 6px;scroll-margin-top:64px}
+  section > h2{font-size:1.5rem;font-weight:700;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  section > h2 .gid{font-size:.8rem;font-weight:800;color:#fff;background:var(--brand);border-radius:8px;padding:3px 9px;letter-spacing:.06em}
+  section > .sub{margin-top:8px;color:var(--ink2);font-weight:600;font-size:.96rem;max-width:780px}
+
+  /* table */
+  .tw{overflow-x:auto;margin-top:18px;border-radius:20px;border:1px solid var(--line);background:var(--card);box-shadow:0 10px 28px rgba(42,45,61,.06)}
+  table{border-collapse:collapse;width:100%;min-width:720px;font-size:.92rem}
+  thead th{background:#f7f8fd;font-family:'Quicksand',sans-serif;font-weight:700;font-size:.8rem;color:var(--soft);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);letter-spacing:.03em;white-space:nowrap}
+  tbody td{padding:13px 14px;border-bottom:1px solid rgba(42,45,61,.06);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#fafbff}
+  tbody tr.done{opacity:.5}
+  tbody tr.done .need{text-decoration:line-through}
+  td.ck{width:38px;padding-right:0}
+  td.ck input{width:17px;height:17px;accent-color:var(--brand);cursor:pointer;margin-top:3px}
+  td.fr{width:74px;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;font-weight:700;color:var(--brand);white-space:nowrap}
+  td.need{font-weight:700;color:var(--ink);min-width:240px}
+  td.need b{background:linear-gradient(180deg,transparent 60%,var(--brand-soft) 60%)}
+  td.acc{color:var(--ink2);font-weight:600;font-size:.88rem;min-width:250px}
+  td.pr{width:60px;text-align:right}
+  .p{display:inline-block;font-size:.7rem;font-weight:800;border-radius:7px;padding:2px 8px;letter-spacing:.04em}
+  .p.P0{background:var(--p0s);color:var(--p0)} .p.P1{background:var(--p1s);color:var(--p1)} .p.P2{background:var(--p2s);color:var(--p2)}
+
+  /* filter bar */
+  .bar{position:sticky;top:47px;z-index:50;background:rgba(241,242,248,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:11px 0;margin-top:10px}
+  .bar-in{max-width:1000px;margin:0 auto;padding:0 26px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .chip{font-family:'Quicksand',sans-serif;font-weight:700;font-size:.82rem;border:1.5px solid var(--line);background:var(--card);color:var(--ink2);border-radius:999px;padding:6px 15px;cursor:pointer;transition:.18s}
+  .chip:hover{border-color:var(--brand2);color:var(--brand)}
+  .chip.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 6px 16px rgba(75,82,191,.28)}
+  .prog{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:.8rem;font-weight:800;color:var(--soft)}
+  .prog .track{width:120px;height:7px;border-radius:99px;background:var(--brand-soft);overflow:hidden}
+  .prog .fill{height:100%;width:0;background:linear-gradient(90deg,var(--brand2),var(--brand));transition:width .3s}
+  .reset{font-size:.76rem;font-weight:700;color:var(--soft);background:none;border:none;cursor:pointer;text-decoration:underline;padding:0}
+  .reset:hover{color:var(--warn)}
+
+  /* gap cards */
+  .gaps{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:18px}
+  @media(max-width:720px){.gaps{grid-template-columns:1fr}}
+  .gap{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:16px;padding:16px 18px;box-shadow:0 6px 18px rgba(42,45,61,.05)}
+  .gap h4{font-family:'Quicksand',sans-serif;font-weight:700;font-size:1rem;color:var(--warn)}
+  .gap p{margin-top:6px;font-size:.88rem;color:var(--ink2);font-weight:600}
+  .good{background:var(--ok-soft);border:1px solid rgba(47,125,93,.2);border-radius:18px;padding:20px 22px;margin-top:18px}
+  .good h4{font-family:'Quicksand',sans-serif;font-weight:700;color:var(--ok);font-size:1rem;margin-bottom:8px}
+  .good ul{margin-left:18px;font-weight:600;color:#31513f;font-size:.9rem}
+  .good ul li{margin:5px 0}
+
+  /* priority split */
+  .split{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+  @media(max-width:820px){.split{grid-template-columns:1fr}}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:0 10px 26px rgba(42,45,61,.06)}
+  .pcard .h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .pcard .h b{font-family:'Quicksand',sans-serif;font-size:1.15rem}
+  .pcard .h .cnt{font-size:.78rem;font-weight:800;color:var(--soft)}
+  .pcard .when{font-size:.84rem;font-weight:700;color:var(--ink2);margin-bottom:12px}
+  .pcard .ids{font-family:ui-monospace,Menlo,monospace;font-size:.76rem;line-height:1.9;color:var(--ink2);word-spacing:2px}
+  .pcard.P0{border-top:4px solid var(--p0)} .pcard.P1{border-top:4px solid var(--p1)} .pcard.P2{border-top:4px solid var(--p2)}
+
+  footer{margin-top:56px;padding:26px 0 60px;border-top:1px solid var(--line);text-align:center;font-size:.8rem;color:var(--soft);font-weight:600}
+  footer a{color:var(--brand);text-decoration:none}
+</style>
+</head>
+<body>
+
+<div class="nav"><div class="nav-inner">
+  <a class="nav-brand" href="/a/"><span class="blob"></span>jianshuo.dev/a</a>
+  <div class="nav-links">
+    <a href="#now">现状</a><a href="#a">采集端</a><a href="#b">契约</a><a href="#c">传输</a><a href="#d">身份</a>
+    <a href="#e">服务端</a><a href="#f">存储</a><a href="#g">消费</a><a href="#h">隐私</a><a href="#i">运维</a><a href="#j">开发体验</a><a href="#pri">优先级</a>
+  </div>
+</div></div>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="kicker"><span></span>VoiceDrop · Tracking</div>
+    <h1>一套新 tracking 系统的<em>功能需求清单</em></h1>
+    <p class="lede"><b>51 条需求（FR-01 ~ FR-51），分十组，切好 P0/P1/P2。</b>从 VoiceDrop 现有 PostHog 实现反推而来——iOS 端 56 处埋点调用 + 8 处界面事件，服务端 4 处漏斗打点。清单是中立的：自建还是继续用现成平台，都能拿它去验收。</p>
+    <div class="meta">2026-09-05 · 可按优先级筛选 · 勾选状态存在本机浏览器</div>
+  </div>
+
+  <div class="tldr">
+    <div class="tag">决定成败的三条</div>
+    <h3>其余 48 条都是把这三条撑起来</h3>
+    <ol>
+      <li><b>FR-08 事件注册表当唯一真源</b> —— 治住现在散在 56 处的裸字符串事件名。</li>
+      <li><b>FR-18 上报走自有国内线路</b> —— 这是不继续用第三方直连的真正理由，中国区事件不能因墙静默丢失。</li>
+      <li><b>FR-27 trace_id 端到端串联</b> —— 把「录完 → 成文」那段黑箱点亮，单条录音能看到每一段花了多久。</li>
+    </ol>
+  </div>
+</div>
+
+<section id="now" class="wrap">
+  <h2><span class="gid">现状</span>今天这套 PostHog 是什么样</h2>
+  <div class="stats">
+    <div class="stat"><div class="n">56</div><div class="l">iOS 埋点调用点</div></div>
+    <div class="stat"><div class="n">8</div><div class="l">界面事件（screen）</div></div>
+    <div class="stat"><div class="n bad">4</div><div class="l">服务端事件</div></div>
+    <div class="stat"><div class="n bad">56</div><div class="l">裸字符串事件名</div></div>
+    <div class="stat"><div class="n bad">0</div><div class="l">埋点相关单测</div></div>
+    <div class="stat"><div class="n">3</div><div class="l">当前口径版本</div></div>
+  </div>
+
+  <div class="good">
+    <h4>✓ 已经做对、新系统必须继承的习惯</h4>
+    <ul>
+      <li><b>隐私红线</b>：只送行为元数据，录音 / 转写 / 正文 / 提示词一律不进分析系统。</li>
+      <li><b>没配 key = 整体不启用</b>，App 与 Worker 行为零变化；埋点 best-effort，绝不 throw。</li>
+      <li><b>中文事件名</b>，读事件流不用查字典（「录音上传完成」「修书已受理」「追问跳过」）。</li>
+      <li><b>成对埋发起 + 落地</b>，失败带可归因的原因，不是一个 bool。</li>
+      <li><b>口径显式版本化</b>：改了度量定义就 bump <code>口径</code>，查数按口径过滤，禁止混算。</li>
+    </ul>
+  </div>
+
+  <div class="gaps">
+    <div class="gap"><h4>事件名没有注册表</h4><p>56 处字符串字面量，改名、拼错、漏带属性线上无人拦；20 个测试文件里 0 个碰埋点。</p></div>
+    <div class="gap"><h4>全局属性太薄</h4><p>只有界面 / 当前录音，没有线路（cn/cf）、版本、内部用户标记——切不了分群，自己的数据混在正式数据里。</p></div>
+    <div class="gap"><h4>服务端几乎是黑的</h4><p>4 个事件全在 referral / 分享页。挖矿、ASR、成文耗时、写书失败、退款全在日志里，产品侧最贵的那段无数据。</p></div>
+    <div class="gap"><h4>三套 distinct_id 不通</h4><p>分享页用 vid、邀请用 ipHash、App 用 sub，「分享页访问 → 装 App → 首次录音」这条最值钱的增长漏斗拼不出来。</p></div>
+    <div class="gap"><h4>明文 IP 调试开关未翻回</h4><p>2026-07-17 归因排查打开的 <code>DEBUG_PLAINTEXT_IP</code> 至今还开着，ipHash 现在就是明文 IP。</p></div>
+    <div class="gap"><h4>无采样、无配额、无自检</h4><p>录屏 30 天全量，量起来成本不可控；改完埋点只能人肉刷 Activity 看有没有送到。</p></div>
+  </div>
+</section>
+
+<div class="bar"><div class="bar-in">
+  <button class="chip on" data-f="all">全部 51</button>
+  <button class="chip" data-f="P0">P0 · 29</button>
+  <button class="chip" data-f="P1">P1 · 17</button>
+  <button class="chip" data-f="P2">P2 · 5</button>
+  <div class="prog"><span id="pt">0 / 51</span><div class="track"><div class="fill" id="pf"></div></div><button class="reset" id="rs">清空</button></div>
+</div></div>
+
+<div class="wrap">
+
+<section id="a">
+  <h2><span class="gid">A</span>采集端（客户端 SDK）</h2>
+  <p class="sub">埋点代码写起来要比不写还省事，否则没人会好好埋。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-01"></td><td class="fr">FR-01</td><td class="need">单一埋点入口，一行调用：<code>track(事件, 属性)</code></td><td class="acc">全仓不允许直接调 SDK；grep 只出现在一个文件里</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-02"></td><td class="fr">FR-02</td><td class="need"><b>未配置即整体停用</b>，App 行为零变化</td><td class="acc">缺 key 时无网络请求、无磁盘写入、无日志噪音</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-03"></td><td class="fr">FR-03</td><td class="need">全局上下文自动附加：版本、build、平台、系统版本、<b>线路（cn/cf）</b>、语言、商店区域、是否内部用户</td><td class="acc">任意一条事件都能按线路 / 版本切分，不必单独埋</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-04"></td><td class="fr">FR-04</td><td class="need">会话上下文可注册 / 注销：当前界面、当前对象 id</td><td class="acc">进入界面自动记「界面进入」，离开自动清对象</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-05"></td><td class="fr">FR-05</td><td class="need">计时器原语：<code>start</code> / <code>end</code> 自动算耗时秒</td><td class="acc">上传、成文、写书这类跨异步边界的耗时不必各写一遍</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-06"></td><td class="fr">FR-06</td><td class="need">成对事件原语：一次调用产出「发起 / 成功 / 失败」三态，失败强制带原因</td><td class="acc">不允许只埋成功；失败无原因时编译期或测试期报错</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-07"></td><td class="fr">FR-07</td><td class="need">内部用户标记（TestFlight / 开发机 / debug）自动打 <code>internal</code></td><td class="acc">所有看板默认排除，可一键包含</td><td class="pr"><span class="p P1">P1</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="b">
+  <h2><span class="gid">B</span>事件契约与治理</h2>
+  <p class="sub">现在最缺的一块。埋点必须是有类型、有测试、有生命周期的代码，不是注释级承诺。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-08"></td><td class="fr">FR-08</td><td class="need"><b>事件注册表是唯一真源</b>：一份声明文件列出全部事件名、属性、类型、必填性、口径版本、负责人</td><td class="acc">新增事件先改注册表，再写代码</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-09"></td><td class="fr">FR-09</td><td class="need">代码里禁止裸字符串事件名，用注册表生成的常量 / 枚举</td><td class="acc">拼错 = 编译不过</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-10"></td><td class="fr">FR-10</td><td class="need">Schema 校验：属性缺失、类型不符、未声明属性 → 本地报错、CI 拦截</td><td class="acc">单测覆盖每个事件的属性契约</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-11"></td><td class="fr">FR-11</td><td class="need"><b>口径版本是一等公民</b>：改了度量定义必须 bump，查询层默认按口径分组而非混算</td><td class="acc">折线图上的断点能自动标注「此处口径 2→3」</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-12"></td><td class="fr">FR-12</td><td class="need">事件生命周期：标记 deprecated、记最后出现时间，自动列出「已死事件」与「有代码没数据」</td><td class="acc">每月能生成一份事件体检报告</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P2"><td class="ck"><input type="checkbox" data-id="FR-13"></td><td class="fr">FR-13</td><td class="need">注册表一键导出成人话事件字典：什么时刻打、口径是什么、别跟谁混算</td><td class="acc">半年后自己看得懂</td><td class="pr"><span class="p P2">P2</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="c">
+  <h2><span class="gid">C</span>传输与可靠性</h2>
+  <p class="sub">丢事件比没有事件更糟——你会拿一份缺角的数据做决策。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-14"></td><td class="fr">FR-14</td><td class="need">本地持久化队列 + 批量上报，进程被杀不丢事件</td><td class="acc">冷启动能补传上次未发的事件</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-15"></td><td class="fr">FR-15</td><td class="need">离线 / 弱网自动重试、指数退避，上限后丢弃并计数</td><td class="acc">飞行模式与弱网场景实测不丢不卡</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-16"></td><td class="fr">FR-16</td><td class="need">每条事件带客户端 <code>event_id</code> + 时间戳，服务端<b>幂等去重</b></td><td class="acc">重试不会造成重复计数</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-17"></td><td class="fr">FR-17</td><td class="need">时钟偏移矫正：同时记客户端时间与服务端接收时间</td><td class="acc">用户改系统时间不会把事件甩到 2035 年</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-18"></td><td class="fr">FR-18</td><td class="need">上报走<b>国内可达线路</b>，与 API 共用同一套选路</td><td class="acc">中国区用户的事件不因墙而静默丢失</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-19"></td><td class="fr">FR-19</td><td class="need">埋点失败绝不影响主路径：不阻塞、不抛错、不弹窗</td><td class="acc">断网时功能完全正常</td><td class="pr"><span class="p P0">P0</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="d">
+  <h2><span class="gid">D</span>身份与归因</h2>
+  <p class="sub">一个人在四个地方留下痕迹，系统得知道那是同一个人。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-20"></td><td class="fr">FR-20</td><td class="need">匿名 id → 账号 id 的 identify / merge，历史匿名事件回溯归并</td><td class="acc">登录后能看到该用户登录前的完整动线</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-21"></td><td class="fr">FR-21</td><td class="need">登出 reset，防止换账号串人</td><td class="acc">同机换号后事件不串到前一个人名下</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-22"></td><td class="fr">FR-22</td><td class="need"><b>跨端统一 join key</b>：Web 访客、邀请落地页、App 首次启动能串成一条链</td><td class="acc">「分享页访问 → 下载 → 首次录音 → 首篇成文」漏斗画得出来</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-23"></td><td class="fr">FR-23</td><td class="need">归因来源沉淀为用户属性（邀请人、渠道、落地码）</td><td class="acc">后续所有事件可按来源切分</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-24"></td><td class="fr">FR-24</td><td class="need">用户属性可写可查：算力档位、是否订阅、文章数量档位、注册日</td><td class="acc">支持「订阅 vs 免费」分群对比</td><td class="pr"><span class="p P1">P1</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="e">
+  <h2><span class="gid">E</span>服务端 / 全链路</h2>
+  <p class="sub">产品最贵的那段在云上，现在却完全没数据。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-25"></td><td class="fr">FR-25</td><td class="need">Worker / Function 侧同一套 SDK 与同一份注册表</td><td class="acc">端和云用同一个事件名体系，不是两套</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-26"></td><td class="fr">FR-26</td><td class="need">关键链路全埋：挖矿开始 / 成功 / 失败、ASR 耗时、LLM 耗时与 token、成文耗时、写书修书、退款扣费</td><td class="acc">「录完 → 成文」的耗时与失败率有数，不必翻日志</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-27"></td><td class="fr">FR-27</td><td class="need"><b>一次用户旅程一个 trace_id</b>，客户端 → Worker → 各阶段共享，可串成瀑布图</td><td class="acc">单条录音能看到端到端每段花了多久、卡在哪</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-28"></td><td class="fr">FR-28</td><td class="need">错误事件带结构化上下文：阶段、状态码、供应商、是否重试、是否降级</td><td class="acc">三腿降级链哪条腿在扛量一眼可见</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-29"></td><td class="fr">FR-29</td><td class="need">成本埋点：每次 LLM / ASR / TTS 调用记模型、token、估算成本</td><td class="acc">能算单篇文章成本、单用户成本</td><td class="pr"><span class="p P1">P1</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="f">
+  <h2><span class="gid">F</span>存储与查询</h2>
+  <p class="sub">数据是自己的，问题是临时想到的——两条都得成立。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-30"></td><td class="fr">FR-30</td><td class="need">事件原始数据<b>自有可导出</b>，不被平台锁死</td><td class="acc">随时能全量导出成列式文件</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-31"></td><td class="fr">FR-31</td><td class="need">支持 SQL 或等价的即席查询，能按任意属性切分、分组、开窗</td><td class="acc">不用等看板配好才能回答问题</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-32"></td><td class="fr">FR-32</td><td class="need">保留期分层可配：明细事件 N 天，聚合指标长期保留</td><td class="acc">成本可控又不丢历史趋势</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P2"><td class="ck"><input type="checkbox" data-id="FR-33"></td><td class="fr">FR-33</td><td class="need">事件迟到（离线补传）不破坏已算好的聚合</td><td class="acc">支持按事件时间而非接收时间重算</td><td class="pr"><span class="p P2">P2</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="g">
+  <h2><span class="gid">G</span>消费面：看板 / 漏斗 / 告警</h2>
+  <p class="sub">采集是手段，能回答问题、能半夜叫醒你才是目的。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-34"></td><td class="fr">FR-34</td><td class="need">漏斗分析：任意事件序列、可设时间窗、可按属性分群</td><td class="acc">邀请、成文、订阅三条漏斗开箱即用</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-35"></td><td class="fr">FR-35</td><td class="need">留存与活跃：次日 / 7 日 / 30 日留存，按注册批次分群</td><td class="acc">能看出某次改版之后的批次留存变化</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-36"></td><td class="fr">FR-36</td><td class="need">趋势与分布要有 <b>P50 / P90 / P99</b>，不止均值</td><td class="acc">上传耗时看 P90，不被一条 214 秒拉飞的均值骗</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-37"></td><td class="fr">FR-37</td><td class="need">异常告警：事件量突降、失败率突升、耗时 P90 越线 → 推到手机</td><td class="acc">事故不必等用户投诉</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P2"><td class="ck"><input type="checkbox" data-id="FR-38"></td><td class="fr">FR-38</td><td class="need">会话回放作为可独立关闭的模块</td><td class="acc">打开 / 关闭不影响事件采集</td><td class="pr"><span class="p P2">P2</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="h">
+  <h2><span class="gid">H</span>隐私与合规</h2>
+  <p class="sub">红线，不可降级——隐私政策已经对外承诺过。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-39"></td><td class="fr">FR-39</td><td class="need">只收元数据，<b>用户内容零采集</b>：录音、转写、正文、提示词、社区文本永不进事件</td><td class="acc">注册表层面就不允许声明「文本内容」类属性</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-40"></td><td class="fr">FR-40</td><td class="need">标识符默认哈希化；明文调试开关<b>必须带过期时间</b>，到期自动翻回哈希</td><td class="acc">杜绝「排查完忘了翻回去」——现状正踩着</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-41"></td><td class="fr">FR-41</td><td class="need">录屏遮罩<b>默认打码、白名单放行</b>，而不是默认可见靠人记得手挂</td><td class="acc">新写的视图漏配 = 打码，不是漏内容</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-42"></td><td class="fr">FR-42</td><td class="need">用户可查看 / 导出 / 删除自己的行为数据；删号级联删事件</td><td class="acc">应对隐私政策承诺与商店审核</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P2"><td class="ck"><input type="checkbox" data-id="FR-43"></td><td class="fr">FR-43</td><td class="need">采集可被用户关闭（设置项），关闭后本地队列清空</td><td class="acc">关闭后无任何上报</td><td class="pr"><span class="p P2">P2</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="i">
+  <h2><span class="gid">I</span>运维与成本</h2>
+  <p class="sub">不发版就能压量、能止血、能算清花了多少钱。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-44"></td><td class="fr">FR-44</td><td class="need">采样率可远程配置，按事件粒度（高频降采样，关键全采）</td><td class="acc">不发版就能压量</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-45"></td><td class="fr">FR-45</td><td class="need">远程开关：可单独停掉某事件 / 某模块 / 整个采集</td><td class="acc">出问题不用等审核</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-47"></td><td class="fr">FR-47</td><td class="need">机器人 / 爬虫流量自动标记并默认排除</td><td class="acc">分享页的真人量是真人量</td><td class="pr"><span class="p P1">P1</span></td></tr>
+      <tr data-p="P2"><td class="ck"><input type="checkbox" data-id="FR-46"></td><td class="fr">FR-46</td><td class="need">用量与成本可见：事件量、存储量、月度费用趋势</td><td class="acc">费用曲线跟事件量对得上</td><td class="pr"><span class="p P2">P2</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="j">
+  <h2><span class="gid">J</span>开发体验与可测试性</h2>
+  <p class="sub">埋点要变成有测试保护的代码——这是它跟注释的唯一区别。</p>
+  <div class="tw"><table>
+    <thead><tr><th></th><th>编号</th><th>功能需求</th><th>验收口径</th><th></th></tr></thead>
+    <tbody>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-48"></td><td class="fr">FR-48</td><td class="need">本地 debug 模式：控制台打印每条事件的完整 payload 与送达结果</td><td class="acc">看得到发了什么、有没有 200</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-49"></td><td class="fr">FR-49</td><td class="need"><b>实时事件流调试台</b>：接一台设备，操作时实时看到事件流进来</td><td class="acc">改完埋点 30 秒内确认送达，不用刷后台</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P0"><td class="ck"><input type="checkbox" data-id="FR-50"></td><td class="fr">FR-50</td><td class="need">单测里可断言「这段代码打了哪条事件、带了哪些属性」（内存 spy）</td><td class="acc">埋点进 CI，不再是注释级承诺</td><td class="pr"><span class="p P0">P0</span></td></tr>
+      <tr data-p="P1"><td class="ck"><input type="checkbox" data-id="FR-51"></td><td class="fr">FR-51</td><td class="need">dry-run 模式：事件走全流程但不落库</td><td class="acc">CI 跑契约测试不污染生产数据</td><td class="pr"><span class="p P1">P1</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="pri">
+  <h2><span class="gid">优先级</span>怎么切</h2>
+  <div class="split">
+    <div class="pcard P0">
+      <div class="h"><b>P0 最小可用</b><span class="cnt">29 条</span></div>
+      <div class="when">缺了这套系统不成立</div>
+      <div class="ids">FR-01 FR-02 FR-03 FR-04 · FR-08 FR-09 FR-10 FR-11 · FR-14 FR-15 FR-16 FR-17 FR-18 FR-19 · FR-20 FR-21 FR-22 · FR-25 FR-26 FR-27 · FR-30 FR-31 · FR-34 · FR-39 FR-40 FR-41 · FR-48 FR-49 FR-50</div>
+    </div>
+    <div class="pcard P1">
+      <div class="h"><b>P1 上线后两周</b><span class="cnt">17 条</span></div>
+      <div class="when">让数据从「能看」变成「好用」</div>
+      <div class="ids">FR-05 FR-06 FR-07 · FR-12 · FR-23 FR-24 · FR-28 FR-29 · FR-32 · FR-35 FR-36 FR-37 · FR-42 · FR-44 FR-45 FR-47 · FR-51</div>
+    </div>
+    <div class="pcard P2">
+      <div class="h"><b>P2 量起来再说</b><span class="cnt">5 条</span></div>
+      <div class="when">规模和合规压力到了才值得做</div>
+      <div class="ids">FR-13 · FR-33 · FR-38 · FR-43 · FR-46</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>VoiceDrop tracking 需求清单 · 2026-09-05 生成 · 勾选状态只存在你这台设备的浏览器里</p>
+  <p style="margin-top:6px"><a href="/a/">← 回到 /a 归档</a></p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var K='vd-tracking-req-v1';
+  var done={};
+  try{done=JSON.parse(localStorage.getItem(K)||'{}')}catch(e){done={}}
+  var boxes=[].slice.call(document.querySelectorAll('td.ck input'));
+  var pf=document.getElementById('pf'),pt=document.getElementById('pt');
+
+  function paint(){
+    var n=0;
+    boxes.forEach(function(b){
+      var on=!!done[b.dataset.id];
+      b.checked=on; b.closest('tr').classList.toggle('done',on); if(on)n++;
+    });
+    pt.textContent=n+' / '+boxes.length;
+    pf.style.width=(n/boxes.length*100)+'%';
+  }
+  function save(){try{localStorage.setItem(K,JSON.stringify(done))}catch(e){}}
+
+  boxes.forEach(function(b){
+    b.addEventListener('change',function(){
+      if(b.checked)done[b.dataset.id]=1; else delete done[b.dataset.id];
+      save();paint();
+    });
+  });
+  document.getElementById('rs').addEventListener('click',function(){done={};save();paint()});
+
+  var chips=[].slice.call(document.querySelectorAll('.chip'));
+  chips.forEach(function(c){
+    c.addEventListener('click',function(){
+      chips.forEach(function(x){x.classList.remove('on')});
+      c.classList.add('on');
+      var f=c.dataset.f;
+      [].forEach.call(document.querySelectorAll('tbody tr'),function(tr){
+        tr.hidden=(f!=='all'&&tr.dataset.p!==f);
+      });
+      [].forEach.call(document.querySelectorAll('section[id]'),function(s){
+        var rows=s.querySelectorAll('tbody tr');
+        if(!rows.length)return;
+        var vis=[].some.call(rows,function(r){return !r.hidden});
+        s.hidden=!vis;
+      });
+    });
+  });
+  paint();
+})();
+</script>
+</body>
+</html>
