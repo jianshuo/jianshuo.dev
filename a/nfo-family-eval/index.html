@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>North Fair Oaks 居住评估</title>
+<meta name="robots" content="noindex">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+*{box-sizing:border-box}body{margin:0}img{max-width:100%}
+/* Layout: single reading column, verdict card up top, score bars, then sectioned report like a property survey file */
+:root{
+  --bg:#f7f9f8; --surface:#ffffff; --fg:#1d2a27; --muted:#5b6b67; --line:#dbe3e0;
+  --accent:#1f6f5c; --accent-soft:#e3f1ec; --red:#c62828; --red-soft:#fdeceb; --amber:#a86a00; --amber-soft:#fdf3df;
+  --f-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
+  --f-num:"Space Grotesk","Noto Sans SC",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121816; --surface:#1a2320; --fg:#e4ece9; --muted:#9aaba6; --line:#2c3a36;
+  --accent:#5cc3a6; --accent-soft:#1e3530; --red:#ff7b72; --red-soft:#3a2120; --amber:#e8b04a; --amber-soft:#382d18; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121816; --surface:#1a2320; --fg:#e4ece9; --muted:#9aaba6; --line:#2c3a36;
+  --accent:#5cc3a6; --accent-soft:#1e3530; --red:#ff7b72; --red-soft:#3a2120; --amber:#e8b04a; --amber-soft:#382d18; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15.5px;line-height:1.75}
+.wrap{max-width:780px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1,h2,h3{text-wrap:balance;line-height:1.3;margin:0}
+h1{font-family:var(--f-num);font-size:clamp(26px,5vw,36px);font-weight:700}
+h2{font-size:20px;font-weight:700;padding-bottom:8px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:baseline}
+h2 .n{font-family:var(--f-num);color:var(--accent);font-size:15px}
+h2 .sc{margin-left:auto;font-family:var(--f-num);font-size:14px;color:var(--muted);font-weight:500}
+h3{font-size:16px;font-weight:700;margin-top:6px}
+p,ul,ol{margin:0}
+ul,ol{padding-left:1.3em}
+li+li{margin-top:4px}
+a{color:var(--accent);word-break:break-all}
+.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.meta{color:var(--muted);font-size:13.5px;margin-top:6px}
+section{display:flex;flex-direction:column;gap:12px;min-width:0}
+.verdict{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center}
+.big{font-family:var(--f-num);font-size:56px;font-weight:700;line-height:1;color:var(--amber);font-variant-numeric:tabular-nums}
+.big small{font-size:18px;color:var(--muted);font-weight:500}
+.verdict .tag{display:inline-block;background:var(--amber-soft);color:var(--amber);font-size:13px;font-weight:700;padding:2px 10px;border-radius:99px;margin-bottom:6px}
+@media (max-width:520px){.verdict{grid-template-columns:1fr}}
+.scores{display:flex;flex-direction:column;gap:9px}
+.row{display:grid;grid-template-columns:7.5em 1fr 2.6em 3.4em;gap:10px;align-items:center;font-size:14px}
+.row .w{color:var(--muted);font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums}
+.row b{font-family:var(--f-num);text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:5px}
+.bar i.lo{background:var(--red)} .bar i.mid{background:var(--amber)}
+.note{font-size:13px;color:var(--muted)}
+.flags{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.flag{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--red);border-radius:6px;padding:12px 14px;font-size:14.5px;min-width:0}
+.flag.warn{border-left-color:var(--amber)}
+.flag strong{display:block;margin-bottom:2px}
+.v{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:4px;white-space:nowrap;vertical-align:1px}
+.v.ok{background:var(--accent-soft);color:var(--accent)}
+.v.inf{background:var(--amber-soft);color:var(--amber)}
+.v.no{background:var(--red-soft);color:var(--red)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font-size:12.5px;color:var(--muted);font-weight:500;letter-spacing:.04em}
+td.num{font-family:var(--f-num);font-variant-numeric:tabular-nums;white-space:nowrap}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kv div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.kv span{display:block;font-size:12px;color:var(--muted)}
+.kv b{font-family:var(--f-num);font-size:18px;font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.two>div{min-width:0}
+@media (max-width:620px){.two{grid-template-columns:1fr}}
+.check{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px}
+.check label{display:flex;gap:10px;align-items:flex-start;cursor:pointer;padding:8px 12px;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.check input{margin-top:6px;accent-color:var(--accent);flex:none}
+.check input:checked+span{color:var(--muted);text-decoration:line-through}
+.check input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+details{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+summary{cursor:pointer;font-weight:700}
+details ul{margin-top:8px;font-size:13.5px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);align-items:center}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">家庭居住评估 · 2026-11-10</div>
+  <h1>San Benito Ave 某号</h1>
+  <div class="meta">邮寄地址 Menlo Park, CA 94025 · 实际属于 North Fair Oaks（县管非建制区）· 假设家庭：父母＋学龄子女 · 基于公开数据，未实地看房</div>
+</header>
+
+<div class="verdict">
+  <div class="big">5.7<small> / 10</small></div>
+  <div>
+    <span class="tag">不推荐为学区而买</span>
+    <p>地址写着 Menlo Park，其实不在 Menlo Park City 学区。K–8 划到 Redwood City 学区的 <b>Garfield Community School</b>，成绩在加州排末段；高中划到 <b>Menlo-Atherton</b>（GreatSchools 8/10），这一点不错。房子宽敞、通勤方便、洪水风险低。如果孩子在上 K–8 而又不打算读私校或走 School of Choice，不建议住这里。</p>
+  </div>
+</div>
+
+<section>
+  <h2>分项打分</h2>
+  <div class="scores">
+    <div class="row"><span>学区</span><div class="bar"><i class="lo" style="width:40%"></i></div><b>4</b><span class="w">25%</span></div>
+    <div class="row"><span>安全</span><div class="bar"><i class="mid" style="width:60%"></i></div><b>6</b><span class="w">15%</span></div>
+    <div class="row"><span>房屋基本面</span><div class="bar"><i style="width:70%"></i></div><b>7</b><span class="w">10%</span></div>
+    <div class="row"><span>灾害环境</span><div class="bar"><i style="width:70%"></i></div><b>7</b><span class="w">10%</span></div>
+    <div class="row"><span>交通通勤</span><div class="bar"><i style="width:70%"></i></div><b>7</b><span class="w">10%</span></div>
+    <div class="row"><span>生活便利</span><div class="bar"><i class="mid" style="width:60%"></i></div><b>6</b><span class="w">10%</span></div>
+    <div class="row"><span>成本</span><div class="bar"><i class="mid" style="width:60%"></i></div><b>6</b><span class="w">10%</span></div>
+    <div class="row"><span>社区</span><div class="bar"><i class="mid" style="width:50%"></i></div><b>5</b><span class="w">10%</span></div>
+  </div>
+  <p class="note">右列是权重。加权总分 5.7，简单平均 6.0。</p>
+</section>
+
+<section>
+  <h2>红旗</h2>
+  <div class="flags">
+    <div class="flag"><strong>不是 Menlo Park 市，也不是 MPCSD</strong>“Menlo Park”只是邮寄地址，实际属于 North Fair Oaks，由县政府管。</div>
+    <div class="flag"><strong>K–8 学校很弱</strong>Garfield 2025 年州考英语达标 18%，数学 8%。</div>
+    <div class="flag"><strong>挂牌数据前后矛盾</strong>4 卧还是 5 卧，2.5 卫还是 3 卫，在市 33 天还是 165 天。可能有没报建的加建（推断）。</div>
+    <div class="flag warn"><strong>治安</strong>2025 年财产犯罪回升，这一带有帮派枪击历史（2015、2021）。</div>
+    <div class="flag warn"><strong>1940 年代老房</strong>没有空调，只有 1 车位；抗震、管线、石棉、含铅油漆情况不明。</div>
+    <div class="flag warn"><strong>周边会变</strong>Edison Way 工业带改划；废弃的 Dumbarton 铁路支线离这里几百米，复线后可能带来噪音。</div>
+  </div>
+</section>
+
+<section>
+  <div class="legend">标注：<span class="v ok">已核实</span> 直接查官方或一手数据　<span class="v inf">推断</span> 推算或间接证据　<span class="v no">未核实</span> 需要亲自确认</div>
+</section>
+
+<section>
+  <h2><span class="n">1</span>学区<span class="sc">4 / 10</span></h2>
+  <div class="tbl"><table>
+    <tr><th>学段</th><th>学区</th><th>划片学校</th><th>核实方式</th></tr>
+    <tr><td>K–8</td><td>Redwood City SD</td><td><b>Garfield Community School</b><br>3600 Middlefield Rd</td><td><span class="v ok">已核实</span> RCSD 官方 Locator 按坐标返回 Garfield ES K-8；往西北约 600 m 的点返回 Taft + Kennedy，说明边界能区分</td></tr>
+    <tr><td>9–12</td><td>Sequoia Union HSD</td><td><b>Menlo-Atherton HS</b><br>备选 Sequoia High</td><td><span class="v ok">已核实</span> SUHSD 官方边界图层 Study Area 14；人口普查局地理编码也一致</td></tr>
+  </table></div>
+  <div class="tbl"><table>
+    <tr><th>学校</th><th>2025 英语达标</th><th>2025 数学达标</th><th>评级</th><th>其他</th></tr>
+    <tr><td>Garfield（K–8）</td><td class="num">18.2%</td><td class="num">8.3%</td><td>Niche C−，SchoolScope 33/100</td><td>低收入 94.6%，英语学习者 75.4%</td></tr>
+    <tr><td>Menlo-Atherton</td><td class="num">≈69%</td><td class="num">≈51%</td><td>GreatSchools 8/10，Niche A</td><td>两科均比上年降约 3 个百分点</td></tr>
+  </table></div>
+  <ul>
+    <li>不是 MPCSD（Oak Knoll、Laurel、Encinal、Hillview），也不是 Las Lomitas 或 Ravenswood。MLS 列的 Hillview 只是按距离排的“附近学校”，不代表划片。</li>
+    <li>替代路径：RCSD School of Choice（录取率 <span class="v no">未核实</span>）；私校 Menlo School、Sacred Heart、Phillips Brooks、Woodside Priory 等，学费每年约 $4–6 万以上 <span class="v inf">推断</span>；跨学区转入 MPCSD 很难 <span class="v inf">推断</span>。</li>
+    <li>RCSD 在 2018–20 年关过 4 所学校、重划过边界；2025–26 年没查到新的关校计划。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">0</span>房屋基本面<span class="sc">7 / 10</span></h2>
+  <div class="kv">
+    <div><span>成交价（2026 年）</span><b>≈$2.8M</b></div>
+    <div><span>单价</span><b>≈$1,150/尺</b></div>
+    <div><span>室内面积</span><b>≈2,400 尺</b></div>
+    <div><span>地块</span><b>≈5,000 尺</b></div>
+    <div><span>建造年代</span><b>1940s</b></div>
+    <div><span>车位</span><b>1</b></div>
+  </div>
+  <ul>
+    <li>独立屋两层，厨房已翻新，楼上主卧带双淋浴和阳台，后院有 deck 和果树，有天窗；中央暖气，<b>没有空调</b>；没有 HOA；Zoning R10006。<span class="v ok">已核实</span> MLS 挂牌信息</li>
+    <li>卧室和卫生间数来源互相矛盾：MLS 描述写 4 卧 2.5 卫，结构化字段写 5 卧 2 全卫＋1 半卫，另一家网站写 3 卫。</li>
+    <li>在市天数各来源不一致：一处写 33 天，一处写 165 天。同街邻近一栋 2026 年 5 月成交约 $3.15M（单一来源）。</li>
+    <li>ADU：挂牌没提到 <span class="v no">未核实</span>。</li>
+    <li>普查归属 North Fair Oaks CDP，紧挨 Atherton 边界。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">2</span>安全<span class="sc">6 / 10</span></h2>
+  <ul>
+    <li>警务由县治安官负责，没有市警察局。</li>
+    <li>治安官 2025 年 NFO 年报：侵害人身类犯罪总体低位，2025 年略升但“属孤立事件”；财产犯罪 2024 年下降、2025 年温和回升，常见是入室盗窃、车内财物被盗；全年出警 12,250 次。具体数字在图片里，没能提取 <span class="v no">未核实</span>。</li>
+    <li>历史事件：2021 年 5th Ave 致命枪击；2015 年帮派相关枪击。</li>
+    <li>去 Garfield 直线约 0.55 英里，要过 Middlefield Road，路线安全需要实地看。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">3</span>灾害与环境<span class="sc">7 / 10</span></h2>
+  <div class="tbl"><table>
+    <tr><th>风险</th><th>情况</th><th>状态</th></tr>
+    <tr><td>FEMA 洪区</td><td>不在 100 年或 500 年一遇洪区，推断为 Zone X；670 m 内没有高风险区，约 1.1 km 外才有 AE 区。查的是 Esri 托管的副本</td><td><span class="v inf">推断</span></td></tr>
+    <tr><td>1998 年大洪水</td><td>主要淹没区在 Pope-Chaucer、Crescent Park、East Palo Alto，本址离溪流 3 km 以上</td><td><span class="v inf">推断</span></td></tr>
+    <tr><td>本地排水</td><td>Atherton Channel 只能承受约 7 年一遇暴雨（2015 报告），2022-12-31 沿渠有局部积水；2021 年起有约 $8.6M 改造工程。这条街是否淹过不知道</td><td><span class="v no">未核实</span></td></tr>
+    <tr><td>地震</td><td>5 km 内没有断层迹线；San Andreas 在 5–8 km 处；液化易感性 Moderate</td><td><span class="v ok">已核实</span></td></tr>
+    <tr><td>噪音</td><td>Caltrain 干线约 1.0–1.1 km；El Camino 约 1.4 km；101 约 1.6 km；Dumbarton 支线几百米；航线未查</td><td><span class="v inf">推断</span></td></tr>
+    <tr><td>污染</td><td>Edison Way 一带是历史工业区，附近 DTSC / GeoTracker 场地没查到</td><td><span class="v no">未核实</span></td></tr>
+    <tr><td>山火</td><td>无风险</td><td><span class="v ok">已核实</span></td></tr>
+  </table></div>
+</section>
+
+<div class="two">
+  <section>
+    <h2><span class="n">4</span>生活便利<span class="sc">6</span></h2>
+    <ul>
+      <li>Walk Score 53，Bike Score 62</li>
+      <li>Holbrook-Palmer Park 1.2 km；Flood Park 2.0 km</li>
+      <li>Santa Cruz Ave 市中心 2.5 km</li>
+      <li>Trader Joe's 2.7 km，Draeger's 2.9 km</li>
+      <li>Kaiser Redwood City 3.1 km；Stanford 一带约 4 km 起</li>
+      <li>华人配套少，亚洲超市开车 15–20 分钟 <span class="v inf">推断</span></li>
+    </ul>
+  </section>
+  <section>
+    <h2><span class="n">5</span>交通通勤<span class="sc">7</span></h2>
+    <ul>
+      <li>Menlo Park Caltrain 2.4 km</li>
+      <li>Redwood City Caltrain（Baby Bullet）3.5 km</li>
+      <li>101 Marsh Rd 入口约 1.6 km</li>
+      <li>Meta 4.5 km，Stanford 约 5.6 km</li>
+      <li>步行范围内有多条 SamTrans 线路</li>
+      <li>Caltrain 到 SF 或 San Jose 约 40–60 分钟 <span class="v inf">推断</span></li>
+    </ul>
+  </section>
+</div>
+
+<div class="two">
+  <section>
+    <h2><span class="n">6</span>社区<span class="sc">5</span></h2>
+    <ul>
+      <li>NFO 2020 年人口 14,027 <span class="v ok">已核实</span></li>
+      <li>拉丁裔约 73%，家庭收入中位数约 $106,690（第三方数据）</li>
+      <li>县监事会管理，NFO 社区理事会只有咨询职能</li>
+      <li>正在分阶段改划：Edison Way 改混合用途，Middlefield 和 El Camino 附近住宅加密，Middlefield 三车道改造已批；进度 <span class="v no">未核实</span></li>
+    </ul>
+  </section>
+  <section>
+    <h2><span class="n">7</span>成本<span class="sc">6</span></h2>
+    <ul>
+      <li>单价约 $1,150/尺，低于 MPCSD 学区房</li>
+      <li>房产税按 1.1%–1.25% 估，每年约 $3–3.5 万 <span class="v inf">推断</span></li>
+      <li>Zone X 不强制买洪水险</li>
+      <li>建议考虑 CEA 地震险</li>
+      <li>没有空调，可能要加装</li>
+    </ul>
+  </section>
+</div>
+
+<section>
+  <h2>优点</h2>
+  <ol>
+    <li>高中 Menlo-Atherton 已用官方系统核实，Sequoia High 作为备选。</li>
+    <li>房子大，已翻新，没有 HOA。</li>
+    <li>单价明显低于 Menlo Park City 学区的房子。</li>
+    <li>FEMA 低风险洪区，远离 1998 年主要淹没区。</li>
+    <li>离 Meta、Caltrain、101 都近。</li>
+  </ol>
+</section>
+
+<section>
+  <h2>入住前核实清单</h2>
+  <p class="note">勾选只保存在你这个浏览器里。</p>
+  <ul class="check" id="checklist">
+    <li><label><input type="checkbox" id="c1"><span>给 RCSD（650-423-2200）和 SUHSD 打电话，确认 2026–27 学年划片，以及 School of Choice 的申请窗口和录取率</span></label></li>
+    <li><label><input type="checkbox" id="c2"><span>在 FEMA MSC 下载官方 FIRMette，确认 Zone X 和生效日期</span></label></li>
+    <li><label><input type="checkbox" id="c3"><span>查县 Assessor 和税单：APN、核定面积、卧室数、税率和特别税</span></label></li>
+    <li><label><input type="checkbox" id="c4"><span>查县建筑许可：主卧套间、阳台、天窗是否都报建过</span></label></li>
+    <li><label><input type="checkbox" id="c5"><span>看卖方披露和验房报告：地基锚固、下水管视频、电气面板、屋顶、白蚁、石棉、含铅油漆</span></label></li>
+    <li><label><input type="checkbox" id="c6"><span>夜里和清晨各去一次，听 Caltrain、Middlefield 车流和航班噪音</span></label></li>
+    <li><label><input type="checkbox" id="c7"><span>问邻居 2022–23 年风暴时这条街有没有积水</span></label></li>
+    <li><label><input type="checkbox" id="c8"><span>查 EnviroStor 和 GeoTracker（Edison Way 一带）</span></label></li>
+    <li><label><input type="checkbox" id="c9"><span>查 CrimeMapping 和 Nixle：周边 0.5 英里过去 12 个月的事件</span></label></li>
+    <li><label><input type="checkbox" id="c10"><span>实地走一遍上学路线</span></label></li>
+    <li><label><input type="checkbox" id="c11"><span>了解 NFO 改划和 Dumbarton 复线的最新进度</span></label></li>
+  </ul>
+</section>
+
+<section>
+  <h2>来源</h2>
+  <details><summary>地理和学区</summary><ul>
+    <li><a href="https://geocoding.geo.census.gov/geocoder/">美国人口普查局地理编码</a></li>
+    <li><a href="https://www.rcsdk8.net/our-programs-and-services/enrollment/find-your-neighborhood-school">RCSD 找划片学校</a></li>
+    <li><a href="https://locator.pea.powerschool.com/?studyId=235218">RCSD Locator</a></li>
+    <li><a href="https://www.rcsdk8.net/our-programs-and-services/enrollment/school-of-choice">RCSD School of Choice</a></li>
+    <li><a href="https://www.schoolsitelocator.com/apps/sequoia/">SUHSD Boundary Search</a></li>
+    <li><a href="https://almanacnews.com/news/2014/07/01/boundary-map-affirms-intact-school-communities/">Almanac 2014 SUHSD 边界调整</a></li>
+  </ul></details>
+  <details><summary>学校质量</summary><ul>
+    <li><a href="https://caschooltrends.com/schools/garfield-elementary-menlo-park">caschooltrends：Garfield</a></li>
+    <li><a href="https://schoolscope.co/ca/school/garfield-elementary-8484">SchoolScope：Garfield</a></li>
+    <li><a href="https://garfield.rcsdk8.net/our-school/school-plans-and-reports/garfield-community-school-school-accountability-report-card-sarc">Garfield SARC</a></li>
+    <li><a href="https://www.niche.com/k12/garfield-elementary-school-menlo-park-ca/students/">Niche：Garfield</a></li>
+    <li><a href="https://caaspp.edsource.org/sbac/menlo-atherton-high-41690624133716">EdSource：M-A 州考</a></li>
+    <li><a href="https://www.greatschools.org/california/atherton/6951-Menlo-Atherton-High-School/">GreatSchools：M-A</a></li>
+    <li><a href="https://climaterwc.com/?p=9614">RCSD 2018 年关校报道</a></li>
+  </ul></details>
+  <details><summary>安全</summary><ul>
+    <li><a href="https://www.smcgov.org/media/157735">治安官 2025 NFO 年报</a></li>
+    <li><a href="https://almanacnews.com/news/2021/03/03/young-man-fatally-shot-in-north-fair-oaks">2021 年枪击报道</a></li>
+  </ul></details>
+  <details><summary>灾害和环境</summary><ul>
+    <li><a href="https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Flood_Hazard_Reduced_Set_gdb/FeatureServer/0">FEMA NFHL 副本（Esri）</a></li>
+    <li><a href="https://gis.conservation.ca.gov/server/rest/services/CGS_Earthquake_Hazard_Zones/SHP_Fault_Traces/MapServer">CGS 断层迹线</a></li>
+    <li><a href="https://services.arcgis.com/yq3FgOI44hYHAFVZ/arcgis/rest/services/Liquefaction_Susceptibility/FeatureServer/0">液化易感性图层</a></li>
+    <li><a href="https://menlopark.gov/News-articles/City-news/20221231-Flooding-Alert-San-Francisquito-Creek-and-the-Atherton-Channel">Menlo Park 2022-12-31 洪水警报</a></li>
+    <li><a href="https://smcfslrrd.specialdistrict.org/bayfront-canal-atherton-channel-flood-protection-and-ecosystem-restoration-project">Bayfront Canal / Atherton Channel 项目</a></li>
+    <li><a href="https://menlocoa.org/22172/news/the-history-of-flooding-in-the-bay-area-runs-deep">湾区洪水史</a></li>
+    <li><a href="https://padailypost.com/2018/02/02/timeline-of-whats-happened-since-the-1998-flood/">1998 年洪水时间线</a></li>
+  </ul></details>
+  <details><summary>便利、社区、成本</summary><ul>
+        <li><a href="https://census.gov/quickfacts/fact/table/northfairoakscdpcalifornia,lynwoodcitycalifornia/PST045224">Census QuickFacts：NFO</a></li>
+    <li><a href="https://www.smcgov.org/planning/rezoning-phase-3-industrial-mixed-use">NFO 改划 Phase 3</a></li>
+    <li><a href="https://www.smcgov.org/bos/news/historic-middlefield-road-redesign-decision">Middlefield 改造</a></li>
+    <li><a href="https://ceqanet.lci.ca.gov/2022040548/3">NFO 改划 CEQA</a></li>
+    <li><a href="https://www.smcgov.org/media/146671/download">县 Tax Rate Book</a></li>
+  </ul></details>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var KEY='san-benito-checklist';
+  var saved={};
+  try{saved=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){}
+  document.querySelectorAll('#checklist input').forEach(function(cb){
+    if(saved[cb.id])cb.checked=true;
+    cb.addEventListener('change',function(){
+      saved[cb.id]=cb.checked;
+      try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){}
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
