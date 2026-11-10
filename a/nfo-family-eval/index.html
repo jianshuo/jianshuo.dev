@@ -93,15 +93,31 @@ details ul{margin-top:8px;font-size:13.5px}
 </header>
 
 <div class="verdict">
-  <div class="big">5.9<small> / 10</small></div>
+  <div class="big" style="color:var(--accent)">6.5<small> / 10</small></div>
   <div>
-    <span class="tag">租住一年：看孩子年龄</span>
-    <p><b>按租住一年重新评估。</b>房价、产权、改划这些长期问题基本不用管了，灾害风险也大多由房东承担。真正影响这一年的是孩子在哪上学，以及租金和租约。<b>孩子上高中、还没上学，或者本来就读私校</b>：可以租，约 6.9 分，M-A 是好高中，房子大，通勤方便。<b>孩子在上 K–8 又要读公立学校</b>：约 5.9 分，不推荐，这一年会在 Garfield 度过；除非租金明显低于 Menlo Park City 学区的出租屋，否则优先找划到 MPCSD 的房子。</p>
+    <span class="tag" style="background:var(--accent-soft);color:var(--accent)">租住一年：推荐</span>
+    <p><b>家里是三个成年人（孩子 20 岁），租住一年。</b>原来扣分最多的学区不用算了。这一带房租比 Menlo Park 市区便宜，主要便宜在学区上，而你们用不上学区，这部分差价等于白省。房子 4 卧、约 2,400 尺，三个大人住得开；离 Meta、Stanford、Caltrain 都近。<b>要注意的是：</b>只有 1 个车位，如果 20 岁的孩子也开车，就得停街边；孩子晚上从 Caltrain 走回来约 2.4 km，最好骑车或开车；没有空调；签约前核实房东身份。</p>
   </div>
 </div>
 
 <section>
-  <h2>租住一年复评</h2>
+  <h2>孩子 20 岁：重新加权</h2>
+  <div class="tbl"><table>
+    <tr><th>维度</th><th>得分</th><th>权重</th><th>说明</th></tr>
+    <tr><td>学区</td><td class="num">—</td><td class="num">0%</td><td>不需要了。如果孩子读社区大学，Cañada College 和 College of San Mateo 都在县内；Stanford 约 5.6 km</td></tr>
+    <tr><td>安全</td><td class="num">6</td><td class="num">20%</td><td>大人和孩子晚上回家走 Middlefield 一带，留意车内财物被盗</td></tr>
+    <tr><td>房屋</td><td class="num">6</td><td class="num">20%</td><td>4 卧很宽裕，每人一间外加书房；只有 1 车位，没有空调</td></tr>
+    <tr><td>交通通勤</td><td class="num">7</td><td class="num">20%</td><td>Caltrain 2.4 km，Redwood City 站有 Baby Bullet；SamTrans 步行可达；Bike Score 62</td></tr>
+    <tr><td>生活便利</td><td class="num">6</td><td class="num">15%</td><td>Walk Score 53，日常买菜基本要开车</td></tr>
+    <tr><td>成本</td><td class="num">7</td><td class="num">15%</td><td>月租估计 $6,000–9,000，没有为学区多付钱</td></tr>
+    <tr><td>灾害环境</td><td class="num">8</td><td class="num">5%</td><td>结构损失由房东承担</td></tr>
+    <tr><td>社区</td><td class="num">6</td><td class="num">5%</td><td>一年内影响小</td></tr>
+    <tr><td><b>加权总分</b></td><td class="num"><b>6.5</b></td><td></td><td>比较：买房视角 5.7；有 K–8 学龄孩子租一年 5.9</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>参考：有学龄孩子时的租住复评</h2>
   <div class="tbl"><table>
     <tr><th>维度</th><th>买房</th><th>租一年</th><th>租一年权重</th><th>为什么变了</th></tr>
     <tr><td>学区</td><td class="num">4</td><td class="num">4</td><td class="num">25%</td><td>这一年照样划到 Garfield；School of Choice 一般是提前一年申请，年中搬进来大概率赶不上 <span class="v inf">推断</span></td></tr>
@@ -120,7 +136,7 @@ details ul{margin-top:8px;font-size:13.5px}
     <li><label><input type="checkbox" id="l2"><span>租约写明 12 个月固定租期、月租、续约条件和涨租规则；问清楚 AB 1482 适不适用：个人房东的独立屋可以在租约里写明豁免 <span class="v no">未核实</span></span></label></li>
     <li><label><input type="checkbox" id="l3"><span>押金：加州 2024-07 起一般不超过 1 个月租金，小房东可以收 2 个月，以租约为准</span></label></li>
     <li><label><input type="checkbox" id="l4"><span>含铅油漆披露：1978 年前的房子出租，联邦法律要求房东披露。家里有小孩，要看披露表，再看墙面、窗框有没有剥落</span></label></li>
-    <li><label><input type="checkbox" id="l5"><span>问 RCSD 入学要什么居住证明（租约、水电账单），什么时候能插班；如果想走 School of Choice，问当年还收不收</span></label></li>
+    <li><label><input type="checkbox" id="l5"><span>车位：只有 1 个车库位。问清楚车道能不能再停一辆，这条街晚上能不能停车、要不要许可证</span></label></li>
     <li><label><input type="checkbox" id="l6"><span>租约里写清楚是几卧几卫，跟挂牌信息对一下</span></label></li>
     <li><label><input type="checkbox" id="l7"><span>谁付水、电、气、垃圾、园艺，能不能用移动空调，能不能养宠物</span></label></li>
     <li><label><input type="checkbox" id="l8"><span>入住时拍照录像，记录房屋现状，和房东一起签入住检查表</span></label></li>
