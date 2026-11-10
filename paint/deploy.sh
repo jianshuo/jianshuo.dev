@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 本地 build → 同步到 VPS → 装 prod 依赖 → 重启。首次开服见 deploy/provision.sh。
 set -euo pipefail
-VPS="${VPS:-root@66.42.45.128}"
+VPS="${VPS:-root@lab.jianshuo.dev}"
 REMOTE="${REMOTE:-/opt/paint}"
 cd "$(dirname "$0")"
 echo "▸ build"; npm run build

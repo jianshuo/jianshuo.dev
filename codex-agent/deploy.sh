@@ -2,7 +2,7 @@
 # 本地 test+build → rsync → 重启。首次开服先跑 deploy/provision.sh。
 # 零运行时依赖，VPS 上不需要 npm ci。
 set -euo pipefail
-VPS="${VPS:-root@66.42.45.128}"
+VPS="${VPS:-root@lab.jianshuo.dev}"
 REMOTE="${REMOTE:-/opt/codex-agent}"
 
 cd "$(dirname "$0")"

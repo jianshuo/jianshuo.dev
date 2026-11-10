@@ -11,7 +11,7 @@
 # 就跳过 npm ci；变了才装（装的时候有书在跑就打印出来，自己掂量）。
 set -euo pipefail
 
-VPS="${VPS:-root@66.42.45.128}"
+VPS="${VPS:-root@lab.jianshuo.dev}"
 REMOTE="${REMOTE:-/opt/claude-agent}"
 
 cd "$(dirname "$0")"

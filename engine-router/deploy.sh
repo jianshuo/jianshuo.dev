@@ -8,7 +8,7 @@
 # 别直接改 VPS 上的 /opt/engine-router/config.json——下次部署会被覆盖。
 # 重启不杀正在跑的任务（unit 里 KillMode=process，runner 是 detached 子进程）。
 set -euo pipefail
-VPS="${VPS:-root@66.42.45.128}"
+VPS="${VPS:-root@lab.jianshuo.dev}"
 REMOTE="${REMOTE:-/opt/engine-router}"
 MODE="${1:-all}"
 
