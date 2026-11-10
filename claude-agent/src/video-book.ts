@@ -4,14 +4,14 @@
 // 做完的成品永久放在 R2 books/<slug>/video/，之后直接回源，不再做第二次。不登录、不扣费。
 //
 // 做法：每单交给 claude-agent 用户管理器的瞬态单元 video-<slug> 跑 wjs-voicedrop-creating-motion-book 的
-// cloud/run_book.sh——开一台一次性 Vultr 机器、无人值守 Claude Code 做完 HTML、发布到书架、销毁机器。
+// cloud/run_book.sh——在 VPS 本机的做书账号 mb 里（2026-11-10 起，不再开 Vultr 机器）无人值守 Claude Code 做完 HTML、发布到书架。
 // 单元和 web 进程不同 cgroup，发版重启不影响正在做的书。进度在 $MB_ROOT/books/<slug>/state.json（run_book.sh 写）。
 //
 // 任何人都能触发，所以有三道闸（环境变量可调）：
 //   · 只做写完的书，一本只做一次（已发布直接答 done；在做/排队不重复下单；失败 6 小时内不重试）
-//   · 全局同时只做 VIDEO_MAX_CONCURRENT 本（缺省 1）——Claude 额度和写书引擎共用
+//   · 全局同时只做 VIDEO_MAX_CONCURRENT 本（缺省 1，做书账号只有一个，run_book.sh 另有 worker.lock 兜底）——Claude 额度和写书引擎共用
 //   · 每 24 小时最多开工 VIDEO_MAX_PER_DAY 本（缺省 2），排队上限 VIDEO_MAX_QUEUE（缺省 20）
-// 兜底：每 10 分钟跑一次 cloud/reaper.sh，删掉开了太久的 motion-book 机器（run_book.sh 被杀时的保险）。
+// 没有 reaper 了：run_book.sh 被杀留下的残留进程由下一单开工时清，Claude 进程自带 timeout。
 // 取消（2026-11-02）：router 状态页「排队」栏每本书一个取消按钮 → POST /api/video-queue/cancel?slug=（不在 Caddy 豁免里，
 //   走 lab 的 basic_auth）。删队列文件 + 写 cancelled/<slug>.json，VIDEO_CANCEL_DAYS（缺省 7）天内书架页打开也不再自动下单。
 //   只撤排队的，已开工的不管。
@@ -202,13 +202,6 @@ function launchVideoUnit(slug: string): Promise<{ ok: boolean; error: string }> 
     child.on("close", (code) => resolve(code === 0 ? { ok: true, error: "" } : { ok: false, error: `exit ${code}: ${err.trim()}` }));
   });
 }
-function reap() {
-  const child = spawn("/bin/bash", [join(SKILL_CLOUD, "reaper.sh")], { env: { ...process.env, MB_ROOT }, stdio: ["ignore", "pipe", "pipe"] });
-  let out = ""; for (const s of [child.stdout, child.stderr]) { s.setEncoding("utf8"); s.on("data", (c: string) => (out += c)); }
-  child.on("close", () => { if (out.trim()) appendFile(join(MB_ROOT, "reaper.log"), out).catch(() => {}); });
-  child.on("error", () => {});
-}
-
 // ── HTTP：GET|POST /api/video-book?slug=…（触发）  GET /api/video-book/status?slug=…（只查） ──
 export async function handleVideoBook(req: IncomingMessage, res: ServerResponse, slug: string, trigger: boolean) {
   const send = (status: number, body: Record<string, unknown>) =>
@@ -262,10 +255,8 @@ export async function cancelVideo(req: IncomingMessage, res: ServerResponse, slu
   return send(r.status, r.body);
 }
 
-/** 服务起来后调用：每分钟泵一次（单元跑完腾出空位、过了 24 小时额度恢复，排队的才起得来），每 10 分钟兜底清理一次。 */
+/** 服务起来后调用：每分钟泵一次（单元跑完腾出空位、过了 24 小时额度恢复，排队的才起得来）。 */
 export function startVideoBook() {
   mkdir(QUEUE_DIR, { recursive: true }).catch(() => {});
   setInterval(() => pumpVideo().catch(() => {}), 60000).unref?.();
-  setInterval(reap, 10 * 60000).unref?.();
-  setTimeout(reap, 20000).unref?.();
 }
