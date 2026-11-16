@@ -1101,22 +1101,42 @@ async function handleRequest(context) {
   }
 
   if (request.method === 'GET' && action === 'list') {
+    // 流式输出：admin 全桶 4.8 万 key 要列 ~30s，voicedrop.cn 前的 EdgeOne 回源
+    // 等首字节约 15s 就掐断（545）。先回头、每列一页写一页，连接一直有数据就不超时。
+    // 输出形状不变：{"files":[{name,size,uploaded},...]}。
     const opts = { limit: 1000 };
     if (scope) opts.prefix = scope;
-    const allObjects = [];
-    let cursor;
-    do {
-      if (cursor) opts.cursor = cursor;
-      const listed = await env.FILES.list(opts);
-      allObjects.push(...listed.objects);
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor);
-    const files = allObjects.map((o) => ({
-      name: scope ? o.key.slice(scope.length) : o.key,
-      size: o.size,
-      uploaded: o.uploaded,
-    }));
-    return json({ files });
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const enc = new TextEncoder();
+    (async () => {
+      try {
+        await writer.write(enc.encode('{"files":['));
+        let cursor, first = true;
+        do {
+          if (cursor) opts.cursor = cursor;
+          const listed = await env.FILES.list(opts);
+          const chunk = listed.objects.map((o) => JSON.stringify({
+            name: scope ? o.key.slice(scope.length) : o.key,
+            size: o.size,
+            uploaded: o.uploaded,
+          })).join(',');
+          if (chunk) {
+            await writer.write(enc.encode((first ? '' : ',') + chunk));
+            first = false;
+          }
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } while (cursor);
+        await writer.write(enc.encode(']}'));
+        await writer.close();
+      } catch (e) {
+        // 中途失败：截断的 JSON 让客户端 r.json() 报错，而不是静默拿到半份清单。
+        await writer.abort(e);
+      }
+    })();
+    return new Response(readable, {
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
   }
 
   if ((request.method === 'PUT' || request.method === 'POST') && action === 'upload' && name) {
