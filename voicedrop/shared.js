@@ -31,7 +31,10 @@ function resolveArticles(doc) {
 // admin/auth 校验白名单，命中才换回 FILES_TOKEN（页面照旧用它调 API）。返回 FILES_TOKEN
 // 字符串；失败抛错，err.scope 带上你的 scope（未在白名单时）方便加名单。
 async function vdAdminExchange(sessionToken) {
-  const r = await fetch('/voicedrop/admin/auth', {
+  // voicedrop.cn 上边缘函数会把 /voicedrop/* 301 去前缀，浏览器跟 301 时 POST 变 GET → 404。
+  // 所以在 voicedrop.cn（路径不带 /voicedrop 前缀）直接打干净路径。
+  const base = location.pathname.startsWith('/voicedrop/') ? '/voicedrop' : '';
+  const r = await fetch(base + '/admin/auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: String(sessionToken || '').trim() }),
