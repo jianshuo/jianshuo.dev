@@ -615,9 +615,20 @@ async function readShelf(env, waitUntil) {
     if (!locked) {
       const rebuild = (async () => {
         try {
+          const startGen = Number(cached.gen) || 0;
           await writeShelf(env, { ...cached, rebuildingAt: Date.now() });
           const books = await buildShelf(env);
-          await writeShelf(env, { builtAt: Date.now(), books });
+          // 重算期间有新的作废（gen 变了）→ 这份快照可能缺了那次上传，写回但保持 stale，
+          // 下一次请求再算一轮；否则一份「新鲜」的旧清单要挂满 1 小时 TTL。
+          let cur = null;
+          try {
+            const o = await env.FILES.get(SHELF_CACHE_KEY);
+            cur = o ? JSON.parse(await o.text()) : null;
+          } catch {}
+          const gen = Math.max(startGen, Number(cur?.gen) || 0);
+          await writeShelf(env, gen !== startGen
+            ? { builtAt: Date.now(), books, gen, staleAt: Number(cur.staleAt) || Date.now() }
+            : { builtAt: Date.now(), books, gen });
         } catch (e) {
           console.log('[books] shelf rebuild failed', String(e?.message || e));
         }

@@ -39,8 +39,12 @@ export async function invalidateShelf(env) {
     if (!o) return;
     const c = JSON.parse(await o.text());
     if (!c || !Array.isArray(c.books)) return;
-    if (c.staleAt) return;                        // 已经标过，别为每一章上传都重写一遍
-    await env.FILES.put(SHELF_CACHE_KEY, JSON.stringify({ ...c, staleAt: Date.now() }),
+    // 已经标过就别为每一章上传都重写一遍——但正在重算（rebuildingAt）时必须再记一笔：重算读的是
+    // 开工那一刻的快照，这次上传可能没赶上。gen 每次作废 +1，重算写回前比对开工时的 gen，
+    // 变了就保持 stale（2026-11-18 bad-mood 的最后几个文件落在重算窗口里，作废被吞，书架缓存
+    // 「新鲜」地缺了它一小时）。用计数不用时间戳：同一毫秒里的先后分不清。
+    if (c.staleAt && !c.rebuildingAt) return;
+    await env.FILES.put(SHELF_CACHE_KEY, JSON.stringify({ ...c, staleAt: Date.now(), gen: (Number(c.gen) || 0) + 1 }),
       { httpMetadata: { contentType: 'application/json' } });
   } catch {}
 }

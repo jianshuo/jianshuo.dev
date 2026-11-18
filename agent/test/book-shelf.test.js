@@ -136,6 +136,39 @@ describe("书架缓存", () => {
     expect(titleOf(books, "entropy")).toBe("改过的书名");
   });
 
+  it("重算进行中又来上传：作废不能被吞——重算写回后仍是 stale，下一轮才拿到新书（2026-11-18 bad-mood 隐身一小时）", async () => {
+    const env = await shelfEnv();
+    await call(env, { format: "json" });
+    await invalidateShelf(env);
+    // 重算刚读完 entropy 的 book.json，这本书就被改写并作废（上传落在 15 秒重算窗口里）
+    const realGet = env.FILES.get.bind(env.FILES);
+    let armed = true;
+    env.FILES.get = async (key, ...rest) => {
+      const o = await realGet(key, ...rest);
+      if (armed && key === srcKey("entropy")) {
+        armed = false;
+        env.FILES._store.set(srcKey("entropy"), newBook("entropy", { title: "重算中途改的书名", category: "科学" }));
+        await invalidateShelf(env);
+      }
+      return o;
+    };
+    const bg = [];
+    await call(env, { format: "json", bg });
+    expect(bg.length).toBe(1);
+    await Promise.all(bg);
+    expect(armed).toBe(false);                       // 确实在重算中途改了
+    expect(cacheDoc(env).staleAt).toBeTruthy();      // 作废没被吞
+    expect(cacheDoc(env).rebuildingAt).toBeUndefined();
+
+    const bg2 = [];
+    await call(env, { format: "json", bg: bg2 });
+    expect(bg2.length).toBe(1);                      // 再起一轮
+    await Promise.all(bg2);
+    const { books } = await (await call(env, { format: "json" })).json();
+    expect(titleOf(books, "entropy")).toBe("重算中途改的书名");
+    expect(cacheDoc(env).staleAt).toBeUndefined();
+  });
+
   it("重算锁：一分钟内已有人在重算 → 不再起第二次；锁过期 → 照起", async () => {
     const env = await shelfEnv();
     await call(env, { format: "json" });
