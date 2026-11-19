@@ -43,13 +43,23 @@
       <li>App 没有账号系统，没有统计分析、广告或第三方 SDK；它在 App Sandbox 中运行，并且没有申请网络访问权限。</li>
       <li>锁屏或屏幕睡眠时摄像头自动关闭；你也可以随时在面板里暂停。</li>
     </ul>
+    <h3 id="face-data">面部数据（iPhone / iPad 版）</h3>
+    <ul>
+      <li>iPhone / iPad 版通过 ARKit 使用原深感（Face ID）摄像头，<b>只读取左右眼的闭合度系数</b>（eyeBlinkLeft / eyeBlinkRight），用来实时判断是否眨眼。</li>
+      <li>面部数据只在设备内存中实时使用，<b>不保存、不上传、不与任何第三方分享</b>，也不用于识别身份、广告或任何其他目的；每一帧计算完即丢弃。</li>
+      <li>App 留存的只有眨眼的时间、时长和闭合深度这类统计数字，保存在设备本地，删除 App 即一并删除。</li>
+    </ul>
     <h3 class="en">Privacy Policy (English)</h3>
     <p class="en"><b>BlinkGuard does not collect, upload or share any data.</b> The app uses your Mac's camera to detect
       blinks. Video frames are analyzed in memory only and are never saved, recorded or transmitted. The app records only the
       time, duration and depth of each blink plus per-minute summaries, stored in the app's local container and removed with
       the app. There are no accounts, analytics, ads or third-party SDKs; the app runs in the App Sandbox without network
       access. The camera turns off automatically when the screen is locked or asleep, and you can pause at any time.</p>
-    <p class="en">最后更新 / Last updated: 2026-11-19</p>
+    <p class="en"><b>Face data (iPhone / iPad).</b> The iOS version uses ARKit with the TrueDepth camera and reads only the
+      eye-blink coefficients (eyeBlinkLeft / eyeBlinkRight) to detect blinks in real time. Face data is processed in memory
+      on the device only; it is never stored, uploaded or shared with any third party, and is not used for identification,
+      advertising or any other purpose. Only blink statistics (time, duration, depth) are kept locally on the device.</p>
+    <p class="en">最后更新 / Last updated: 2026-11-20</p>
   </section>
 
   <section id="support">
