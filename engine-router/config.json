@@ -3,12 +3,23 @@
   "engines": {
     "claude": {
       "accounts": [
-        { "id": "claude-1", "token_env": "CLAUDE_TOKEN_1" },
-        { "id": "claude-2", "token_env": "CLAUDE_TOKEN_2" }
+        {
+          "id": "claude-1",
+          "token_env": "CLAUDE_TOKEN_1"
+        },
+        {
+          "id": "claude-2",
+          "token_env": "CLAUDE_TOKEN_2"
+        }
       ]
     },
     "codex": {
-      "accounts": [{ "id": "codex-1", "codex_home": "/opt/engine-router/accounts/codex-1" }]
+      "accounts": [
+        {
+          "id": "codex-1",
+          "codex_home": "/opt/engine-router/accounts/codex-1"
+        }
+      ]
     },
     "kimi": {
       "accounts": [
@@ -24,38 +35,118 @@
         }
       ]
     },
-    "gpt-image": { "quota_from": "codex", "accounts": [{ "id": "codex-1" }] },
-    "seedream": { "accounts": [{ "id": "ark-1", "daily_cap": 200 }] }
+    "gpt-image": {
+      "quota_from": "codex",
+      "accounts": [
+        {
+          "id": "codex-1"
+        }
+      ]
+    },
+    "seedream": {
+      "accounts": [
+        {
+          "id": "ark-1",
+          "daily_cap": 200
+        }
+      ]
+    }
   },
   "models": {
-    "claude": { "best": "claude-opus-4-8", "fast": "claude-haiku-4-5" },
-    "codex": { "best": "gpt-6-astra", "fast": "gpt-6-astra" },
-    "kimi": { "best": "k3[1m]", "fast": "k3[1m]" }
+    "claude": {
+      "best": "claude-opus-4-8",
+      "fast": "claude-haiku-4-5"
+    },
+    "codex": {
+      "best": "gpt-6-astra",
+      "fast": "gpt-6-astra"
+    },
+    "kimi": {
+      "best": "k3[1m]",
+      "fast": "k3[1m]"
+    }
   },
-  "limits": { "cap_5h": 85, "cap_7d": 92, "weekly_slack": 10, "pacing": true, "probe_every_s": 300, "claude_probe_every_s": 900 },
+  "limits": {
+    "cap_5h": 85,
+    "cap_7d": 92,
+    "weekly_slack": 10,
+    "pacing": true,
+    "probe_every_s": 300,
+    "claude_probe_every_s": 900
+  },
   "policies": {
-    "default": { "engines": "headroom", "keys": "headroom" },
+    "default": {
+      "engines": "headroom",
+      "keys": "headroom"
+    },
     "image": {
       "engines": "failover",
-      "order": ["gpt-image", "seedream"],
+      "order": [
+        "seedream"
+      ],
       "keys": "headroom",
-      "limits": { "pacing": false, "cap_5h": 90, "cap_7d": 90 }
+      "limits": {
+        "pacing": false,
+        "cap_5h": 90,
+        "cap_7d": 90
+      },
+      "_note": "2026-11-21 临时：Codex 出图被 OpenAI 关闭（gpt-6-astra 下架、新模型不调用 image_generation），先只走 Seedream；恢复时把 gpt-image 放回 order 首位"
     }
   },
   "estimates": {
     "book": {
-      "kimi": { "d5h": 20, "d7d": 4 },
-      "codex": { "d5h": 30, "d7d": 5 },
-      "claude": { "d5h": 25, "d7d": 4 }
+      "kimi": {
+        "d5h": 20,
+        "d7d": 4
+      },
+      "codex": {
+        "d5h": 30,
+        "d7d": 5
+      },
+      "claude": {
+        "d5h": 25,
+        "d7d": 4
+      }
     },
     "revise": {
-      "kimi": { "d5h": 5, "d7d": 1 },
-      "codex": { "d5h": 8, "d7d": 2 },
-      "claude": { "d5h": 6, "d7d": 1 }
+      "kimi": {
+        "d5h": 5,
+        "d7d": 1
+      },
+      "codex": {
+        "d5h": 8,
+        "d7d": 2
+      },
+      "claude": {
+        "d5h": 6,
+        "d7d": 1
+      }
     },
-    "video": { "claude": { "d5h": 40, "d7d": 8 }, "kimi": { "d5h": 40, "d7d": 8 } },
-    "image": { "gpt-image": { "d5h": 3, "d7d": 1 } }
+    "video": {
+      "claude": {
+        "d5h": 40,
+        "d7d": 8
+      },
+      "kimi": {
+        "d5h": 40,
+        "d7d": 8
+      }
+    },
+    "image": {
+      "gpt-image": {
+        "d5h": 3,
+        "d7d": 1
+      }
+    }
   },
-  "concurrency": { "global_text": 2, "per_account": 1, "image_per_account": 4, "image_total": 6 },
-  "portable": { "claude_family": true, "codex": false }
+  "concurrency": {
+    "global_text": 2,
+    "per_account": 1,
+    "image_per_account": 4,
+    "image_total": 6
+  },
+  "portable": {
+    "claude_family": true,
+    "codex": false
+  }
 }
