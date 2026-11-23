@@ -63,16 +63,26 @@ export function isRateLimited(error?: { code?: string; message?: string; detail?
   return RATE_LIMITED.some((re) => re.test(errorBlob(error)));
 }
 
-export function buildArgs(job: Job, outPath: string, model?: string): string[] {
+/**
+ * provider：codex = ChatGPT 订阅通道（CODEX_HOME 里的 auth.json）；openai = OpenAI API 按张付费
+ * （子进程 env 里的 OPENAI_API_KEY）。2026-11-20 Codex 出图通道被关，11-23 起线上走 openai。
+ * quality：非空即强制覆盖调用方传的 quality（线上 GPT_IMAGE_QUALITY=low 控成本）。
+ */
+export interface EngineOpts { provider?: "codex" | "openai"; quality?: string }
+
+export function buildArgs(job: Job, outPath: string, model?: string, opts: EngineOpts = {}): string[] {
   const { prompt, mode, params } = job;
+  const provider = opts.provider ?? "codex";
   // `--provider` is a GLOBAL option and must precede the subcommand (verified against
   // gpt-image-2-skill v0.7.1 `--help`): the `images generate|edit` / `transparent generate`
   // subcommands reject `--provider` if it appears after them.
-  const globals = ["--json", "--json-events", "--provider", "codex"];
+  const globals = ["--json", "--json-events", "--provider", provider];
   // `-m` 是子命令选项（generate/edit/transparent generate 三个都收），跟 --provider
   // 那个全局选项不是一回事，位置别搞反。不给就吃 CLI 的默认——那正是会漂的东西。
-  const common = ["--prompt", prompt, "--out", outPath, ...(model ? ["-m", model] : [])];
-  const sizeQuality = ["--size", params.size, "--quality", params.quality];
+  // openai 通道直接用 CLI 默认的 gpt-image-2，Codex 的外层模型名（gpt-6-astra 等）对它没意义。
+  const useModel = provider === "codex" ? model : undefined;
+  const common = ["--prompt", prompt, "--out", outPath, ...(useModel ? ["-m", useModel] : [])];
+  const sizeQuality = ["--size", params.size, "--quality", opts.quality || params.quality];
 
   if (params.transparent) {
     if (mode === "edit") {

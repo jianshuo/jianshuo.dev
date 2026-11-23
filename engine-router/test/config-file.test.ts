@@ -35,11 +35,8 @@ test("密钥不进仓库：只能是环境变量名", () => {
 test("出图优先 Codex、不配速；文字任务走周配速（2026-10-25 用户要求）", () => {
   const img = limitsFor(cfg, policyFor(cfg, "image", "image"));
   assert.equal(img.pacing, false);
-  // 2026-11-21 临时：Codex 出图被 OpenAI 关闭，用户同意先只走 Seedream（config 里 policies.image._note 写了恢复方法）。
-  // Codex 恢复后把 config 的 order 改回 ["gpt-image","seedream"]，并删掉这里的临时分支。
-  const order = policyFor(cfg, "image", "image").order;
-  const temporarySeedreamOnly = (cfg.policies.image as { _note?: string })._note?.includes("临时") && order.join() === "seedream";
-  if (!temporarySeedreamOnly) assert.deepEqual(order, ["gpt-image", "seedream"]);
+  // 2026-11-23 起 gpt-image 引擎由 paint 走 OpenAI API（Codex 订阅出图 11-20 被关），order 恢复原样。
+  assert.deepEqual(policyFor(cfg, "image", "image").order, ["gpt-image", "seedream"]);
   assert.equal(limitsFor(cfg, policyFor(cfg, "book", "text")).pacing, true);
   assert.equal(ENGINE_KIND["gpt-image"], "image");
 });

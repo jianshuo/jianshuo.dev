@@ -347,10 +347,13 @@ export class Worker {
     let ok = false;
     let bytes = 0;
     let error: EngineError | undefined;
-    let model = this.cfg.codexModels[0];
-    for (const candidate of this.cfg.codexModels) {
-      model = candidate;
-      const args = buildArgs(job, outPath, candidate);
+    const opts = { provider: this.cfg.gptImageProvider, quality: this.cfg.gptImageQuality };
+    // openai 通道只有一个「模型」（CLI 默认 gpt-image-2），不走 Codex 的候选序列
+    const candidates: (string | undefined)[] = opts.provider === "openai" ? [undefined] : this.cfg.codexModels;
+    let model = candidates[0] ?? "gpt-image-2";
+    for (const candidate of candidates) {
+      model = candidate ?? "gpt-image-2";
+      const args = buildArgs(job, outPath, candidate, opts);
       let missTries = 0;
       let rlTries = 0;
       while (true) {
@@ -375,7 +378,7 @@ export class Worker {
         break;
       }
       if (ok || !isModelRejected(error)) break;
-      console.warn(`[worker] job ${id}: 账号不认模型 ${candidate}，换下一个`);
+      console.warn(`[worker] job ${id}: 账号不认模型 ${model}，换下一个`);
       await this.store.update(id, { percent: 0 });
       this.hub.publish(id, "progress", { percent: 0, phase: "switching-model" });
     }

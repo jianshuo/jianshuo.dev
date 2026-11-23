@@ -19,6 +19,19 @@ test("buildArgs generate", () => {
   ]);
 });
 
+test("buildArgs openai provider: no -m, quality override", () => {
+  const a = buildArgs(base, "/out/j1.png", "gpt-6-astra", { provider: "openai", quality: "low" });
+  assert.deepEqual(a.slice(0, 4), ["--json", "--json-events", "--provider", "openai"]);
+  assert.ok(!a.includes("-m"), "openai 通道不带 Codex 模型名");
+  assert.equal(a[a.indexOf("--quality") + 1], "low");
+});
+
+test("buildArgs codex keeps -m and caller quality when no override", () => {
+  const a = buildArgs(base, "/out/j1.png", "gpt-6-astra");
+  assert.equal(a[a.indexOf("-m") + 1], "gpt-6-astra");
+  assert.equal(a[a.indexOf("--quality") + 1], "high");
+});
+
 test("buildArgs edit adds --ref-image", () => {
   const a = buildArgs({ ...base, mode: "edit", inputPath: "/in/j1.png" }, "/out/j1.png");
   assert.ok(a.includes("edit"));

@@ -82,6 +82,7 @@
     "image": {
       "engines": "failover",
       "order": [
+        "gpt-image",
         "seedream"
       ],
       "keys": "headroom",
@@ -90,7 +91,7 @@
         "cap_5h": 90,
         "cap_7d": 90
       },
-      "_note": "2026-11-21 临时：Codex 出图被 OpenAI 关闭（gpt-6-astra 下架、新模型不调用 image_generation），先只走 Seedream；恢复时把 gpt-image 放回 order 首位"
+      "_note": "2026-11-23 起 gpt-image 引擎由 paint 走 OpenAI API（GPT_IMAGE_PROVIDER=openai，GPT_IMAGE_QUALITY=low，按张付费）；Codex 订阅出图通道 11-20 已关。cap_5h/cap_7d 读的仍是 codex-1 额度，对 API 通道不起作用"
     }
   },
   "estimates": {

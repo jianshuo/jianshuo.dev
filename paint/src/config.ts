@@ -25,6 +25,10 @@ export interface Config {
    * 出图的其实是 image_generation 工具委托的 gpt-image-2，外层模型只管调工具。
    */
   codexModels: string[];
+  /** gpt-image 引擎走哪条通道：codex（订阅，缺省）| openai（API key，按张付费）。env GPT_IMAGE_PROVIDER */
+  gptImageProvider: "codex" | "openai";
+  /** 非空则强制所有 gpt-image 单用这个 quality（low/medium/high/auto）。env GPT_IMAGE_QUALITY */
+  gptImageQuality?: string;
   maxInputBytes: number;
   maxPromptChars: number;
   /** 火山方舟 Seedream（router 把批次派给 seedream 时用；2026-10-28 起不再自动降级） */
@@ -98,6 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     gptImageBin: env.GPT_IMAGE_BIN ?? "gpt-image-2-skill",
     codexHome: env.CODEX_HOME,
     codexModels: parseModels(env.CODEX_MODELS),
+    gptImageProvider: env.GPT_IMAGE_PROVIDER === "openai" ? "openai" : "codex",
+    gptImageQuality: env.GPT_IMAGE_QUALITY || undefined,
     maxInputBytes: Number(env.MAX_INPUT_BYTES ?? 26214400),
     maxPromptChars: Number(env.MAX_PROMPT_CHARS ?? 4000),
     seedream: {
