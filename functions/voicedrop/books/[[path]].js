@@ -75,7 +75,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     const format = new URL(request.url).searchParams.get('format');
     if (format === 'json') return indexJSON(env, request, waitUntil);
     if (format === 'search') return searchJSON(env, request, waitUntil);
-    return index(env, waitUntil);
+    return index(env, waitUntil, request);
   }
 
   // 整本书打印视图（/books/<slug>/print）：封面+导读+全部章节拼一页、分页 CSS、
@@ -806,8 +806,12 @@ async function searchJSON(env, request, waitUntil) {
 
 // 与 iOS BooksShelfView.swift 一比一：色值 / 圆角 / 间距 / 阴影都从那边抄，
 // 改任何一边都要同步另一边。SwiftUI shadow(radius:r) ≈ CSS blur 2r。
-async function index(env, waitUntil) {
+async function index(env, waitUntil, request) {
   const books = await collectBooks(env, '', waitUntil);
+  // 书的链接/封面用**相对地址**：同一份索引页挂在 voicedrop.cn/books/ 和
+  // jianshuo.dev/voicedrop/books/ 两处，写死 /books/<slug>/ 在 jianshuo.dev 上每张封面
+  // 都要先吃一次 _redirects 的 301。索引页带不带尾斜杠都回 200，所以不带时补一段 books/。
+  const rel = new URL(request.url).pathname.endsWith('/') ? '' : 'books/';
 
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const metaLine = (b) => {
@@ -819,7 +823,7 @@ async function index(env, waitUntil) {
   // 有动画版的书：封面正中一枚淡淡的半透明播放键（与 App 书架同款）。
   const playMark = '<i class="play"><svg viewBox="0 0 10 10"><path d="M1.5 .8 9.2 5 1.5 9.2z"/></svg></i>';
   const bookCell = (b) => {
-    const href = `/books/${encodeURI(b.slug)}/`;
+    const href = `${rel}${encodeURI(b.slug)}/`;
     const face = b.cover
       ? `<img src="${href}cover.jpg?v=${b.coverAt}" alt="" loading="lazy">`
       : `<span class="cloth"><b>${esc(b.main)}</b><i></i>${b.sub ? `<small>${esc(b.sub)}</small>` : ''}</span>`;
