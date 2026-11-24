@@ -56,7 +56,7 @@ POST /v1/admin/reload              重读 config.json + .env（admin）
 POST /v1/admin/probe               立刻探一轮额度（admin）
 ```
 
-请求字段（除 `prompt` 都可选）：`task_class`、`thread_id`、`continuity`（strict / loose / none）、`instructions`、`workdir`（须在 `WORKDIR_ROOTS` 下）、`context_dirs`、`capabilities` `{shell, network, write}`、`env`、`quality`（best / fast）、`engine_hints` `{avoid, require}`、`output_schema`、`budget` `{max_turns, timeout_ms, size}`、`priority`（user / normal / background）、`resume_hint`、`idempotency_key`、`callback_url`、`on_exhausted`（queue / fail）、`force`。
+请求字段（除 `prompt` 都可选）：`task_class`、`thread_id`、`continuity`（strict / loose / none）、`instructions`、`workdir`（须在 `WORKDIR_ROOTS` 下）、`context_dirs`、`capabilities` `{shell, network, write}`、`env`、`quality`（best / fast）、`engine_hints` `{avoid, require}`、`engine_prompts` `{claude?, codex?, kimi?}`（按最终挑中的引擎追加到 prompt 末尾的一段，换账号重跑时跟着换；写书用它分「并行档 / 串行档」）、`output_schema`、`budget` `{max_turns, timeout_ms, size}`、`priority`（user / normal / background）、`resume_hint`、`idempotency_key`、`callback_url`、`on_exhausted`（queue / fail）、`force`。
 
 事件：`queued` / `started` / `session` / `text` / `tool` / `switched` / `done`。
 

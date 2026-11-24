@@ -13,9 +13,9 @@ import { join } from "node:path";
 import { INFLIGHT_DIR } from "./env.js";
 import { removeInflight, writeInflight, type Inflight, type InflightCreate, type InflightRevise } from "./inflight.js";
 import { BOOK_PREAMBLE, resumeAfterRestartHint, runBookEngine } from "./book-engine.js";
-import { bookGap, continueHint, isHardGap } from "./book-complete.js";
+import { bookGap, continueHint, firstChapterReady, isHardGap } from "./book-complete.js";
 import {
-  findBookByJobId, notifyAdmin, notifyBookDone, patchThreadEntry, readBookMetaRetry, refundBook,
+  findBookByJobId, notifyAdmin, notifyBookDone, notifyBookFirstChapter, patchThreadEntry, readBookMetaRetry, refundBook,
   registerBookPost, writeBookMeta, writeUnmatched, type ThreadEntry,
 } from "./bookmeta.js";
 
@@ -91,6 +91,24 @@ async function runCreate(rec: InflightCreate): Promise<void> {
   }, 30000);
   reg.unref?.();
 
+  // 第一章上线就推一条「第一章可以读了」（2026-11-24）：每 15 秒看一眼 book.json，出现第一个
+  // done 章节就推、记进在飞登记（续跑不重推）、收工。hidden 的书也推（只推给主人自己）。
+  const firstWatch = rec.firstPushed ? undefined : setInterval(async () => {
+    try {
+      if (finished) return;
+      const hit = await findBookByJobId(jobId);
+      if (!hit || finished || !firstChapterReady(hit.book)) return;
+      clearInterval(firstWatch);
+      if (await notifyBookFirstChapter(auth, String(hit.book.slug), String(hit.book.title ?? ""))) {
+        rec.firstPushed = true;
+        if (!finished) await writeInflight(INFLIGHT_DIR, rec).catch(() => {});
+      }
+    } catch {
+      /* 下一轮再试 */
+    }
+  }, 15000);
+  firstWatch?.unref?.();
+
   let ok = false;
   let reply = "";
   const label = `写书 · ${seed.replace(/\s+/g, " ").trim().slice(0, 40)}`;
@@ -125,6 +143,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
     }
     finished = true;
     clearInterval(reg);
+    clearInterval(firstWatch);
     // 引擎一返回就销档：后面的收尾都是幂等的快 HTTP 调用；登记留着反而会在收尾
     // 中途被杀时把一本已退款/已发布的书再跑一遍。
     await removeInflight(INFLIGHT_DIR, rec);
@@ -138,6 +157,7 @@ async function runCreate(rec: InflightCreate): Promise<void> {
   } catch (e) {
     finished = true;
     clearInterval(reg);
+    clearInterval(firstWatch);
     await removeInflight(INFLIGHT_DIR, rec);
     console.error("[book] job failed", e);
     // 引擎抛异常（超时/崩溃）同样扣了钱没产出，退款；ref=jobId 幂等，与上面正常

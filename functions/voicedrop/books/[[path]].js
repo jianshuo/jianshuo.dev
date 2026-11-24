@@ -41,7 +41,7 @@ import { coreGetReport } from '../../lib/core-db.js';
 // 搜索还要抠 41 本老书的目录页，不缓存扛不住。
 import {
   PUBLISHER, PUBLISHER_SCOPE, SHELF_CACHE_KEY, SHELF_CACHE_TTL_MS,
-  CATEGORY_ORDER, normalizeCategory, invalidateShelf, shelfCacheState,
+  CATEGORY_ORDER, normalizeCategory, invalidateShelf, shelfCacheState, shelfEntry, sortShelf,
 } from '../../lib/books-shelf.js';
 // 类目真源 = 各书 `_src/book.json` 的 category（写书 skill 规划大纲时自报；存量 209 本
 // 于 2026-09-15 批量回填）。此前代码里那张 59 本的手写映射表已删——不认的词当没写。
@@ -547,31 +547,12 @@ async function buildShelf(env) {
       try { author = await readProfileName(env, b.owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
       catch {}
     }
-    const title = String(b.title || slug);
-    const category = normalizeCategory(b.category);
-    // 章节：chapters 数组数 done（新书）；迁移补录的老书存的是数值 chaptersCount。
-    const list = Array.isArray(b.chapters) ? b.chapters.filter((x) => x && x.status === 'done') : null;
-    const chapters = list ? list.length : (Number(b.chaptersCount) || 0);
-    // 搜索用的目录：新书直接用 book.json 的 done 章节；老书没有清单，抠目录页。
-    let subtitle = String(b.subtitle || '').trim();
-    let intro = String(b.introTeaser || '').trim();
-    let toc;
-    if (list) {
-      toc = list.map((x) => ({ t: String(x.title || '').trim(), b: String(x.brief || '').trim() }));
-    } else {
-      const s = await scrapeLegacyToc(env, slug);
-      toc = s.toc; subtitle = subtitle || s.sub; intro = intro || s.intro;
-    }
-    // 归属口径与 setHidden 一致：owner 缺失的老书算发布者的。
-    return { slug, title, author, category, hidden: b.hidden === true, owner: b.owner || PUBLISHER_SCOPE,
-             cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
-             // 有动画版（build/视频书流水线写进 book.json 的 video.url）：书架封面叠播放水印、「视频」tab 据此筛。
-             video: !!(b.video && b.video.url),
-             chapters, createdAt: Number(b.createdAt) || 0, subtitle, intro, toc };
+    // 老书（没有 chapters 清单）搜索用的目录要抠目录页；条目字段口径在 lib 的 shelfEntry。
+    const legacy = Array.isArray(b.chapters) ? null : await scrapeLegacyToc(env, slug);
+    return shelfEntry(slug, b, author, legacy);
   }))).filter(Boolean);
   // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
-  books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
-  return books;
+  return sortShelf(books);
 }
 
 /// 老书（2026-08-15 `_src` 上线前发的 41 本）的目录页：<p class="sub">副题、introcard 里

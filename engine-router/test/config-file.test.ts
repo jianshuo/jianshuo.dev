@@ -40,3 +40,12 @@ test("出图优先 Codex、不配速；文字任务走周配速（2026-10-25 用
   assert.equal(limitsFor(cfg, policyFor(cfg, "book", "text")).pacing, true);
   assert.equal(ENGINE_KIND["gpt-image"], "image");
 });
+
+test("写书 / 修书先 Claude、再 Codex、最后 Kimi（2026-11-24 用户要求）；仍守全局红线与周配速", () => {
+  for (const cls of ["book", "revise"]) {
+    const p = policyFor(cfg, cls, "text");
+    assert.equal(p.engines, "failover");
+    assert.deepEqual(p.order, ["claude", "codex", "kimi"]);
+    assert.equal(limitsFor(cfg, p).pacing, true);
+  }
+});

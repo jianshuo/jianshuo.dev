@@ -22,15 +22,15 @@ const BOOK_MAX_TURNS = Number(process.env.BOOK_MAX_TURNS ?? 160);
 // 写书 skill 的位置。router 的引擎以 engine-router 用户运行，它的 ~/.claude/skills 是指向这里的软链。
 const SKILLS_DIR = join(HOME, ".claude", "skills");
 
-// 写书提示词前言（每单都带）。router 可能把书派给没有并行子代理 / Workflow 的引擎（codex），
-// 所以 skill 里这些都在这里翻译成「自己读文件 + 自己分步扮演角色」，各家引擎同一份。
+// 写书提示词前言（每单都带，各家引擎同一份）。编排方式（并行 / 串行）不在这里：提交时还不知道
+// router 会把书派给谁，所以分成 BOOK_MODE_PROMPTS 交给 router 按挑中的引擎追加（engine_prompts）。
 export const BOOK_PREAMBLE =
   `你是跑在服务器上的自动写书代理（可跑 bash、读写文件、联网）。\n` +
   `先完整阅读 ${SKILLS_DIR}/wjs-voicedrop-writing-book/SKILL.md 并严格照做；` +
-  `按它第 0 步选定书的类型后，把对应写作 skill 的 SKILL.md（同在 ${SKILLS_DIR}/ 下）也完整读进来再动笔。\n` +
-  `你没有并行子代理，也没有 Workflow——skill 里说 spawn 写手/评审 subagent 的地方，一律由你自己分步串行扮演：` +
-  `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
-  `不过就照 must_fix 重写（最多 3 轮），过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
+  `按它第 0 步选定书的类型后，把对应写作 skill 的 SKILL.md（同在 ${SKILLS_DIR}/ 下）也完整读进来再动笔` +
+  `（这两个 Read 放在同一条消息里并发发出；发布凭据和 build.mjs 都已就位，不用先 ls 探查）。\n` +
+  `没有 Workflow 工具——编排按本提示词末尾给你的「并行档 / 串行档」走，细则在 skill 的「编排」一节。\n` +
+  `过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
   `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。\n` +
   `出图前先读 ${SKILLS_DIR}/paint/SKILL.md（出图说明书）；每张图都带 --group <书的slug>（同组的图服务端始终用同一个引擎，全书一个画风，别自己 --engine 换引擎）。\n` +
   `一次要画多张图（绘本页图等）把它们全部写进一份清单，用 /opt/claude-agent/bin/paint 清单.json --group <slug> 一次交（不拆批、没有张数上限），` +
@@ -38,6 +38,23 @@ export const BOOK_PREAMBLE =
   `paint 和 build.mjs 一律在前台同步跑到出结果，绝不用 run_in_background / nohup / Monitor 丢到后台再写总结——` +
   `你的回合一结束进程就退出，后台任务会被一起杀掉，书就停在半路（2026-09-23《一封一封的写》14 页只发了 1 页）。` +
   `全部章节 build.mjs done、封面上传、目录刷新之后才能结束回合；服务器会对账 book.json，没齐会把你叫回来续写。`;
+
+// 编排档位（2026-11-24）。实测串行一本 10–14 章的科普书要 17–25 分钟，85% 在等模型逐章出字；
+// Claude 腿有 Agent 子代理工具，写手 / 评审并行后整本压到十分钟以内。Codex 没有子代理；
+// Kimi 腿虽是 Claude Code CLI，但订阅的并发上限没验证过，先按串行（省请求数的合并节拍）。
+const PARALLEL_MODE =
+  `【编排：并行档】你有 Agent 子代理工具。按 skill「编排 · 并行档」执行：科普书 / 修书里的整章重写，` +
+  `写手、独立评审、封面各派子代理，同一波的子代理写在同一条消息里并发发出（前台，等它们全部返回）；` +
+  `评审过审后由评审自己 build.mjs done 发布（build.mjs 自带文件锁，可并发）。` +
+  `小说按 skill 说的保持顺序写作，只把评审和封面并行出去；绘本的文字由你自己一次写完，出图照旧一份清单。` +
+  `子代理没有你的上下文：派活时把它要读的文件绝对路径、要写的文件绝对路径、该类型写作 skill 的路径写全。`;
+const SERIAL_MODE =
+  `【编排：串行档】你没有并行子代理——skill 里说派写手 / 评审子代理的地方，一律由你自己分步串行扮演：` +
+  `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
+  `不过就照 must_fix 重写（最多 3 轮）。按 skill「编排 · 串行档」的合并节拍省回合：` +
+  `能在一条消息里发多个工具调用就合并（上一章的评审落盘 + build.mjs done 发布 + 下一章正文落盘 同一条消息），` +
+  `不要单独发「第 N 章已上线，继续第 N+1 章」这类只有旁白的回合。`;
+export const BOOK_MODE_PROMPTS = { claude: PARALLEL_MODE, codex: SERIAL_MODE, kimi: SERIAL_MODE };
 
 export type BookOutcome = { ok: boolean; threadId: string; reply: string; error: string };
 
@@ -81,6 +98,7 @@ export async function runBookEngine(prompt: string, onThread?: (id: string) => v
       budget: { max_turns: BOOK_MAX_TURNS, timeout_ms: BOOK_TIMEOUT_MS, size: "large" },
       priority: "user",
       continuity: "none", // 每轮都是新会话，文件是真源
+      engine_prompts: BOOK_MODE_PROMPTS,
       resume_hint: RESUME_HINT.trim(),
       idempotency_key: opts.key,
       label: opts.label,

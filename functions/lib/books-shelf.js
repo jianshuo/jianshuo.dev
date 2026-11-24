@@ -55,3 +55,59 @@ export function shelfCacheState(c) {
   const age = Date.now() - (Number(c.builtAt) || 0);
   return (c.staleAt || age >= SHELF_CACHE_TTL_MS) ? 'stale' : 'fresh';
 }
+
+/// 一本书的 book.json → 书架清单条目（纯函数；buildShelf 全量重算和 patchShelf 单本补丁共用，
+/// 字段口径只此一处）。author 由调用方解析好（自报 / profile 名）；legacy = 老书抠目录页的
+/// {toc, sub, intro}（新书有 chapters 数组，不需要）。没盖 createdAt 的不上架 → null。
+export function shelfEntry(slug, b, author = '', legacy = null) {
+  if (!b || !b.createdAt) return null;
+  const list = Array.isArray(b.chapters) ? b.chapters.filter((x) => x && x.status === 'done') : null;
+  let subtitle = String(b.subtitle || '').trim();
+  let intro = String(b.introTeaser || '').trim();
+  let toc;
+  if (list) {
+    toc = list.map((x) => ({ t: String(x.title || '').trim(), b: String(x.brief || '').trim() }));
+  } else {
+    toc = (legacy && legacy.toc) || []; subtitle = subtitle || (legacy && legacy.sub) || ''; intro = intro || (legacy && legacy.intro) || '';
+  }
+  return { slug, title: String(b.title || slug), author, category: normalizeCategory(b.category),
+           hidden: b.hidden === true, owner: b.owner || PUBLISHER_SCOPE,
+           cover: b.cover === true, coverAt: Number(b.coverAt) || 0,
+           video: !!(b.video && b.video.url),
+           chapters: list ? list.length : (Number(b.chaptersCount) || 0),
+           createdAt: Number(b.createdAt) || 0, subtitle, intro, toc };
+}
+export const sortShelf = (books) =>
+  books.sort((a, b) => (b.createdAt - a.createdAt) || String(a.title).localeCompare(String(b.title), 'zh'));
+
+/// `books/<slug>/_src/book.json` 这个 key → slug；别的 key → ''。
+export const bookJsonSlug = (key) => {
+  const m = typeof key === 'string' && key.startsWith(PUBLISHER) ? /^([^/]+)\/_src\/book\.json$/.exec(key.slice(PUBLISHER.length)) : null;
+  return m ? m[1] : '';
+};
+
+/// 单本补丁（2026-11-24）：build.mjs 每次发布都会重传 `_src/book.json`，这时直接把这一本
+/// 的条目换进缓存清单——新书立刻上架、章节数立刻前进，不必等「下一个访客触发后台全量重算
+/// 再下一个访客才看到」。起因：全量重算随书架涨到四百多本已要 20–40 秒，卡在 waitUntil 的
+/// 30 秒上限边上；《一个代码的十二次追问》写完半小时书架上还没有。
+/// 补丁同时照常盖 staleAt + gen：全量重算仍会跑一遍兜底（作者 profile 名、并发补丁互相
+/// 覆盖都靠它收敛）。作者：自报优先；不署名（author:""）就是空；没写的沿用缓存里旧条目的
+/// （新书先空着，全量重算补 profile 名）。绝不 throw。缓存不存在就什么都不做。
+export async function patchShelf(env, slug, bookText) {
+  try {
+    const b = JSON.parse(bookText);
+    const o = await env.FILES.get(SHELF_CACHE_KEY);
+    if (!o) return;
+    const c = JSON.parse(await o.text());
+    if (!c || !Array.isArray(c.books)) return;
+    const old = c.books.find((x) => x.slug === slug);
+    const own = String(b.author || '').trim().slice(0, 20);
+    const entry = shelfEntry(slug, b, own || (b.author === '' ? '' : (old ? old.author : '')), old ? { toc: old.toc, sub: old.subtitle, intro: old.intro } : null);
+    const books = c.books.filter((x) => x.slug !== slug);
+    if (entry) books.push(entry);
+    await env.FILES.put(SHELF_CACHE_KEY, JSON.stringify({ ...c, books: sortShelf(books), staleAt: Date.now(), gen: (Number(c.gen) || 0) + 1 }),
+      { httpMetadata: { contentType: 'application/json' } });
+  } catch {
+    await invalidateShelf(env);
+  }
+}

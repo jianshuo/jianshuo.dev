@@ -76,3 +76,13 @@ export function continueHint(gap: BookGap, round: number): string {
     `全部章节 done、封面上传、目录刷新之后才能结束回合。`
   );
 }
+
+// 「第一章可以读了」该不该推（2026-11-24）：book.json 里已有 done 的章节、且还没全写完才推——
+// 一口气全 done 的（绘本是字画齐了才逐页发，几秒内全亮）紧接着就是「书写好了」，不必连推两条。
+// 绘本一律不推。纯函数，给单测钉边界。
+export function firstChapterReady(book: any): boolean {
+  if (!book || book.type === "childrens") return false;
+  const chapters: any[] = Array.isArray(book.chapters) ? book.chapters : [];
+  const done = chapters.filter((c) => c?.status === "done").length;
+  return done >= 1 && done < chapters.length;
+}

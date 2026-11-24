@@ -87,6 +87,22 @@ test("成功：failover 选 kimi，结果回到 run，事件文件有 started/do
   assert.deepEqual(ev, ["queued", "started", "done"]);
 });
 
+test("engine_prompts：按最终挑中的引擎追加一段；换账号后换成新引擎那段，续跑提示仍在最后", async () => {
+  const { runs, specs, pool } = setup((s) =>
+    s.engine === "kimi" ? { ok: false, error: "Failed to authenticate. API Error: 403 You've reached your 5-hour usage limit." } : { ok: true, reply: "ok" },
+  );
+  const { run } = await runs.submit(
+    { prompt: "写书", engine_prompts: { kimi: "【串行档】", codex: "【codex 串行档】", bogus: "x", claude: 42 } },
+    "book-runner",
+  );
+  await until(runs, run.id);
+  assert.deepEqual(specs.map((s) => s.engine), ["kimi", "codex"]);
+  assert.match(specs[0].prompt, /^写书\n\n【串行档】$/);
+  assert.match(specs[1].prompt, /^写书\n\n【codex 串行档】\n\n[\s\S]*上一次尝试/);
+  assert.doesNotMatch(specs[1].prompt, /【串行档】/);
+  pool.setCooldown("kimi/kimi-1", 0);
+});
+
 test("撞墙换账号：kimi 403 配额 → 冷却 kimi、换 codex 写完；续跑 prompt 带提示", async () => {
   const { runs, specs, pool } = setup((s) =>
     s.engine === "kimi" ? { ok: false, error: "Failed to authenticate. API Error: 403 You've reached your 5-hour usage limit." } : { ok: true, reply: "codex 写完" },

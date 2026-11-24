@@ -953,6 +953,24 @@ export async function handleUsageRoute(url, request, env) {
     return J({ ok: true });
   }
 
+  // 第一章可以读了（2026-11-24）：写书是边写边发，第一章起单后两三分钟就上线，整本要十分钟上下。
+  // lab 的 book-runner 看到 book.json 出现第一个 done 章节时调这里，让主人不用干等「书写好了」。
+  // 认人、link 口径与 book-done 相同；一本书只调一次（runner 侧在在飞登记里记了 firstPushed）。
+  if (url.pathname === "/agent/push/book-first" && request.method === "POST") {
+    const scope = await resolveScope(tok, env);
+    if (!scope) return J({ error: "unauthorized" }, 401);
+    const b = await request.json().catch(() => ({}));
+    const slug = String(b.slug || "");
+    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) return J({ error: "bad slug" }, 400);
+    const title = String(b.title || "").slice(0, 80);
+    await sendPush(env, scope, {
+      title: "第一章可以读了",
+      body: title ? `《${title}》第一章已上线，后面的章节正在陆续写出来` : "你的书第一章已上线，后面的章节正在陆续写出来",
+      link: `https://voicedrop.cn/books/${slug}/`, source: "book",
+    });
+    return J({ ok: true });
+  }
+
   // 系统级故障给管理员的即时推送（2026-08-24，用户要求「这样的问题立刻 APN 通知我」）。
   // 鉴权：请求者 scope 必须就是 ADMIN_SCOPE 本人（lab 用发布账号 token 调，无需新密钥）。
   if (url.pathname === "/agent/push/admin" && request.method === "POST") {

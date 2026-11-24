@@ -2,7 +2,7 @@
 // 交卷，runner 当成功收尾推送「书写好了」，用户拿到 1/14 的书。跑法：npm test。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessBook, isHardGap, continueHint } from "../dist/book-complete.js";
+import { assessBook, isHardGap, continueHint, firstChapterReady } from "../dist/book-complete.js";
 
 const book = (statuses, extra = {}) => ({
   slug: "dudu-de-xin",
@@ -59,4 +59,14 @@ test("续写提示：点名缺的章、禁后台、三不", () => {
   assert.match(hint, /run_in_background/);
   assert.match(hint, /不要另起一本新书、不要换 slug/);
   assert.match(hint, /book-dudu-de-xin/);
+});
+
+test("第一章可以读了：有 done 且没写完才推；一章都没有 / 全写完 / 绘本都不推", () => {
+  assert.equal(firstChapterReady(book(["done", "planned", "planned"])), true);
+  assert.equal(firstChapterReady(book(["planned", "done", "writing"])), true);   // 并行档里不一定是第 1 章先过审
+  assert.equal(firstChapterReady(book(["planned", "planned"])), false);
+  assert.equal(firstChapterReady(book(["done", "done"])), false);                 // 紧接着就是「书写好了」
+  assert.equal(firstChapterReady(book(["done", "planned"], { type: "childrens" })), false);
+  assert.equal(firstChapterReady(null), false);
+  assert.equal(firstChapterReady({ slug: "x" }), false);
 });

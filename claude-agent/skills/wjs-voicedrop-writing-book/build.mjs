@@ -26,15 +26,17 @@
 //   <workdir>/chapters/NN.html  —— 第 NN 章正文的 HTML 片段（放进 <article> 的内容）
 // 认证复用 wjs-voicedrop 的 token（~/.config/voicedrop/credentials）。Node ≥ 20。
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { checkChapterSource } from "./validate.mjs";
 
-const API = "https://jianshuo.dev/files/api";
-const SITE = "https://jianshuo.dev";
+// 两个环境变量只给本仓库的单测用（test/build-lock.test.mjs 起一个本地假 files API）；线上不设。
+const API = process.env.BOOK_FILES_API || "https://jianshuo.dev/files/api";
+const SITE = process.env.BOOK_SITE || "https://jianshuo.dev";
 
 function token() {
+  if (process.env.BOOK_FILES_API && process.env.BOOK_TOKEN) return process.env.BOOK_TOKEN;
   const p = join(homedir(), ".config/voicedrop/credentials");
   try { return JSON.parse(readFileSync(p, "utf8")).token; }
   catch { console.error("找不到 token：先跑 wjs-voicedrop 的 6+4 登录"); process.exit(2); }
@@ -284,6 +286,30 @@ function renderIntro(book, bodyHtml) {
 // ---------- CLI ----------
 const [, , cmd, workdir, arg] = process.argv;
 if (!cmd || !workdir) { console.error("用法见文件头注释"); process.exit(2); }
+// ---------- 工作目录锁（2026-11-24，并行档）----------
+// 并行写书时多个评审子代理会同时 `build.mjs done`：每次都是「读 book.json → 改一章状态 → 写回 → 发布」，
+// 不加锁后写的会把先写的 done 盖回 planned（丢更新），目录页也会互相覆盖成旧的。所以凡是会改
+// book.json / 发布页面的命令，先拿 <workdir>/.build.lock（mkdir 原子），拿到之后才读 book.json。
+// 锁超过 2 分钟没放 = 持锁进程死了，直接收走。status / pull 不拿锁。
+const LOCKED_CMDS = new Set(["index", "intro", "chapter", "done", "asset", "all"]);
+const lockDir = join(workdir || ".", ".build.lock");
+let lockHeld = false;
+async function acquireLock() {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  for (;;) {
+    try { mkdirSync(lockDir); lockHeld = true; return; }
+    catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try { if (Date.now() - statSync(lockDir).mtimeMs > 2 * 60 * 1000) { rmSync(lockDir, { recursive: true, force: true }); continue; } } catch { continue; }
+      if (Date.now() > deadline) { console.error(`等发布锁超时（${lockDir}）：有别的 build.mjs 卡住了？确认没有后删掉这个目录重试。`); process.exit(1); }
+      await new Promise(r => setTimeout(r, 120 + Math.random() * 180));
+    }
+  }
+}
+process.on("exit", () => { if (lockHeld) try { rmSync(lockDir, { recursive: true, force: true }); } catch {} });
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => process.exit(130));
+if (LOCKED_CMDS.has(cmd) && existsSync(join(workdir, "book.json"))) await acquireLock();
+
 const book = cmd === "pull" ? null : JSON.parse(readFileSync(join(workdir, "book.json"), "utf8"));
 const readFrag = p => { try { return readFileSync(join(workdir, p), "utf8"); } catch { return ""; } };
 
@@ -345,7 +371,8 @@ async function doIntro() {
   await upload(book.slug, fileName.intro, renderIntro(book, b));
   await upload(book.slug, srcName("intro.html"), b);
 }
-async function doChapter(no) {
+// sync=false：只发渲染页（给 doDone 重渲染相邻章导航用——正文和 book.json 都没变，不必重传源稿）。
+async function doChapter(no, { sync = true } = {}) {
   const b = readFrag(`chapters/${pad(no)}.html`);
   if (!b) { console.error(`缺 chapters/${pad(no)}.html`); process.exit(1); }
   // 发布前最后一道闸：正文是空的、或整段是评审 JSON，一律不许上线。
@@ -358,8 +385,11 @@ async function doChapter(no) {
     process.exit(1);
   }
   refusePngRefs(`第 ${pad(no)} 章`, b);
-  await upload(book.slug, chFile(no), renderChapter(book, no, b));
-  await upload(book.slug, srcName(chFile(no)), b);
+  if (!sync) { await upload(book.slug, chFile(no), renderChapter(book, no, b)); return; }
+  await Promise.all([
+    upload(book.slug, chFile(no), renderChapter(book, no, b)),
+    upload(book.slug, srcName(chFile(no)), b),
+  ]);
   await syncBookJson(book);   // 只重发单章也要让 _src 有入口，下次 pull 才不用手工重建
 }
 const liveUrl = () => console.log(`\n公开链接（外网可直接打开）：\n  ${publicUrl(book.slug, fileName.index)}`);
@@ -369,18 +399,27 @@ async function doDone(no) {
   const c = (book.chapters || []).find(x => Number(x.no) === Number(no));
   if (!c) { console.error(`book.json 里没有第 ${no} 章`); process.exit(1); }
   if (!existsSync(join(workdir, `chapters/${pad(no)}.html`))) { console.error(`缺 chapters/${pad(no)}.html，先落盘正文再 done`); process.exit(1); }
+  // 先验稿再标 done：稿子不合格（空章 / 评审 JSON / PNG）时 doChapter 会直接退出，不能留下一个带 done 的空章。
+  const frag = readFrag(`chapters/${pad(no)}.html`);
+  const v = checkChapterSource(frag);
+  if (!v.ok) { console.error(`拒绝发布第 ${pad(no)} 章：${v.reason}`); process.exit(1); }
+  refusePngRefs(`第 ${pad(no)} 章`, frag);
   c.status = "done";
   writeFileSync(join(workdir, "book.json"), JSON.stringify(book, null, 2) + "\n");
-  await doChapter(no);   // 发这一章
   // 相邻已发布章的上/下章导航需要因新章而更新：重渲染最近的前一个 done（补它的「下一章」）
   // 和最近的后一个 done（补它的「上一章」）。这样顺序发布/中间补发都不会留下断链。
   const chs = book.chapters || [];
   const idx = chs.findIndex(x => Number(x.no) === Number(no));
   const prevDone = chs.slice(0, idx).reverse().find(x => x.status === "done");
   const nextDone = chs.slice(idx + 1).find(x => x.status === "done");
-  if (prevDone) await doChapter(prevDone.no);   // 让前章的「下一章 →」指向本章
-  if (nextDone) await doChapter(nextDone.no);   // 让后章的「← 上一章」指向本章
-  await doIndex();       // 刷新目录（点亮该章）
+  // 本章（渲染页 + 源稿）与相邻两章的渲染页并发上传；book.json 的 _src 同步由下面 doIndex 做一次。
+  await Promise.all([
+    upload(book.slug, chFile(no), renderChapter(book, no, frag)),
+    upload(book.slug, srcName(chFile(no)), frag),
+    prevDone ? doChapter(prevDone.no, { sync: false }) : null,   // 让前章的「下一章 →」指向本章
+    nextDone ? doChapter(nextDone.no, { sync: false }) : null,   // 让后章的「← 上一章」指向本章
+  ]);
+  await doIndex();       // 刷新目录（点亮该章）+ 同步 _src/book.json（书架据此前进一章）
 }
 
 // 断点续跑用：列出每章 状态 + 正文是否已落盘，一眼看出还差哪些

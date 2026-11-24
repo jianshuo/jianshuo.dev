@@ -35,6 +35,9 @@ export type RunRequest = {
   env: Record<string, string>;
   quality?: "best" | "fast";
   engine_hints: { avoid: EngineName[]; require: EngineName[] };
+  // 按「最终挑中的引擎」追加到 prompt 末尾的一段（调用方提交时不知道会派给谁）：
+  // 写书用它告诉 Claude 腿「并行派子代理」、Codex/Kimi 腿「自己串行扮演」。
+  engine_prompts?: Partial<Record<EngineName, string>>;
   output_schema?: unknown;
   budget: { max_turns: number; timeout_ms: number; size?: "small" | "medium" | "large" };
   priority: "user" | "normal" | "background";
@@ -146,6 +149,14 @@ function asEngines(x: unknown): EngineName[] {
   return x.filter((e): e is EngineName => ENGINE_NAMES.includes(e));
 }
 
+function asEnginePrompts(x: unknown): Partial<Record<EngineName, string>> | undefined {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return undefined;
+  const out: Partial<Record<EngineName, string>> = {};
+  for (const [k, v] of Object.entries(x as Record<string, unknown>))
+    if (ENGINE_NAMES.includes(k as EngineName) && typeof v === "string" && v.trim()) out[k as EngineName] = v.slice(0, 8000);
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** 校验 + 补缺省。除 prompt 外全部可选。 */
 export function normalizeRequest(b: any): RunRequest {
   if (!b || typeof b !== "object") throw new HttpError(400, "body must be a JSON object");
@@ -178,6 +189,7 @@ export function normalizeRequest(b: any): RunRequest {
     env,
     quality: b.quality === "fast" ? "fast" : b.quality === "best" ? "best" : undefined,
     engine_hints: { avoid: asEngines(b.engine_hints?.avoid), require: asEngines(b.engine_hints?.require) },
+    engine_prompts: asEnginePrompts(b.engine_prompts),
     output_schema: b.output_schema ?? undefined,
     budget: {
       max_turns: Math.min(500, Math.max(1, Number(budget.max_turns) || 160)),
@@ -411,6 +423,8 @@ export class Runs {
     const cont = r.req.continuity === "none" ? { tier: 0 as const } : continuation(cfg, thread, key);
     let prompt = r.req.prompt;
     if (cont.tier === 3) prompt = handoffPrompt(thread, prompt);
+    const enginePrompt = r.req.engine_prompts?.[engine];
+    if (enginePrompt) prompt += "\n\n" + enginePrompt;
     if (n > 1) {
       prompt +=
         "\n\n" +

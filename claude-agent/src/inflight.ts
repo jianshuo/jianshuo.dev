@@ -29,6 +29,7 @@ export type InflightCreate = {
   auth?: string;
   startedAt: number;     // = 登记簿 thread 条目的 ts，续跑时靠它对上同一条
   slug?: string;         // early-register 拿到后回填，续跑/放弃时省一次反查
+  firstPushed?: boolean; // 「第一章可以读了」已推过（续跑不再推第二次）
   attempts: number;      // 引擎已被拉起的次数（0 = 还在排队没起过；原跑算第 1 次）
   launchedAt?: number;   // 最近一次起单元的时刻（排队中的没有）
 };

@@ -26,6 +26,7 @@ export type RunOptions = {
   env?: Record<string, string>;
   quality?: "best" | "fast";
   engine_hints?: { avoid?: string[]; require?: string[] };
+  engine_prompts?: { claude?: string; codex?: string; kimi?: string }; // 按挑中的引擎追加到 prompt 末尾
   output_schema?: unknown;
   budget?: { max_turns?: number; timeout_ms?: number; size?: "small" | "medium" | "large" };
   priority?: "user" | "normal" | "background";

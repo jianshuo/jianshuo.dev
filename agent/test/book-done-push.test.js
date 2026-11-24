@@ -57,6 +57,31 @@ describe("push/book-done", () => {
   });
 });
 
+describe("push/book-first（第一章可以读了）", () => {
+  beforeEach(() => sendPush.mockClear());
+  const first = (env, { token, body } = {}) => {
+    const u = "https://jianshuo.dev/agent/push/book-first";
+    return handleUsageRoute(new URL(u), new Request(u, {
+      method: "POST", headers: token ? { Authorization: "Bearer " + token } : {}, ...(body ? { body: JSON.stringify(body) } : {}),
+    }), env);
+  };
+
+  it("无 token → 401；slug 不合法 → 400；都不推", async () => {
+    expect((await first({ SESSION_SECRET: "" }, { body: { slug: "a-book" } })).status).toBe(401);
+    expect((await first({ SESSION_SECRET: "" }, { token: "anon_owner_token_abcdefghijklmnop", body: { slug: "../etc" } })).status).toBe(400);
+    expect(sendPush).not.toHaveBeenCalled();
+  });
+
+  it("合法请求 → 推「第一章可以读了」，link 是书的直链", async () => {
+    const r = await first({ SESSION_SECRET: "" }, { token: "anon_owner_token_abcdefghijklmnop", body: { slug: "my-book", title: "小书" } });
+    expect(r.status).toBe(200);
+    const [, , msg] = sendPush.mock.calls[0];
+    expect(msg.title).toBe("第一章可以读了");
+    expect(msg.body).toContain("《小书》");
+    expect(msg.link).toBe("https://voicedrop.cn/books/my-book/");
+  });
+});
+
 describe("push/admin", () => {
   const callAdmin = (env, { token, body } = {}) =>
     handleUsageRoute(new URL("https://jianshuo.dev/agent/push/admin"),

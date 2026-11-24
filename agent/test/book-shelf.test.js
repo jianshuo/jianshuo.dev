@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { fakeEnv } from "./fakes.js";
 import { onRequest } from "../../functions/voicedrop/books/[[path]].js";
 import { anonScopeFromToken } from "../../functions/lib/auth.js";
-import { PUBLISHER, SHELF_CACHE_KEY, CATEGORY_ORDER, touchesShelf, invalidateShelf } from "../../functions/lib/books-shelf.js";
+import { PUBLISHER, SHELF_CACHE_KEY, CATEGORY_ORDER, touchesShelf, invalidateShelf, patchShelf, bookJsonSlug } from "../../functions/lib/books-shelf.js";
 
 const OWNER_TOK = "anon_owner_token_abcdefghijklmnop";
 const srcKey = (slug) => `${PUBLISHER}${slug}/_src/book.json`;
@@ -278,5 +278,59 @@ describe("搜索索引 ?format=search", () => {
     const env = await shelfEnv();
     const { books } = await (await call(env, { format: "search", token: OWNER_TOK })).json();
     expect(books.map((b) => b.slug)).toContain("secret");
+  });
+});
+
+describe("书架单本补丁（上传 _src/book.json 时新书立刻上架）", () => {
+  it("bookJsonSlug 只认 books/<slug>/_src/book.json", () => {
+    expect(bookJsonSlug(srcKey("entropy"))).toBe("entropy");
+    expect(bookJsonSlug(`${PUBLISHER}entropy/01.html`)).toBe("");
+    expect(bookJsonSlug(`${PUBLISHER}entropy/_src/01.html`)).toBe("");
+    expect(bookJsonSlug("users/x/books/entropy/_src/book.json")).toBe("");
+  });
+
+  it("新书：补丁后第一次请求就在清单最前面（不用等后台重算），同时照常起一次重算兜底", async () => {
+    const env = await shelfEnv();
+    await call(env, { format: "json" });
+    const text = newBook("fresh", { createdAt: 1800000000000, category: "投资", author: "" });
+    env.FILES._store.set(srcKey("fresh"), text);
+    await patchShelf(env, "fresh", text);
+    expect(cacheDoc(env).staleAt).toBeTruthy();
+
+    const bg = [];
+    const { books } = await (await call(env, { format: "json", bg })).json();
+    expect(books[0].slug).toBe("fresh");
+    expect(books[0].chapters).toBe(1);
+    expect(books[0].author).toBe("");
+    expect(bg.length).toBe(1);
+    await Promise.all(bg);
+    expect(cacheDoc(env).staleAt).toBeUndefined();
+    expect(cacheDoc(env).books.some((b) => b.slug === "fresh")).toBe(true);
+  });
+
+  it("老条目：章节数前进、书名跟着改；没盖 createdAt 的不上架；坏 JSON 退回普通作废", async () => {
+    const env = await shelfEnv();
+    await call(env, { format: "json" });
+    const b = JSON.parse(newBook("entropy", { title: "改过的书名", category: "科学" }));
+    b.chapters[1].status = "done";
+    await patchShelf(env, "entropy", JSON.stringify(b));
+    let e = cacheDoc(env).books.find((x) => x.slug === "entropy");
+    expect(e.title).toBe("改过的书名");
+    expect(e.chapters).toBe(2);
+    expect(e.author).toBe("王建硕");
+
+    await patchShelf(env, "ghost", JSON.stringify({ slug: "ghost", title: "没盖章" }));
+    expect(cacheDoc(env).books.some((x) => x.slug === "ghost")).toBe(false);
+
+    const n = cacheDoc(env).books.length;
+    await patchShelf(env, "entropy", "{not json");
+    expect(cacheDoc(env).books.length).toBe(n);
+    expect(cacheDoc(env).staleAt).toBeTruthy();
+  });
+
+  it("缓存还不存在：什么都不做（下一次请求同步现算）", async () => {
+    const env = await shelfEnv();
+    await patchShelf(env, "entropy", newBook("entropy"));
+    expect(env.FILES._store.has(SHELF_CACHE_KEY)).toBe(false);
   });
 });

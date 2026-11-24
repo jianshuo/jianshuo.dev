@@ -79,6 +79,26 @@
       "engines": "headroom",
       "keys": "headroom"
     },
+    "book": {
+      "engines": "failover",
+      "order": [
+        "claude",
+        "codex",
+        "kimi"
+      ],
+      "keys": "headroom",
+      "_note": "2026-11-24 用户定：Claude 额度大涨，写书缺省先用 Claude（两个账号里挑余量大的），Claude 不够（红线/周配速/撞墙）再 Codex，最后 Kimi。Claude 腿走并行写手（claude-agent/src/book-engine.ts 的 engine_prompts）"
+    },
+    "revise": {
+      "engines": "failover",
+      "order": [
+        "claude",
+        "codex",
+        "kimi"
+      ],
+      "keys": "headroom",
+      "_note": "修书与写书同一顺序"
+    },
     "image": {
       "engines": "failover",
       "order": [

@@ -25,6 +25,7 @@ const LEGACY_BOOK_RUN_DIR = join(APP_ROOT, "bookrun");
 const BOOK_CHARGE_URL = process.env.BOOK_CHARGE_URL ?? "https://jianshuo.dev/agent/usage/book-charge";
 const BOOK_REFUND_URL = process.env.BOOK_REFUND_URL ?? "https://jianshuo.dev/agent/usage/book-refund";
 const BOOK_PUSH_URL = process.env.BOOK_PUSH_URL ?? "https://jianshuo.dev/agent/push/book-done";
+const BOOK_FIRST_PUSH_URL = process.env.BOOK_FIRST_PUSH_URL ?? "https://jianshuo.dev/agent/push/book-first";
 const ADMIN_PUSH_URL = process.env.ADMIN_PUSH_URL ?? "https://jianshuo.dev/agent/push/admin";
 const BOOK_COMMUNITY_URL = process.env.BOOK_COMMUNITY_URL ?? "https://jianshuo.dev/agent/book/community";
 const FILES_API = "https://jianshuo.dev/files/api";
@@ -249,6 +250,24 @@ export async function notifyBookDone(auth: string | undefined, slug: string, tit
     console.log(`[book] push slug=${slug} status=${r.status}`);
   } catch (e) {
     console.error("[book] push failed", e);
+  }
+}
+
+// 第一章上线就先告诉主人一声（2026-11-24）：整本要十分钟上下，第一章两三分钟就能读。
+// 同一枚用户 bearer、同样尽力而为；返回是否推成（runner 据此记 firstPushed，推成才不再推）。
+export async function notifyBookFirstChapter(auth: string | undefined, slug: string, title: string): Promise<boolean> {
+  if (!auth?.startsWith("Bearer ")) return false;
+  try {
+    const r = await fetch(BOOK_FIRST_PUSH_URL, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, title }),
+    });
+    console.log(`[book] first-chapter push slug=${slug} status=${r.status}`);
+    return r.ok;
+  } catch (e) {
+    console.error("[book] first-chapter push failed", e);
+    return false;
   }
 }
 
