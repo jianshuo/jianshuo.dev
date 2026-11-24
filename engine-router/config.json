@@ -102,7 +102,6 @@
     "image": {
       "engines": "failover",
       "order": [
-        "gpt-image",
         "seedream"
       ],
       "keys": "headroom",
@@ -111,7 +110,7 @@
         "cap_5h": 90,
         "cap_7d": 90
       },
-      "_note": "2026-11-23 起 gpt-image 引擎由 paint 走 OpenAI API（GPT_IMAGE_PROVIDER=openai，GPT_IMAGE_QUALITY=low，按张付费）；Codex 订阅出图通道 11-20 已关。cap_5h/cap_7d 读的仍是 codex-1 额度，对 API 通道不起作用"
+      "_note": "2026-11-25 临时只走 Seedream：41302d8 把 order 改回 gpt-image 优先，但它依赖的 paint 新版（GPT_IMAGE_PROVIDER=openai）和 OPENAI_API_KEY 还没部署到 VPS——router 全量部署把这份配置带上线后，新书封面被派给 gpt-image、paint 报「账号不认模型 gpt-6-astra」、批次暂停，《CRWV》写书卡在等封面。恢复方法：先把 paint 部署好并实测 gpt-image 能出图，再把 order 改回 [\"gpt-image\",\"seedream\"]，同时删掉 test/config-file.test.ts 里的临时分支。cap_5h/cap_7d 读的是 codex-1 额度，对 API 通道不起作用。"
     }
   },
   "estimates": {
