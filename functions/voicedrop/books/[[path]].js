@@ -35,13 +35,14 @@ import { coreGetReport } from '../../lib/core-db.js';
 // GET /books/<name>  → 文件本体，inline 展示；html/md/txt 只缓存 5 分钟（书会
 //                      反复重发迭代），其余（pdf/图片等大文件）缓存一天。
 //
-// 书架清单缓存（2026-09-15）：以上三种索引都从 readShelf() 拿同一份全量清单——R2 里
-// 一份 JSON（SHELF_CACHE_KEY，1 小时 TTL），任何写进 books/<slug>/ 的上传（files API）
-// 和这里的隐藏开关都会删掉它。此前每刷一次书架都逐本读 book.json（两百多次 R2 读），
-// 搜索还要抠 41 本老书的目录页，不缓存扛不住。
+// 书架清单缓存（2026-09-15；2026-11-25 改增量）：以上三种索引都从 readShelf() 拿同一份清单——
+// R2 里一份 JSON（SHELF_CACHE_KEY）。写入方（files API 上传 book.json、这里的隐藏开关、转让）
+// 直接把那一本的条目换进去；说不清的按书记脏、下次请求只重读脏的那几本；后台滚动巡检兜底。
+// 不再有「整架作废 → 全量重算」，详见 lib/books-shelf.js 顶部。
 import {
-  PUBLISHER, PUBLISHER_SCOPE, SHELF_CACHE_KEY, SHELF_CACHE_TTL_MS,
-  CATEGORY_ORDER, normalizeCategory, invalidateShelf, shelfCacheState, shelfEntry, sortShelf,
+  PUBLISHER, PUBLISHER_SCOPE, SHELF_CACHE_KEY, CATEGORY_ORDER,
+  SHELF_REFRESH_MAX, SHELF_SWEEP_EVERY_MS, SHELF_SWEEP_BATCH, SHELF_BOOT_MAX,
+  shelfEntry, sortShelf, loadShelf, mutateShelf, patchShelf,
 } from '../../lib/books-shelf.js';
 // 类目真源 = 各书 `_src/book.json` 的 category（写书 skill 规划大纲时自报；存量 209 本
 // 于 2026-09-15 批量回填）。此前代码里那张 59 本的手写映射表已删——不认的词当没写。
@@ -510,49 +511,132 @@ const splitTitle = (t) => {
   return [t.trim(), ''];
 };
 
-/// 书架数据（2026-08-27 book.json 归口）：一个 delimiter listing 拿书的文件夹，
-/// 再逐本**只读 `_src/book.json`**——title/author/category/hidden/owner/createdAt/
-/// cover/coverAt/章节数全部以它为单一真源（build.mjs 发布时维护；存量书由归口
-/// 迁移一次性补齐，老书补录件带 legacy:true）。此前的「读 index.html 抠标题 +
-/// 全量列文件夹考古时间戳」已废——那套是每刷 ~350 次 R2 操作、9 秒的元凶。
-/// listing 必须 cursor 翻页：R2 delimited list 按「扫过的 key 数」截断，不是按
-/// 返回的前缀数（admin/llm 页曾因此冻在 2026-07-13）。
-/// 全量清单（不分请求者、含 hidden 书与 owner）：每本
-/// {slug,title,author,category,hidden,owner,cover,coverAt,chapters,createdAt,subtitle,intro,toc}。
-/// 这是缓存的那份；collectBooks / searchJSON 再按请求者过滤、按用途裁字段。
-async function buildShelf(env) {
+/// 一本书的清单条目，对着真源现读（2026-08-27 book.json 归口）：**只读 `_src/book.json`**——
+/// title/author/category/hidden/owner/createdAt/cover/coverAt/章节数全部以它为单一真源
+/// （build.mjs 发布时维护；老书补录件带 legacy:true，搜索用的目录另抠目录页）。
+/// 返回条目，或 null（book.json 不存在 / 没盖 createdAt → 不上架）。
+/// names：同一批里按 owner 记住 profile 名，一个主人只读一次。
+async function freshEntry(env, slug, names = new Map()) {
+  let b = null;
+  try {
+    const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
+    if (o) b = JSON.parse(await o.text());
+  } catch {}
+  // 上架条件 = book.json 存在且 createdAt 已盖章（build.mjs 首次发布目录页时盖）。
+  // 失败/流产任务只留 _src 空壳、没有 createdAt → 不上架（幽灵书拦截）。
+  if (!b || !b.createdAt) return null;
+  // 作者：book.json 自报优先；没有的按书主人 owner 显示 profile.name（没设置则
+  // id 前 6 位大写），owner 缺失的老书回落发布者账号（ae209ac5 → 建硕）。
+  // 显式写了 author: "" = 主人要求不署名，不回落。
+  let author = String(b.author || '').trim().slice(0, 20);
+  if (!author && b.author !== '') {
+    const owner = b.owner || PUBLISHER_SCOPE;
+    if (!names.has(owner)) names.set(owner, readProfileName(env, owner, { fallback: 'id' }).catch(() => ''));
+    author = await names.get(owner);
+  }
+  // 老书（没有 chapters 清单）搜索用的目录要抠目录页；条目字段口径在 lib 的 shelfEntry。
+  const legacy = Array.isArray(b.chapters) ? null : await scrapeLegacyToc(env, slug);
+  return shelfEntry(slug, b, author, legacy);
+}
+
+/// 把一批 slug 对着真源重读 → Map(slug → 条目 | null)。
+async function refreshSlugs(env, slugs) {
+  const names = new Map();
+  const out = new Map();
+  await Promise.all(slugs.map(async (slug) => { out.set(slug, await freshEntry(env, slug, names)); }));
+  return out;
+}
+
+/// 把重读结果并回缓存文档（在 mutateShelf 的乐观锁里跑，所以拿到的 d 是最新的）。
+/// startedAt = 这批开始读真源的时刻：缓存里某条的 at 比它新，说明我们读的时候有人又
+/// patch 过它（它手里的 book.json 比我们读到的新）→ 那一条不动。
+/// dirtySeen = 开工时看到的脏标记：只清「还是那一笔」的，读的过程中又被记了一笔的留着下次再刷。
+function applyRefreshed(d, results, startedAt, dirtySeen = {}) {
+  const books = new Map(d.books.map((x) => [x.slug, x]));
+  const dirty = { ...d.dirty };
+  for (const [slug, entry] of results) {
+    const cur = books.get(slug);
+    if (!(cur && Number(cur.at) > startedAt)) {
+      if (entry) books.set(slug, { ...entry, at: cur ? (Number(cur.at) || 0) : startedAt, seenAt: startedAt });
+      else books.delete(slug);
+    }
+    if (dirty[slug] !== undefined && (dirtySeen[slug] === undefined || dirty[slug] === dirtySeen[slug])) delete dirty[slug];
+  }
+  return { ...d, books: sortShelf([...books.values()]), dirty, builtAt: Date.now() };
+}
+
+/// 列书文件夹的一页（R2 delimited list 按「扫过的 key 数」截断，不是按返回的前缀数，
+/// 所以必须拿 cursor 翻页——admin/llm 页曾因此冻在 2026-07-13）。
+async function listSlugPage(env, cursor) {
+  const listed = await env.FILES.list({ prefix: PUBLISHER, delimiter: '/', limit: 1000, ...(cursor ? { cursor } : {}) });
+  const slugs = (listed.delimitedPrefixes || []).map((p) => p.slice(PUBLISHER.length).replace(/\/$/, '')).filter(Boolean);
+  return { slugs, cursor: listed.truncated ? listed.cursor : undefined };
+}
+
+/// 冷启动：缓存文件根本不存在时才走（正常运转里永远碰不到）。列出全部书文件夹，
+/// 同步读前 SHELF_BOOT_MAX 本，其余记脏，由随后的请求每次补 SHELF_REFRESH_MAX 本——
+/// 书再多，单次请求的 R2 操作数也有上限。
+async function bootShelf(env) {
   const slugs = [];
   let cursor;
   do {
-    const listed = await env.FILES.list({ prefix: PUBLISHER, delimiter: '/', limit: 1000, ...(cursor ? { cursor } : {}) });
-    slugs.push(...(listed.delimitedPrefixes || []).map((p) => p.slice(PUBLISHER.length).replace(/\/$/, '')).filter(Boolean));
-    cursor = listed.truncated ? listed.cursor : undefined;
+    const page = await listSlugPage(env, cursor);
+    slugs.push(...page.slugs);
+    cursor = page.cursor;
   } while (cursor);
+  const now = Date.now();
+  const first = slugs.slice(0, SHELF_BOOT_MAX);
+  const got = await refreshSlugs(env, first);
+  const books = [];
+  for (const [, e] of got) if (e) books.push({ ...e, at: now, seenAt: now });
+  const dirty = {};
+  for (const s of slugs.slice(SHELF_BOOT_MAX)) dirty[s] = now;
+  const doc = { v: 2, books: sortShelf(books), dirty, builtAt: now, sweptAt: now, discover: null };
+  try { await env.FILES.put(SHELF_CACHE_KEY, JSON.stringify(doc), { httpMetadata: { contentType: 'application/json' } }); } catch {}
+  return doc;
+}
 
-  const books = (await Promise.all(slugs.map(async (slug) => {
-    let b = null;
-    try {
-      const o = await env.FILES.get(`${PUBLISHER}${slug}/_src/book.json`);
-      if (o) b = JSON.parse(await o.text());
-    } catch {}
-    // 上架条件 = book.json 存在且 createdAt 已盖章（build.mjs 首次发布目录页时盖）。
-    // 失败/流产任务只留 _src 空壳、没有 createdAt → 不上架（幽灵书拦截，语义与
-    // 旧的「看 index.html 存在」一致）。
-    if (!b || !b.createdAt) return null;
-    // 作者：book.json 自报优先；没有的按书主人 owner 显示 profile.name（没设置则
-    // id 前 6 位大写），owner 缺失的老书回落发布者账号（ae209ac5 → 建硕）。
-    // 显式写了 author: "" = 主人要求不署名，不回落。
-    let author = String(b.author || '').trim().slice(0, 20);
-    if (!author && b.author !== '') {
-      try { author = await readProfileName(env, b.owner || PUBLISHER_SCOPE, { fallback: 'id' }); }
-      catch {}
-    }
-    // 老书（没有 chapters 清单）搜索用的目录要抠目录页；条目字段口径在 lib 的 shelfEntry。
-    const legacy = Array.isArray(b.chapters) ? null : await scrapeLegacyToc(env, slug);
-    return shelfEntry(slug, b, author, legacy);
-  }))).filter(Boolean);
-  // 时间倒序：最新的书在最前面（同龄兜底按书名，保证顺序稳定）。
-  return sortShelf(books);
+/// 滚动巡检（后台，waitUntil）：兜住补丁和脏标记够不着的变化。一轮做两件事，R2 操作数是常数：
+///   1. 重核 seenAt 最老的 SHELF_SWEEP_BATCH 本（作者改了 profile 名、有人绕过 API 直写了 book.json）；
+///   2. 列一页书文件夹，清单里没有的 slug 记脏（绕过 API 新建的书）；一遍列完后，清单里有、
+///      这一遍却没列到的 slug 也记脏（文件夹被删了 → 刷新时读不到 book.json 就摘掉）。
+/// 开工先盖 sweptAt 抢占：同一时刻别的请求看到新的 sweptAt 就不再起第二轮。
+async function sweepShelf(env) {
+  try {
+    const startedAt = Date.now();
+    let claimed = false;
+    const doc = await mutateShelf(env, (d) => {
+      claimed = startedAt - d.sweptAt >= SHELF_SWEEP_EVERY_MS;
+      return claimed ? { ...d, sweptAt: startedAt } : null;
+    });
+    if (!doc || !claimed) return;
+
+    const batch = [...doc.books].sort((a, b) => (Number(a.seenAt) || 0) - (Number(b.seenAt) || 0))
+      .slice(0, SHELF_SWEEP_BATCH).map((x) => x.slug);
+    const results = await refreshSlugs(env, batch);
+
+    const prev = doc.discover || { cursor: undefined, seen: [], startedAt };
+    const page = await listSlugPage(env, prev.cursor);
+    const seen = [...new Set([...(prev.seen || []), ...page.slugs])];
+
+    await mutateShelf(env, (d) => {
+      const next = applyRefreshed(d, results, startedAt);
+      const known = new Set(next.books.map((x) => x.slug));
+      for (const s of page.slugs) if (!known.has(s) && next.dirty[s] === undefined) next.dirty[s] = startedAt;
+      if (page.cursor) {
+        next.discover = { cursor: page.cursor, seen, startedAt: prev.startedAt };
+      } else {
+        // 这一遍列完了：清单里有、整遍都没列到、且这一遍开始之后没被改过的 → 记脏待查。
+        const all = new Set(seen);
+        for (const x of next.books)
+          if (!all.has(x.slug) && (Number(x.at) || 0) < prev.startedAt && next.dirty[x.slug] === undefined) next.dirty[x.slug] = startedAt;
+        next.discover = null;
+      }
+      return next;
+    });
+  } catch (e) {
+    console.log('[books] shelf sweep failed', String(e?.message || e));
+  }
 }
 
 /// 老书（2026-08-15 `_src` 上线前发的 41 本）的目录页：<p class="sub">副题、introcard 里
@@ -576,51 +660,32 @@ async function scrapeLegacyToc(env, slug) {
   return out;
 }
 
-/// 全量清单，R2 缓存优先：fresh 直接用；stale（被上传作废 / 超 TTL）先把旧的给出去，
-/// 同时 waitUntil 后台重算写回（全量重算 15 秒，不能让访客等）；没有缓存才同步现算。
-/// 后台重算前先在缓存上盖 rebuildingAt，一分钟内并发的请求不再各起一次重算（两个
-/// 请求同时读到 stale 仍可能双跑，有界、无害）。写回失败不影响本次响应。
-const REBUILD_LOCK_MS = 60 * 1000;
-const writeShelf = (env, doc) =>
-  env.FILES.put(SHELF_CACHE_KEY, JSON.stringify(doc), { httpMetadata: { contentType: 'application/json' } });
+/// 清单，增量维护（见 lib/books-shelf.js 顶部）：
+///   - 没有缓存 → 冷启动 bootShelf；
+///   - 有脏书 → 当场把它们（至多 SHELF_REFRESH_MAX 本）对着真源重读、并回缓存，这次响应就是新的；
+///   - 距上一轮巡检超过 SHELF_SWEEP_EVERY_MS → 后台起一轮（不让访客等）。
+/// 任何一步失败都退回手里已有的清单，绝不让书架打不开。
 async function readShelf(env, waitUntil) {
-  let cached = null;
-  try {
-    const o = await env.FILES.get(SHELF_CACHE_KEY);
-    if (o) cached = JSON.parse(await o.text());
-  } catch {}
-  const state = shelfCacheState(cached);
-  if (state === 'fresh') return cached.books;
-  if (state === 'stale') {
-    const locked = Date.now() - (Number(cached.rebuildingAt) || 0) < REBUILD_LOCK_MS;
-    if (!locked) {
-      const rebuild = (async () => {
-        try {
-          const startGen = Number(cached.gen) || 0;
-          await writeShelf(env, { ...cached, rebuildingAt: Date.now() });
-          const books = await buildShelf(env);
-          // 重算期间有新的作废（gen 变了）→ 这份快照可能缺了那次上传，写回但保持 stale，
-          // 下一次请求再算一轮；否则一份「新鲜」的旧清单要挂满 1 小时 TTL。
-          let cur = null;
-          try {
-            const o = await env.FILES.get(SHELF_CACHE_KEY);
-            cur = o ? JSON.parse(await o.text()) : null;
-          } catch {}
-          const gen = Math.max(startGen, Number(cur?.gen) || 0);
-          await writeShelf(env, gen !== startGen
-            ? { builtAt: Date.now(), books, gen, staleAt: Number(cur.staleAt) || Date.now() }
-            : { builtAt: Date.now(), books, gen });
-        } catch (e) {
-          console.log('[books] shelf rebuild failed', String(e?.message || e));
-        }
-      })();
-      if (typeof waitUntil === 'function') waitUntil(rebuild); else rebuild.catch(() => {});
+  let { doc } = await loadShelf(env);
+  if (!doc) doc = await bootShelf(env);
+
+  const dirtySlugs = Object.keys(doc.dirty).sort((a, b) => doc.dirty[a] - doc.dirty[b]).slice(0, SHELF_REFRESH_MAX);
+  if (dirtySlugs.length) {
+    try {
+      const startedAt = Date.now();
+      const seen = Object.fromEntries(dirtySlugs.map((s) => [s, doc.dirty[s]]));
+      const results = await refreshSlugs(env, dirtySlugs);
+      doc = (await mutateShelf(env, (d) => applyRefreshed(d, results, startedAt, seen))) || applyRefreshed(doc, results, startedAt, seen);
+    } catch (e) {
+      console.log('[books] shelf refresh failed', String(e?.message || e));
     }
-    return cached.books;
   }
-  const books = await buildShelf(env);
-  try { await writeShelf(env, { builtAt: Date.now(), books }); } catch {}
-  return books;
+
+  if (Date.now() - doc.sweptAt >= SHELF_SWEEP_EVERY_MS) {
+    const sweep = sweepShelf(env);
+    if (typeof waitUntil === 'function') waitUntil(sweep); else sweep.catch(() => {});
+  }
+  return doc.books;
 }
 
 /// 请求者能看到的书（hidden 书只有主人看得到）。
@@ -708,7 +773,7 @@ async function setHidden(env, request, slug) {
   if (hidden) doc.hidden = true; else delete doc.hidden;
   await env.FILES.put(key, JSON.stringify(doc, null, 2),
     { httpMetadata: { contentType: 'application/json' } });
-  await invalidateShelf(env);   // 这里直接写 R2、不经 files API，得自己作废书架缓存
+  await patchShelf(env, slug, doc);   // 这里直接写 R2、不经 files API：把这一本的新条目直接换进书架缓存
   await auditHidden(env, request, slug, scope, before, hidden);
   // 社区索引同步（2026-09-06）：书架和社区是两套存储——只改 book.json 的话书从书架
   // 消失了，社区 feed 里那张书卡还挂着（feed 查的是 community_posts 的 WHERE hidden=0），

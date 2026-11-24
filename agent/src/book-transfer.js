@@ -15,6 +15,7 @@
 // 为什么在 agent worker 而不是 Pages Function：收件人存在性要查 USAGE 的 account
 // 表，Pages 没这个绑定；R2（FILES）两边都有。
 import { bearerToken } from "../../functions/lib/auth.js";
+import { patchShelf } from "../../functions/lib/books-shelf.js";
 import { normalizeScope } from "./transfer.js";
 import { sendPush } from "./push.js";
 
@@ -22,8 +23,6 @@ import { sendPush } from "./push.js";
 // functions/voicedrop/books 的 PUBLISHER 同源）。存量老书 book.json 没 owner → 算它的。
 export const BOOKS_STORE_SCOPE = "users/anon-ae209ac53499d51d513425503bd134b0/";
 const BOOKS = BOOKS_STORE_SCOPE + "books/";
-// 与 functions/lib/books-shelf.js 的 SHELF_CACHE_KEY / invalidateShelf 同一把钥匙、同一种标法。
-const SHELF_CACHE_KEY = BOOKS_STORE_SCOPE + "books-cache/shelf.json";
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 
 const J = (x, status = 200) =>
@@ -36,16 +35,6 @@ async function readJson(env, key) {
   const o = await env.FILES.get(key);
   if (!o) return null;
   try { return JSON.parse(await o.text()); } catch { return undefined; }   // undefined = 有文件但坏了
-}
-
-// 直写 R2、不经 files API，得自己作废书架缓存（逻辑照抄 invalidateShelf：只标不删，
-// 已标过就不重写）。失败不连累转让——缓存最多晚几分钟自己过期。
-async function markShelfStale(env) {
-  try {
-    const c = await readJson(env, SHELF_CACHE_KEY);
-    if (!c || !Array.isArray(c.books) || c.staleAt) return;
-    await putJson(env, SHELF_CACHE_KEY, { ...c, staleAt: Date.now() });
-  } catch {}
 }
 
 export async function handleBookTransferRoute(url, request, env, resolveScope) {
@@ -84,7 +73,8 @@ export async function handleBookTransferRoute(url, request, env, resolveScope) {
     if (meta && typeof meta === "object") { meta.scope = to; await putJson(env, metaKey, meta); }
   } catch (e) { console.log("[book-transfer] bookmeta sync failed", slug, String(e?.message || e)); }
 
-  await markShelfStale(env);
+  // 直写 R2、不经 files API：把这一本的新条目（owner 变了）直接换进书架缓存。绝不 throw。
+  await patchShelf(env, slug, book);
 
   const title = String(book.title || book.main || slug);
   try {

@@ -40,7 +40,7 @@ beforeEach(async () => {
   other = await anonScopeFromToken(OTHER_TOK);
   env = {
     ...fakeEnv({
-      [bookKey()]: JSON.stringify({ slug: SLUG, title: "两棵树之间", author: "王建硕", owner, chapters: [] }),
+      [bookKey()]: JSON.stringify({ slug: SLUG, title: "两棵树之间", author: "王建硕", owner, chapters: [], createdAt: 1700000000000 }),
       [metaKey()]: JSON.stringify({ slug: SLUG, scope: owner, author: "王建硕", thread: [{ ts: 1, kind: "create" }] }),
       [SHELF_CACHE]: JSON.stringify({ books: [{ slug: SLUG }], builtAt: 1 }),
     }),
@@ -155,9 +155,12 @@ describe("POST /agent/book/transfer — 转让落地", () => {
     expect(readJson(bookKey()).author).toBe("王建硕");
   });
 
-  it("书架缓存被标 stale，下次刷新 mine 才会翻过来", async () => {
+  it("书架缓存里这一本的 owner 当场换成新主人（单本补丁，不用等重算），mine 立刻翻过来", async () => {
     await post({ slug: SLUG, to: JINZI }, { token: OWNER_TOK });
-    expect(readJson(SHELF_CACHE).staleAt).toBeGreaterThan(0);
+    const doc = readJson(SHELF_CACHE);
+    expect(doc.books.find((b) => b.slug === SLUG).owner).toBe(JINZI);
+    expect(doc.books.find((b) => b.slug === SLUG).title).toBe("两棵树之间");
+    expect(doc.dirty[SLUG]).toBeUndefined();   // 有署名、有旧条目 → 不用再去读 profile 名
   });
 
   it("bookmeta.json 不存在（登记簿上线前的老书）不算错：只改 book.json", async () => {

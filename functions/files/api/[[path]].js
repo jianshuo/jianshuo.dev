@@ -29,7 +29,7 @@ import { readStyleDoc, writeStyleDoc, setStyleHead, resolveStyle, parseStyleMark
 import { sanitizeSeg, sha256hex, timingSafeEqual, bytesToB64url, b64urlToBytes, b64urlToString, b64url, hmacSign, verifySession, anonScopeFromToken, bearerToken, hasVerifiedBinding } from "../../lib/auth.js";
 import { checkArticlesShareable } from "../../lib/moderation.js";
 import { upsertCommunityPost, deleteCommunityPost, setCommunityPostHidden } from "../../lib/community-index.js";
-import { touchesShelf, invalidateShelf, bookJsonSlug, patchShelf } from "../../lib/books-shelf.js";
+import { bookJsonSlug, bookIndexSlug, patchShelf, markShelfDirtyIfLegacy } from "../../lib/books-shelf.js";
 import { coreLoadPromptShares, coreDeleteUserData, coreListArticles, coreReplaceArticles, coreUpsertRecording, coreDeleteRecording, coreListRecordings, coreReplaceRecordings, coreGetIdentity, corePutIdentity, coreUpsertProfile, coreGetProfile, corePutPushToken, corePutReport, coreDeleteReport, coreGetReport, corePendingReportIds, coreListReports } from "../../lib/core-db.js";
 
 // Miner sidecars that live under articles/ and end in .json but are NOT article
@@ -1195,11 +1195,11 @@ async function handleRequest(context) {
     const putRes = await env.FILES.put(key, shelfSlug ? shelfBookText : request.body, {
       httpMetadata: { contentType: request.headers.get('Content-Type') || 'application/octet-stream' },
     });
-    // 书文件夹下任何写入（build.mjs 发书/换封面/改 book.json、类目回填）→ 书架缓存作废，
-    // 下次 /voicedrop/books 后台重算。book.json 这一份额外把本书条目直接换进缓存清单
-    // （新书立刻上架，不等访客触发重算）；不作废的话新书/新类目最迟一小时后才出现。
+    // 书架缓存增量维护（2026-11-25）：书架条目只取决于 book.json——收到它就把这一本的条目
+    // 直接换进缓存清单（新书立刻上架、章节数立刻前进）。章节页、源稿、封面图的上传与条目无关，
+    // 什么都不用做；唯一例外是老书（目录从目录页里抠）的 index.html 被重传，记这一本脏。
     if (shelfSlug) await patchShelf(env, shelfSlug, shelfBookText);
-    else if (touchesShelf(key)) await invalidateShelf(env);
+    else if (bookIndexSlug(key)) await markShelfDirtyIfLegacy(env, bookIndexSlug(key));
     // 新录音同步进录音索引（GET /recordings 直出它）。key 形态对用户/admin 通用。
     const mRec = /^(users\/[^/]+\/)(VoiceDrop-[^/]+\.m4a)$/.exec(key);
     if (mRec) {

@@ -6,13 +6,22 @@ import { fileURLToPath } from "node:url";
 // 几乎所有被测路径都要它。测试可用自己的 CORE 覆盖（spread 在 fakeEnv 之后即可）。
 export function fakeEnv(seed = {}) {
   const store = new Map(Object.entries(seed)); // key -> string value
+  const vers = new Map();                      // key -> put 次数（当 etag 用）
   const FILES = {
+    // etag：每次 put 换一个版本号；put 带 onlyIf.etagMatches 且对不上时返回 null、不写（R2 语义，
+    // 书架缓存的乐观锁靠它）。直接改 _store 的测试不换版本号——那等于绕过 API 直写。
     async get(key) {
       if (!store.has(key)) return null;
       const v = store.get(key);
-      return { text: async () => v, json: async () => JSON.parse(v), arrayBuffer: async () => v, body: v, httpMetadata: {} };
+      return { text: async () => v, json: async () => JSON.parse(v), arrayBuffer: async () => v, body: v, httpMetadata: {}, etag: String(vers.get(key) || 0) };
     },
-    async put(key, value) { store.set(key, typeof value === "string" ? value : String(value)); },
+    async put(key, value, opts) {
+      const want = opts && opts.onlyIf && opts.onlyIf.etagMatches;
+      if (want !== undefined && want !== String(vers.get(key) || 0)) return null;
+      vers.set(key, (vers.get(key) || 0) + 1);
+      store.set(key, typeof value === "string" ? value : String(value));
+      return {};
+    },
     async head(key) { return store.has(key) ? {} : null; },
     async delete(key) { (Array.isArray(key) ? key : [key]).forEach((k) => store.delete(k)); },
     async list({ prefix = "", limit = 1000, delimiter } = {}) {
