@@ -215,10 +215,16 @@ function strip(s) {
 // 一段合成失败怎么办（2026-11-27 改）：
 //   - 这一段还一个字节都没出就被拒（火山并发超限、偶发 5xx——同时有十来路在合成时就会撞上）
 //     → 退避重试，别的请求让出位置后通常就过了。
-//   - 重试也不行，或这一段已经出了一半 → **让这条响应报错中断**（writer.abort），不缓存。
-//     绝不能 close()：那样客户端收到的是一条「正常结束」的 200，内容却只有开头几秒，
-//     根本分不出是残的——App 下载到本地的《阴谋论是怎么长出来的》9 章都只有 4 秒就是这么来的。
-const SEGMENT_RETRY_WAITS_MS = [800, 2000, 4000, 8000];   // 共 5 次尝试，最长多等约 15 秒
+//     别的章节一合成就是一两分钟，所以重试预算要给到分钟级（15 秒的预算实测 20 路里仍有 8 路没成）。
+//   - 重试也不行，或这一段已经出了一半 → 中止这条响应（writer.abort），**不缓存**。
+//
+// **客户端怎么知道拿到的是不是完整的一章**：只有一条判据——响应结束后回头 HEAD 同一个地址，
+// 有成品（200）且 Content-Length 等于自己收到的字节数才算数。合成成功才会写缓存，失败不写。
+// 不能靠传输层报错：实测 writer.abort() 经 Cloudflare 边缘到客户端仍是一条正常结束的 200，
+// 内容为空或只有开头几秒——App 下载到本地的《阴谋论是怎么长出来的》9 章只有 4 秒就是这么来的。
+// 网页播放器（books/[[path]].js 的 audioWidget）和 App（BookOffline.swift）都按这条判据核对。
+const SEGMENT_RETRY_WAITS_MS = [1000, 2000, 4000, 8000, 15000, 30000, 30000, 30000];   // 共 9 次尝试，最长多等约 2 分钟
+const jitter = (ms) => Math.round(ms * (0.7 + Math.random() * 0.6));   // 同时被拒的几路别又同时回来
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function synthesizeAll(env, segments, writer, mp3Key, waits = SEGMENT_RETRY_WAITS_MS) {
@@ -242,7 +248,7 @@ async function synthesizeAll(env, segments, writer, mp3Key, waits = SEGMENT_RETR
         // 已经流出去一半的段没法重来（重来就是把这半段念两遍）；没出过字节的可以重试。
         if (!emitted && attempt < waits.length) {
           console.log(`tts segment retry ${attempt + 1}:`, e.message, seg.text.slice(0, 30));
-          await sleep(waits[attempt]);
+          await sleep(jitter(waits[attempt]));
           continue;
         }
         failure = e;
@@ -253,8 +259,8 @@ async function synthesizeAll(env, segments, writer, mp3Key, waits = SEGMENT_RETR
     if (failure) break; // 失败就停：宁可不缓存，也不缓存残次品
   }
   if (failure || !all.length) {
-    // 报错中断：客户端读到的是一条断掉的响应（fetch 的 reader 抛错 / <audio> 触发 error / 下载失败），
-    // 而不是一个看起来完整的短文件。
+    // 中止而不是 close——语义上这条响应没有完成。（经边缘后客户端未必看得到错误，所以完整性
+    // 以「事后 HEAD 有成品且大小一致」为准，见上。）
     try { await writer.abort(failure || new Error('no audio')); } catch {}
     return;
   }

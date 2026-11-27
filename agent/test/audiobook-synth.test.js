@@ -50,7 +50,7 @@ describe("有声书逐段合成", () => {
 
   it("一直被拒：响应报错中断（不是正常结束的短文件），不缓存", async () => {
     const r = await run([okStream("AA"), rejected(), rejected(), rejected(), rejected(), rejected()]);
-    expect(r.error).not.toBeNull();          // 客户端读到的是断掉的响应
+    expect(r.error).not.toBeNull();          // 流被中止（经 CDN 后客户端未必看得到，所以另靠「事后 HEAD 有成品」判完整）
     expect(r.cached).toBeUndefined();
     expect(r.calls).toBe(6);                 // 第 1 段 1 次 + 第 2 段 5 次
   });

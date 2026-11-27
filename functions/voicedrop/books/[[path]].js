@@ -232,6 +232,18 @@ function audioWidget(slug, stem) {
   var srcOf=function(s){return '../audiobook/'+encodeURIComponent(slug)+'/'+encodeURIComponent(s);};
   var a=null,tipEl=null,chapters=null;
   function setTip(t){if(tipEl)tipEl.textContent=t;}
+  // 现场合成的那条响应是否完整：只有一条判据——事后 HEAD 有成品才算（合成成功才写缓存；
+  // 同时合成的太多时会被语音合成的并发上限拒掉，响应照样「正常结束」，内容却是残的）。
+  // 写缓存在响应结束之后，所以等一下再问，问两次。
+  function verifyGenerated(s,label){
+    function head(){return fetch(srcOf(s),{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return true;});}
+    setTimeout(function(){head().then(function(ok){
+      if(ok||s!==stem) return;
+      setTimeout(function(){head().then(function(ok2){
+        if(!ok2&&s===stem) setTip((label||'')+'这一章没能生成完整（同时生成的人太多），过一会儿再点一次');
+      });},6000);
+    });},2000);
+  }
 
   function panel(tipText){
     box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
@@ -327,7 +339,7 @@ function audioWidget(slug, stem) {
         if(!r.ok) throw 0;
         var rd=r.body.getReader();
         (function step(){rd.read().then(function(x){
-          if(x.done){done=true;pump();return;}
+          if(x.done){done=true;pump();verifyGenerated(stem,label);return;}
           queue.push(x.value);pump();step();
         }).catch(function(){done=true;pump();});})();
       }).catch(function(){document.getElementById('abtip').textContent='生成失败，刷新重试';});
@@ -349,6 +361,10 @@ function audioWidget(slug, stem) {
       });}
       return step();
     }).then(function(){
+      // 生成完再播缓存版——先确认真有成品，否则 a.src 会再触发一次合成、播出来的还是残的。
+      return fetch(srcOf(stem),{method:'HEAD'}).then(function(r){return r.ok;}).catch(function(){return false;});
+    }).then(function(ok){
+      if(!ok){setTip((label||'')+'这一章没能生成完整（同时生成的人太多），过一会儿再点一次');return;}
       setTip((label||'')+'已生成，可拖动进度');
       a.src=srcOf(stem);a.play().catch(function(){});
     }).catch(function(){setTip('生成失败，刷新重试');});
