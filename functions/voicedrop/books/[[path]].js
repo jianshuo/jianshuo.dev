@@ -54,6 +54,9 @@ const TYPES = {
   webp: 'image/webp', gif: 'image/gif', zip: 'application/zip', cbz: 'application/vnd.comicbook+zip',
 };
 
+/// 章节页 = <slug>/<非 index / intro 的顶层网页>。注入「听本章」播放器和文件清单里的 audio 都认它。
+const CHAPTER_PAGE = /^([^/]+)\/(?!index\.|intro\.)([^/]+)\.html?$/;
+
 export async function onRequest({ request, env, params, waitUntil }) {
   const segments = Array.isArray(params.path) ? params.path : (params.path ? [params.path] : []);
   let rel = decodeURIComponent(segments.join('/'));
@@ -78,6 +81,10 @@ export async function onRequest({ request, env, params, waitUntil }) {
     if (format === 'search') return searchJSON(env, request, waitUntil);
     return index(env, waitUntil, request);
   }
+
+  // 这本书由哪些文件组成（/books/<slug>/?format=files）——App「下载到本地」照它原样镜像。
+  const fm = /^([^/]+)\/?$/.exec(rel);
+  if (fm && new URL(request.url).searchParams.get('format') === 'files') return filesJSON(env, fm[1]);
 
   // 整本书打印视图（/books/<slug>/print）：封面+导读+全部章节拼一页、分页 CSS、
   // 无导航件——worker 的 Browser Rendering 用它渲染 PDF（走 pages.dev 域名绕 1042）。
@@ -135,7 +142,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
 
   // 章节页（<slug>/<非index/intro>.html）注入「听本章」播放器，
   // 音频端点见 functions/voicedrop/books/audiobook/[[path]].js。
-  const ch = /^([^/]+)\/(?!index\.|intro\.)([^/]+)\.html?$/.exec(rel);
+  const ch = CHAPTER_PAGE.exec(rel);
   if (ch && request.method === 'GET') {
     let html = await obj.text();
     const widget = audioWidget(ch[1], ch[2]);
@@ -157,6 +164,39 @@ export async function onRequest({ request, env, params, waitUntil }) {
     return new Response(part.body, { status: 206, headers });
   }
   return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
+}
+
+/// 一本书的文件清单：{slug, files:[{path,size}], audio:[章号], bytes}。
+/// 真源就是 R2 里这本书的文件夹——网页、封面、插图、动画版（video/ 子目录）都在里面，
+/// 所以「一本书有哪些文件」只在这一处回答，客户端不用解析目录页找章节、解析正文找插图，
+/// 动画版也不用单独处理：照清单逐个按原路径取回来，就是一份能离线打开的完整副本。
+///   - files：相对这本书根目录的路径。_src/ 是修书用的源稿镜像，读者用不上，只留
+///     播放器连播要读的 _src/book.json。
+///   - audio：有「听本章」的章号——与下面注入播放器的规则同一条正则（非目录、非导读的顶层网页）。
+///     音频不在这个文件夹里，地址是 /books/audiobook/<slug>/<章号>（没播过的首次请求现场合成）。
+async function filesJSON(env, slug) {
+  const prefix = `${PUBLISHER}${slug}/`;
+  const files = [];
+  let cursor;
+  do {
+    const listed = await env.FILES.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+    for (const o of listed.objects || []) {
+      const path = o.key.slice(prefix.length);
+      if (!path || path.endsWith('/')) continue;
+      if (path.startsWith('_src/') && path !== '_src/book.json') continue;
+      files.push({ path, size: o.size });
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+  if (!files.some((f) => f.path === 'index.html')) return notFound();
+  const audio = files.map((f) => CHAPTER_PAGE.exec(`${slug}/${f.path}`)).filter(Boolean).map((m) => m[2]).sort();
+  return new Response(JSON.stringify({ slug, files, audio, bytes: files.reduce((n, f) => n + f.size, 0) }), {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'public, max-age=60',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 }
 
 // 同 audiobook/[[path]].js 的 parseRange：只认单段 bytes=a-b / a- / -n，其余（含越界）当没带 Range 回整个文件。
