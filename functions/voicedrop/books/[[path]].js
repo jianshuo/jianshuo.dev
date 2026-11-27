@@ -100,6 +100,10 @@ export async function onRequest({ request, env, params, waitUntil }) {
   const ext = (rel.split('.').pop() || '').toLowerCase();
   const leaf = rel.split('/').pop();
   const vq = new URL(request.url).searchParams.get('v') || '';
+  // ?offline=1（2026-11-27）：App「下载到本地」拉的离线版书页——存进手机后用 file:// 打开，
+  // 所以不能带任何要联网才有用的东西：目录页不注入 PDF / 动画版入口，章节页把「边合成边流」
+  // 的在线播放器换成直接播同目录 NN.mp3 的离线播放器（mp3 由 App 另行下载）。
+  const offline = new URL(request.url).searchParams.get('offline') === '1';
   const headers = {
     'Content-Type': obj.httpMetadata?.contentType || TYPES[ext] || 'application/octet-stream',
     'Content-Length': String(obj.size),
@@ -119,7 +123,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
   // /agent/books/pdf/<slug>（没有就现生成，有了直接下载）。绝对地址：voicedrop.cn
   // 的 EdgeOne 反代不认 /agent 路径。
   const bi = /^([^/]+)\/index\.html$/.exec(rel);
-  if (bi && request.method === 'GET') {
+  if (bi && request.method === 'GET' && !offline) {
     let html = await obj.text();
     const pill = 'font-size:13px;color:#A89E8E;text-decoration:none;border:1px solid rgba(51,48,42,.18);border-radius:20px;padding:8px 18px;display:inline-block;margin:6px';
     const pdfLink = `<div style="text-align:center;margin:26px 0 40px"><a href="https://jianshuo.dev/agent/books/pdf/${encodeURIComponent(bi[1])}" style="${pill}">⬇ 下载 PDF 版（首次点击需生成约一分钟）</a>`
@@ -138,7 +142,18 @@ export async function onRequest({ request, env, params, waitUntil }) {
   const ch = /^([^/]+)\/(?!index\.|intro\.)([^/]+)\.html?$/.exec(rel);
   if (ch && request.method === 'GET') {
     let html = await obj.text();
-    const widget = audioWidget(ch[1], ch[2]);
+    let widget;
+    if (offline) {
+      // 连播用的章节清单在出页时就内联进去：file:// 下页面自己 fetch 不了 book.json。
+      let chapters = [];
+      try {
+        const o = await env.FILES.get(`${PUBLISHER}${ch[1]}/_src/book.json`);
+        const bj = o ? JSON.parse(await o.text()) : null;
+        chapters = ((bj && bj.chapters) || []).filter((c) => c && c.status === 'done')
+          .map((c) => ({ stem: String(c.no).padStart(2, '0'), title: String(c.title || `第 ${c.no} 章`) }));
+      } catch {}
+      widget = offlineAudioWidget(ch[2], chapters);
+    } else widget = audioWidget(ch[1], ch[2]);
     html = html.includes('</body>') ? html.replace('</body>', widget + '</body>') : html + widget;
     delete headers['Content-Length'];
     return new Response(html, { headers });
@@ -168,6 +183,47 @@ function parseRange(h, size) {
   if (start >= size) return null;
   const end = m[2] ? Math.min(+m[2], size - 1) : size - 1;
   return { offset: start, length: end - start + 1 };
+}
+
+// 离线版「听本章」（?offline=1）：<audio> 直接播同目录的 <stem>.mp3（App 下载书时一并存好的），
+// 一章播完接下一章。不碰网络、不用 MediaSource——本地文件本来就可拖可倍速。
+// chapters 为空（老书没有 _src/book.json）时只播本章、不连播。
+function offlineAudioWidget(stem, chapters) {
+  const js = (x) => JSON.stringify(x).replace(/</g, '\\u003c');
+  return `
+<div id="abw" style="position:fixed;right:18px;bottom:18px;z-index:99">
+  <button id="abbtn" style="display:flex;align-items:center;gap:8px;border:1px solid rgba(51,48,42,.18);
+    background:#fcf9f1;color:#33302a;border-radius:24px;padding:10px 18px;font-size:14px;
+    box-shadow:0 4px 14px rgba(60,45,30,.18);cursor:pointer">🎧 听本章</button>
+</div>
+<script>
+(function(){
+  var box=document.getElementById('abw'),btn=document.getElementById('abbtn');
+  var stem=${js(stem)},chs=${js(chapters)},a=null,tip=null;
+  function titleOf(s){for(var i=0;i<chs.length;i++)if(chs[i].stem===s)return chs[i].title;return '';}
+  function play(){
+    var t=titleOf(stem);
+    tip.textContent=(t?t+' · ':'')+'已下载，离线播放';
+    a.src=stem+'.mp3';
+    var p=a.play();if(p&&p.catch)p.catch(function(){});
+  }
+  btn.onclick=function(){
+    box.innerHTML='<div style="background:#fcf9f1;border:1px solid rgba(51,48,42,.18);border-radius:14px;'+
+      'padding:10px 14px;box-shadow:0 4px 14px rgba(60,45,30,.18);max-width:78vw">'+
+      '<div id="abtip" style="font-size:12px;color:#7a7264;margin-bottom:6px"></div>'+
+      '<audio id="abaudio" controls style="width:300px;max-width:72vw;display:block"></audio></div>';
+    tip=document.getElementById('abtip');a=document.getElementById('abaudio');
+    a.onerror=function(){tip.textContent='这一章的音频没有下载到本地';};
+    a.addEventListener('ended',function(){
+      var next=null;
+      for(var i=0;i<chs.length;i++) if(chs[i].stem===stem){ if(i+1<chs.length) next=chs[i+1]; break; }
+      if(!next){tip.textContent='播完了';return;}
+      stem=next.stem;play();
+    });
+    play();
+  };
+})();
+</script>`;
 }
 
 // 「听本章」浮动播放器。相对路径 ../audiobook/<slug>/<stem> 在两个域名下都成立
