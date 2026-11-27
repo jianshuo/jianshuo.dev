@@ -212,34 +212,60 @@ function strip(s) {
 }
 
 // ---------- 逐段合成：边流给客户端，边攒全量，完了写 R2 ----------
-async function synthesizeAll(env, segments, writer, mp3Key) {
+// 一段合成失败怎么办（2026-11-27 改）：
+//   - 这一段还一个字节都没出就被拒（火山并发超限、偶发 5xx——同时有十来路在合成时就会撞上）
+//     → 退避重试，别的请求让出位置后通常就过了。
+//   - 重试也不行，或这一段已经出了一半 → **让这条响应报错中断**（writer.abort），不缓存。
+//     绝不能 close()：那样客户端收到的是一条「正常结束」的 200，内容却只有开头几秒，
+//     根本分不出是残的——App 下载到本地的《阴谋论是怎么长出来的》9 章都只有 4 秒就是这么来的。
+const SEGMENT_RETRY_WAITS_MS = [800, 2000, 4000, 8000];   // 共 5 次尝试，最长多等约 15 秒
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function synthesizeAll(env, segments, writer, mp3Key, waits = SEGMENT_RETRY_WAITS_MS) {
   const all = [];
   let clientGone = false;
-  let ok = true;
+  let failure = null;
   const sectionId = crypto.randomUUID();
   for (const seg of segments) {
-    try {
-      await synthesizeOne(env, seg, sectionId, async (bytes) => {
-        all.push(bytes);
-        if (!clientGone) {
-          try { await writer.write(bytes); } catch { clientGone = true; }
+    for (let attempt = 0; ; attempt++) {
+      let emitted = false;
+      try {
+        await synthesizeOne(env, seg, sectionId, async (bytes) => {
+          emitted = true;
+          all.push(bytes);
+          if (!clientGone) {
+            try { await writer.write(bytes); } catch { clientGone = true; }
+          }
+        });
+        break;
+      } catch (e) {
+        // 已经流出去一半的段没法重来（重来就是把这半段念两遍）；没出过字节的可以重试。
+        if (!emitted && attempt < waits.length) {
+          console.log(`tts segment retry ${attempt + 1}:`, e.message, seg.text.slice(0, 30));
+          await sleep(waits[attempt]);
+          continue;
         }
-      });
-    } catch (e) {
-      ok = false;
-      console.log('tts segment failed:', e.message, seg.text.slice(0, 30));
-      break; // 失败就停：宁可不缓存，也不缓存残次品
+        failure = e;
+        console.log('tts segment failed:', e.message, seg.text.slice(0, 30));
+        break;
+      }
     }
+    if (failure) break; // 失败就停：宁可不缓存，也不缓存残次品
+  }
+  if (failure || !all.length) {
+    // 报错中断：客户端读到的是一条断掉的响应（fetch 的 reader 抛错 / <audio> 触发 error / 下载失败），
+    // 而不是一个看起来完整的短文件。
+    try { await writer.abort(failure || new Error('no audio')); } catch {}
+    return;
   }
   try { await writer.close(); } catch {}
-  if (ok && all.length) {
-    const total = all.reduce((n, b) => n + b.length, 0);
-    const buf = new Uint8Array(total);
-    let off = 0;
-    for (const b of all) { buf.set(b, off); off += b.length; }
-    await env.FILES.put(mp3Key, buf, { httpMetadata: { contentType: 'audio/mpeg' } });
-  }
+  const total = all.reduce((n, b) => n + b.length, 0);
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const b of all) { buf.set(b, off); off += b.length; }
+  await env.FILES.put(mp3Key, buf, { httpMetadata: { contentType: 'audio/mpeg' } });
 }
+export const _synthesizeAll = synthesizeAll;   // 单测用（把重试等待调成 0）
 
 async function synthesizeOne(env, seg, sectionId, onAudio) {
   const instr = seg.instr || GLOBAL_INSTR[seg.voice] || GLOBAL_INSTR[NARRATOR];
